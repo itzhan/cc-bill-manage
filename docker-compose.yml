@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    image: bill-manage:latest
+    container_name: bill-manage
+    restart: unless-stopped
+    ports:
+      - "3180:3100"
+    environment:
+      DATABASE_URL: file:/app/data/app.db
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-admin}
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/app/data

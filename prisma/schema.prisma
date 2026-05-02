@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Settings {
+  id                  Int    @id @default(1)
+  adminPasswordHash   String
+  diffThreshold       Float  @default(10)
+  syncIntervalMinutes Int    @default(5)
+  emailAlertEnabled   Boolean @default(false)
+  // Email sender configuration (aifun-style email API)
+  emailEndpoint       String  @default("https://aifun.edu.kg/api/email/send")
+  emailAuthToken      String?
+  emailSenderEmail    String?
+  emailSenderName     String?
+  emailSenderAccountId Int?
+  emailReceivers      String? // comma-separated emails
+  emailSubject        String  @default("xxx上游差异通知")
+  // cooldown: don't send another alert within this many minutes
+  emailCooldownMinutes Int    @default(30)
+  emailLastSentAt     DateTime?
+  emailLastSentDigest String? // hash-ish key to dedupe identical alerts
+  // Preferred site account for the az batch tool. Quick-pick on page load.
+  defaultAzSiteAccountId Int?
+}
+
+model AzPreset {
+  id             Int       @id @default(autoincrement())
+  siteAccountId  Int       @unique
+  // JSON blob — see lib/az.ts AzConfig type for schema
+  config         String
+  updatedAt      DateTime  @updatedAt
+
+  siteAccount    SiteAccount @relation(fields: [siteAccountId], references: [id], onDelete: Cascade)
+}
+
+model UpstreamAccount {
+  id              Int       @id @default(autoincrement())
+  name            String
+  type            String    @default("sub2api")
+  baseUrl         String
+  email           String
+  password        String
+  accessToken     String?
+  refreshToken    String?
+  tokenExpiresAt  DateTime?
+  remoteUserId    Int?
+  lastSyncAt      DateTime?
+  lastSyncError   String?
+  balance         Float?
+  balanceUpdatedAt DateTime?
+  createdAt       DateTime  @default(now())
+
+  keys UpstreamKey[]
+}
+
+model UpstreamKey {
+  id                       Int      @id @default(autoincrement())
+  upstreamAccountId        Int
+  remoteKeyId              Int
+  name                     String
+  keyMasked                String
+  groupId                  Int
+  groupName                String
+  // Group's default multiplier (for display/reference)
+  groupRateMultiplier      Float
+  // Effective multiplier for THIS user. If sub2api returns a per-user
+  // override in /api/v1/groups/rates, that value is used; otherwise this
+  // equals groupRateMultiplier. ALL cost normalization uses this field.
+  effectiveRateMultiplier  Float    @default(1)
+  hasExclusiveRate         Boolean  @default(false)
+  // When the rate changes mid-day, snapshot the previous rate and the
+  // accumulated cost AT the moment of change. Cost up to that snapshot
+  // is normalized with the previous rate; cost after with the current rate.
+  previousEffectiveRateMultiplier Float?
+  costAtRateChange                Float?
+  rateChangedAt                   DateTime?
+  todayActualCost          Float    @default(0)
+  totalActualCost          Float    @default(0)
+  lastUpdatedAt            DateTime?
+
+  upstreamAccount UpstreamAccount @relation(fields: [upstreamAccountId], references: [id], onDelete: Cascade)
+  bindings        Binding[]
+
+  @@unique([upstreamAccountId, remoteKeyId])
+}
+
+model SiteAccount {
+  id              Int       @id @default(autoincrement())
+  name            String
+  type            String    @default("sub2api")
+  baseUrl         String
+  email           String
+  password        String
+  accessToken     String?
+  refreshToken    String?
+  tokenExpiresAt  DateTime?
+  remoteUserId    Int?
+  lastSyncAt      DateTime?
+  lastSyncError   String?
+  createdAt       DateTime  @default(now())
+
+  accounts SiteBoundAccount[]
+  users    SiteUser[]
+  azPreset AzPreset?
+}
+
+model SiteUser {
+  id                     Int       @id @default(autoincrement())
+  siteAccountId          Int
+  remoteUserId           Int
+  email                  String
+  username               String    @default("")
+  role                   String    @default("user")
+  status                 String    @default("active")
+  balance                Float     @default(0)
+  totalRecharged         Float     @default(0)
+  // Today's spend (Asia/Shanghai). Pulled from /admin/usage/stats per sync.
+  todayCost              Float     @default(0)  // 1× base
+  todayActualCost        Float     @default(0)  // × user's effective rate
+  todayStatsAt           DateTime?
+  // Manual multiplier applied when computing this user's effective spend.
+  // null = use 1.0 (charge them as billed). Useful for VIP discounts.
+  rateMultiplierOverride Float?
+  // Local-only display name to override the synced username/email in tables.
+  alias                  String?
+  notes                  String?
+  lastActiveAt           DateTime?
+  lastUsedAt             DateTime?
+  remoteCreatedAt        DateTime?
+  lastSyncAt             DateTime?
+
+  siteAccount SiteAccount         @relation(fields: [siteAccountId], references: [id], onDelete: Cascade)
+  settlements SettlementPayment[]
+
+  @@unique([siteAccountId, remoteUserId])
+}
+
+model SettlementPayment {
+  id         Int      @id @default(autoincrement())
+  siteUserId Int
+  amount     Float    // positive = client paid us
+  paidAt     DateTime @default(now())
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  siteUser SiteUser @relation(fields: [siteUserId], references: [id], onDelete: Cascade)
+
+  @@index([siteUserId])
+}
+
+model SiteBoundAccount {
+  id                Int       @id @default(autoincrement())
+  siteAccountId     Int
+  remoteAccountId   Int
+  name              String
+  rateMultiplier    Float     @default(1) // synced from upstream account.rate_multiplier
+  // Manual override for revenue calculation. When set, dashboard computes
+  // user_cost = todayCost × rateMultiplierOverride instead of trusting the
+  // upstream-supplied todayUserCost. Useful when the synced rate
+  // (e.g. average across mixed groups) doesn't reflect the actual rate.
+  rateMultiplierOverride Float?
+  // Fixed (one-time) cost we paid for this account, set at az import time.
+  // When non-null, dashboard uses this instead of the synced todayCost
+  // for profit math — az channels are flat-fee, not per-token billed.
+  fixedCost              Float?
+  groupSummary      String?   // JSON string with group_id+name+multiplier list
+  todayRequests     Int       @default(0)
+  todayTokens       BigInt    @default(0)
+  todayCost         Float     @default(0) // 1x base
+  todayStandardCost Float     @default(0)
+  todayUserCost     Float     @default(0) // revenue (synced)
+  lastUpdatedAt     DateTime?
+
+  siteAccount SiteAccount @relation(fields: [siteAccountId], references: [id], onDelete: Cascade)
+  bindings    Binding[]
+
+  @@unique([siteAccountId, remoteAccountId])
+}
+
+model Binding {
+  id                  Int @id @default(autoincrement())
+  siteBoundAccountId  Int
+  upstreamKeyId       Int
+  createdAt           DateTime @default(now())
+
+  siteBoundAccount SiteBoundAccount @relation(fields: [siteBoundAccountId], references: [id], onDelete: Cascade)
+  upstreamKey      UpstreamKey      @relation(fields: [upstreamKeyId], references: [id], onDelete: Cascade)
+
+  @@unique([siteBoundAccountId, upstreamKeyId])
+}
+
+// Time-series snapshot persisted once per syncAll (or manual sync) so we can
+// chart trends over time. Today-only data wouldn't give us a line otherwise.
+model Snapshot {
+  id                 Int      @id @default(autoincrement())
+  takenAt            DateTime @default(now())
+  totalRevenue       Float
+  totalExpense       Float
+  totalProfit        Float
+  totalSiteCostBase  Float
+  totalUpstreamCostBase Float
+  totalDiff          Float
+  upstreamKeyCount   Int
+  siteBoundCount     Int
+  bindingCount       Int
+
+  @@index([takenAt])
+}
+
+// One row per Asia/Shanghai date, keeps refreshing during the day,
+// "freezes" naturally once the calendar date rolls over (next sync
+// writes to a new row).
+model DailyProfit {
+  id                    Int      @id @default(autoincrement())
+  date                  String   @unique  // YYYY-MM-DD in Asia/Shanghai
+  revenue               Float
+  expense               Float
+  profit                Float
+  siteCostBase          Float
+  upstreamCostBase      Float
+  diff                  Float
+  capturedAt            DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
