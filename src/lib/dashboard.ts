@@ -76,7 +76,7 @@ export interface BindingDiff {
   siteUserCost: number;
   siteUserCostSynced: number;
   siteCostBase: number;
-  diff: number; // upstreamCostBase - siteCostBase  (positive = upstream charged more than we recorded)
+  diff: number; // max(0, upstreamCostBase - siteCostBase). 0 means site ≥ upstream (fine); positive = real loss.
 }
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
@@ -162,7 +162,10 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     (s, k) => s + upstreamBase(k),
     0,
   );
-  const totalDiff = Math.abs(totalSiteCostBase - totalUpstreamCostBase);
+  // Diff = upstream − site, clamped at 0. Only positive values are an issue
+  // (upstream charged more than we recorded). When site ≥ upstream we're
+  // fine, so 0. Was Math.abs before; that conflated both directions.
+  const totalDiff = Math.max(0, totalUpstreamCostBase - totalSiteCostBase);
   const diffThreshold = settings?.diffThreshold ?? 10;
 
   // Group bindings by upstream key — when N site accounts share one key,
@@ -225,11 +228,11 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
       siteUserCost: sumUserCost,
       siteUserCostSynced: sumUserCostSynced,
       siteCostBase: sumCostBase,
-      diff: upBase - sumCostBase,
+      diff: Math.max(0, upBase - sumCostBase),
     };
   });
-  // Sort by absolute diff descending (problematic groups first)
-  bindingDiffs.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  // Sort by diff descending (problematic groups first; ties at 0 keep insertion order)
+  bindingDiffs.sort((a, b) => b.diff - a.diff);
 
   // az 管理 created accounts: matched by per-site az prefix. Skip any that
   // happen to also have a Binding (already counted above) to prevent dup.

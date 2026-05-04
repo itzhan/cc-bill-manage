@@ -14,5 +14,11 @@ export async function GET(req: Request) {
     orderBy: { date: "desc" },
     take: days,
   });
-  return NextResponse.json({ items });
+  // Recompute diff from stored bases so historical rows reflect the new
+  // "loss only" rule: max(0, upstream − site). Old rows had Math.abs.
+  const normalized = items.map((d) => ({
+    ...d,
+    diff: Math.max(0, d.upstreamCostBase - d.siteCostBase),
+  }));
+  return NextResponse.json({ items: normalized });
 }
