@@ -755,14 +755,61 @@ export default function DashboardPage() {
                 >
                   回填
                 </Button>
-                <span className="text-xs text-default-500 self-center ml-2">
-                  累计利润{" "}
-                  <b className="text-foreground">
-                    {fmtMoneyShort(
-                      daily.reduce((s, d) => s + d.profit, 0),
-                    )}
-                  </b>
-                </span>
+                {(() => {
+                  const totalProfit = daily.reduce((s, d) => s + d.profit, 0);
+                  const totalLoss = daily.reduce(
+                    (s, d) => s + Math.max(0, d.upstreamCostBase - d.siteCostBase),
+                    0,
+                  );
+                  const totalSurplus = daily.reduce(
+                    (s, d) => s + Math.max(0, d.siteCostBase - d.upstreamCostBase),
+                    0,
+                  );
+                  const lossDays = daily.filter(
+                    (d) => d.upstreamCostBase > d.siteCostBase,
+                  ).length;
+                  const surplusDays = daily.filter(
+                    (d) => d.siteCostBase > d.upstreamCostBase,
+                  ).length;
+                  return (
+                    <span className="text-xs text-default-500 self-center ml-2 flex flex-wrap gap-x-3 gap-y-0.5">
+                      <span>
+                        累计利润{" "}
+                        <b
+                          className={
+                            totalProfit > 0
+                              ? "text-success"
+                              : totalProfit < 0
+                                ? "text-danger"
+                                : "text-foreground"
+                          }
+                        >
+                          {fmtMoneyShort(totalProfit)}
+                        </b>
+                      </span>
+                      <span>
+                        累计盈余{" "}
+                        <b className="text-success">
+                          +{fmtMoneyShort(totalSurplus)}
+                        </b>
+                        {surplusDays > 0 && (
+                          <span className="text-default-400 ml-0.5">
+                            · {surplusDays} 天
+                          </span>
+                        )}
+                      </span>
+                      <span>
+                        累计差异{" "}
+                        <b className="text-danger">−{fmtMoneyShort(totalLoss)}</b>
+                        {lossDays > 0 && (
+                          <span className="text-default-400 ml-0.5">
+                            · {lossDays} 天
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  );
+                })()}
               </div>
             </CardHeader>
             <CardBody>
