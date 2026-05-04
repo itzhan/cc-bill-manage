@@ -36,6 +36,7 @@ export async function GET() {
     siteBoundAccounts: siteBound.map((a) => ({
       id: a.id,
       label: `${a.siteAccount.name} / ${a.name} (×${a.rateMultiplier})`,
+      name: a.name,
       siteAccountId: a.siteAccountId,
       siteAccountName: a.siteAccount.name,
       rateMultiplier: a.rateMultiplier,

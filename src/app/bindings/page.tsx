@@ -29,6 +29,7 @@ import Shell from "@/components/Shell";
 interface Option {
   id: number;
   label: string;
+  name?: string; // raw account/key name (without parent prefix)
   todayActualCost?: number; // upstream key
   todayCost?: number; // site bound account
   upstreamAccountId?: number; // upstream key parent
@@ -66,6 +67,7 @@ export default function BindingsPage() {
   const dlg = useDisclosure();
   const [showZero, setShowZero] = useState(false);
   const [showBoundSite, setShowBoundSite] = useState(false);
+  const [showAzAccounts, setShowAzAccounts] = useState(false);
   const [parentSiteIds, setParentSiteIds] = useState<Set<string>>(new Set());
   const [parentUpstreamIds, setParentUpstreamIds] = useState<Set<string>>(
     new Set(),
@@ -329,13 +331,21 @@ export default function BindingsPage() {
                 : opts.upstreamKeys;
               // 2) zero-cost filter + sort
               const allSiteList = filterAndSort(siteAfterParent, "todayCost");
-              // 3) already-bound filter
-              const siteList = showBoundSite
+              // 3) az-prefix filter (default hide; az 站点账号 cluttering the
+              // picker even though they're rarely the binding target)
+              const isAzAccount = (o: Option) =>
+                (o.name ?? "").toLowerCase().startsWith("az-");
+              const siteListAfterAz = showAzAccounts
                 ? allSiteList
-                : allSiteList.filter((o) => !boundSiteIds.has(o.id));
+                : allSiteList.filter((o) => !isAzAccount(o));
+              const azHidden = allSiteList.length - siteListAfterAz.length;
+              // 4) already-bound filter
+              const siteList = showBoundSite
+                ? siteListAfterAz
+                : siteListAfterAz.filter((o) => !boundSiteIds.has(o.id));
               const keyList = filterAndSort(upAfterParent, "todayActualCost");
               const siteHidden = siteAfterParent.length - allSiteList.length;
-              const siteBoundHidden = allSiteList.length - siteList.length;
+              const siteBoundHidden = siteListAfterAz.length - siteList.length;
               const keyHidden = upAfterParent.length - keyList.length;
               return (
                 <>
@@ -420,7 +430,7 @@ export default function BindingsPage() {
                     </div>
                   </div>
                   <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 flex-wrap">
                       <Checkbox
                         size="sm"
                         isSelected={showBoundSite}
@@ -435,10 +445,20 @@ export default function BindingsPage() {
                       >
                         显示今日 0 消费的账号 / Key
                       </Checkbox>
+                      <Checkbox
+                        size="sm"
+                        isSelected={showAzAccounts}
+                        onValueChange={setShowAzAccounts}
+                      >
+                        显示 az 账号
+                      </Checkbox>
                     </div>
                     <span className="text-xs text-default-500">
                       {!showBoundSite && siteBoundHidden > 0 && (
                         <>已隐藏 {siteBoundHidden} 个已绑定 · </>
+                      )}
+                      {!showAzAccounts && azHidden > 0 && (
+                        <>{azHidden} 个 az 账号 · </>
                       )}
                       {!showZero && (siteHidden > 0 || keyHidden > 0) && (
                         <>0 消费 {siteHidden} 个账号 / {keyHidden} 个 Key</>
@@ -467,11 +487,22 @@ export default function BindingsPage() {
                       </div>
                     )}
                   >
-                    {siteList.map((o) => (
-                      <SelectItem key={String(o.id)} textValue={o.label}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
+                    {siteList.map((o) => {
+                      // When user has filtered to a single 本站站点, the parent
+                      // name in the label is redundant — strip the prefix.
+                      const showShort =
+                        parentSiteIds.size === 1 && !!o.siteAccountName;
+                      const prefix = `${o.siteAccountName} / `;
+                      const display =
+                        showShort && o.label.startsWith(prefix)
+                          ? o.label.slice(prefix.length)
+                          : o.label;
+                      return (
+                        <SelectItem key={String(o.id)} textValue={display}>
+                          {display}
+                        </SelectItem>
+                      );
+                    })}
                   </Select>
                   <Select
                     label="上游 Key"
@@ -495,11 +526,20 @@ export default function BindingsPage() {
                       </div>
                     )}
                   >
-                    {keyList.map((o) => (
-                      <SelectItem key={String(o.id)} textValue={o.label}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
+                    {keyList.map((o) => {
+                      const showShort =
+                        parentUpstreamIds.size === 1 && !!o.upstreamAccountName;
+                      const prefix = `${o.upstreamAccountName} / `;
+                      const display =
+                        showShort && o.label.startsWith(prefix)
+                          ? o.label.slice(prefix.length)
+                          : o.label;
+                      return (
+                        <SelectItem key={String(o.id)} textValue={display}>
+                          {display}
+                        </SelectItem>
+                      );
+                    })}
                   </Select>
                 </>
               );

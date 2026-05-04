@@ -11,3 +11,4 @@ prisma/dev.db-journal
 data/
 *.db
 *.db-journal
+*.tsbuildinfo

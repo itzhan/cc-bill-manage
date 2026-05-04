@@ -1,0 +1,24 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: bill-manage-dev:latest
+    container_name: bill-manage-dev
+    ports:
+      - "3180:3100"
+    environment:
+      DATABASE_URL: file:/app/data/app.db
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-admin}
+      TZ: Asia/Shanghai
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - .:/app
+      # Anonymous volumes shield container-installed deps + Next build cache
+      # from the host bind-mount above (keeps linux node_modules separate from
+      # whatever's on macOS, and avoids stomping host .next).
+      - /app/node_modules
+      - /app/.next
+      - ./data:/app/data

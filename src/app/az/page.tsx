@@ -48,6 +48,7 @@ interface AccountPreviewRow {
   api_key: string;
   warnings: string[];
   proxyId: number | null;
+  proxyName: string | null;
 }
 
 interface ProxyPreviewRow {
@@ -379,6 +380,27 @@ function ImportAccountsTab({
     unboundProxyCount: number;
   } | null>(null);
   const [results, setResults] = useState<ResultRow[] | null>(null);
+  const [shareProxy, setShareProxy] = useState(false);
+  const [proxies, setProxies] = useState<
+    Array<{ id: number; name: string }> | null
+  >(null);
+  const [sharedProxyId, setSharedProxyId] = useState<string>("");
+
+  useEffect(() => {
+    if (!shareProxy || proxies !== null) return;
+    let cancelled = false;
+    fetch(`/api/az/${siteId}/proxies`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (!cancelled) setProxies(j.items ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setProxies([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [shareProxy, proxies, siteId]);
 
   async function parse() {
     setParsing(true);
@@ -411,10 +433,16 @@ function ImportAccountsTab({
       const costNum = Number(costText);
       const cost =
         Number.isFinite(costNum) && costNum >= 0 ? costNum : null;
+      const singleProxyId =
+        shareProxy && sharedProxyId ? Number(sharedProxyId) : null;
+      if (shareProxy && !singleProxyId) {
+        addToast({ title: "请选择共用代理", color: "warning" });
+        return;
+      }
       const r = await fetch(`/api/az/${siteId}/import/accounts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows, cost }),
+        body: JSON.stringify({ rows, cost, singleProxyId }),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -468,6 +496,42 @@ sk-yyyy`}
         </span>
       </div>
 
+      <div className="flex items-end gap-3 flex-wrap">
+        <Checkbox
+          size="sm"
+          isSelected={shareProxy}
+          onValueChange={(v) => {
+            setShareProxy(v);
+            if (!v) setSharedProxyId("");
+          }}
+        >
+          <span className="text-xs">本批共用同一个代理</span>
+        </Checkbox>
+        {shareProxy && (
+          <Select
+            size="sm"
+            label="代理"
+            placeholder={proxies === null ? "加载中…" : "选择共用代理"}
+            isDisabled={proxies === null || proxies.length === 0}
+            selectedKeys={sharedProxyId ? new Set([sharedProxyId]) : new Set()}
+            onSelectionChange={(k) => {
+              const v = Array.from(k as Set<string>)[0] ?? "";
+              setSharedProxyId(v);
+            }}
+            className="w-[260px]"
+          >
+            {(proxies ?? []).map((p) => (
+              <SelectItem key={String(p.id)}>{`${p.name} (#${p.id})`}</SelectItem>
+            ))}
+          </Select>
+        )}
+        {shareProxy && (
+          <span className="text-xs text-default-500 self-center">
+            勾选后忽略默认的"未绑代理顺序分配"，整批账号都绑这一个代理
+          </span>
+        )}
+      </div>
+
       {preview && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-3 text-xs text-default-500">
@@ -516,7 +580,31 @@ sk-yyyy`}
                     {maskKey(r.api_key)}
                   </TableCell>
                   <TableCell>
-                    {r.proxyId != null ? `#${r.proxyId}` : "—"}
+                    {r.proxyName != null ? (
+                      (() => {
+                        const accNum = r.proposedName.match(/(\d+)$/)?.[1];
+                        const proxyNum = r.proxyName.match(/(\d+)$/)?.[1];
+                        const matched = accNum && proxyNum && accNum === proxyNum;
+                        return (
+                          <div className="flex flex-col leading-tight">
+                            <span
+                              className={
+                                matched
+                                  ? "text-success font-medium"
+                                  : "text-warning font-medium"
+                              }
+                            >
+                              {r.proxyName}
+                            </span>
+                            <span className="text-xs text-default-400">
+                              #{r.proxyId}
+                            </span>
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      <span className="text-default-400">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-xs text-warning">
                     {r.warnings.join("；")}

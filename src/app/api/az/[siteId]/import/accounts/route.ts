@@ -21,11 +21,16 @@ export async function POST(
     rows?: InputRow[];
     overrides?: Partial<AzConfig>;
     cost?: number;
+    singleProxyId?: number | null;
   };
   const inputRows = body.rows ?? [];
   const fixedCost =
     typeof body.cost === "number" && Number.isFinite(body.cost) && body.cost >= 0
       ? body.cost
+      : null;
+  const singleProxyId =
+    typeof body.singleProxyId === "number" && Number.isFinite(body.singleProxyId)
+      ? body.singleProxyId
       : null;
   if (inputRows.length === 0) {
     return NextResponse.json({ error: "空输入" }, { status: 400 });
@@ -44,15 +49,26 @@ export async function POST(
     page_size: 1000,
   });
   const existingNames = existing.items.map((a) => a.name);
-  let unboundProxyIds: number[] = [];
-  if (cfg.auto_bind_proxy) {
+  // Build proxyByNum map keyed by trailing number in proxy name (proxy-13 → 13).
+  // The default pairing rule is name-suffix match: az-N ↔ proxy-N.
+  // We no longer rely on id order; that produced mismatches when a proxy was
+  // deleted and recreated (its new id no longer matched its name's number).
+  const proxyByNum = new Map<number, number>();
+  if (cfg.auto_bind_proxy && singleProxyId == null) {
     const proxies = await client.listAdminProxiesAll();
     const usedProxyIds = new Set(
       existing.items
         .map((a) => (a as { proxy_id?: number | null }).proxy_id)
         .filter((x): x is number => x != null),
     );
-    unboundProxyIds = proxies.filter((p) => !usedProxyIds.has(p.id)).map((p) => p.id);
+    for (const p of proxies) {
+      if (usedProxyIds.has(p.id)) continue;
+      const m = p.name.match(/(\d+)$/);
+      if (!m) continue;
+      const num = Number(m[1]);
+      // First-write-wins; duplicate-numbered proxies keep the lower id.
+      if (!proxyByNum.has(num)) proxyByNum.set(num, p.id);
+    }
   }
 
   const startNum = nextSequenceNumber(
@@ -61,11 +77,19 @@ export async function POST(
     cfg.account_start_index,
   );
 
+  function pickProxyId(i: number): number | null {
+    if (singleProxyId != null) return singleProxyId;
+    if (cfg.auto_bind_proxy) {
+      return proxyByNum.get(startNum + i) ?? null;
+    }
+    return null;
+  }
+
   const tasks = inputRows.map((r, i) => ({
     name: `${cfg.account_prefix}${startNum + i}`,
     base_url: r.base_url,
     api_key: r.api_key,
-    proxy_id: cfg.auto_bind_proxy && unboundProxyIds[i] != null ? unboundProxyIds[i] : null,
+    proxy_id: pickProxyId(i),
     index: i,
   }));
 

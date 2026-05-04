@@ -26,6 +26,7 @@ export async function POST(
   // assigning the next az-N number)
   let existingNames: string[] = [];
   let unboundProxyIds: number[] = [];
+  const proxyByNum = new Map<number, { id: number; name: string }>();
   try {
     const client = await makeSiteClient(id);
     // 1) existing account names matching az-prefix
@@ -44,9 +45,15 @@ export async function POST(
       const usedProxyIds = new Set(
         allAccs.items.map((a) => (a as { proxy_id?: number }).proxy_id ?? null),
       );
-      unboundProxyIds = all
-        .filter((p) => !usedProxyIds.has(p.id))
-        .map((p) => p.id);
+      const unbound = all.filter((p) => !usedProxyIds.has(p.id));
+      unboundProxyIds = unbound.map((p) => p.id);
+      // name-suffix → id+name map (for az-N ↔ proxy-N pairing in preview/import)
+      for (const p of unbound) {
+        const m = p.name.match(/(\d+)$/);
+        if (!m) continue;
+        const num = Number(m[1]);
+        if (!proxyByNum.has(num)) proxyByNum.set(num, { id: p.id, name: p.name });
+      }
     }
   } catch (e) {
     return NextResponse.json(
@@ -69,6 +76,7 @@ export async function POST(
         cfg.account_prefix,
         cfg.account_start_index,
       ) + i;
+    const matched = cfg.auto_bind_proxy ? proxyByNum.get(nextNum) : undefined;
     return {
       index: p.index,
       proposedName: `${cfg.account_prefix}${nextNum}`,
@@ -77,11 +85,12 @@ export async function POST(
       warnings: [
         ...p.warnings,
         ...(isDup ? ["与同一批次内的另一行重复"] : []),
+        ...(cfg.auto_bind_proxy && !matched
+          ? [`未找到对应代理 (proxy-${nextNum})`]
+          : []),
       ],
-      proxyId:
-        cfg.auto_bind_proxy && unboundProxyIds[i] != null
-          ? unboundProxyIds[i]
-          : null,
+      proxyId: matched?.id ?? null,
+      proxyName: matched?.name ?? null,
     };
   });
 
