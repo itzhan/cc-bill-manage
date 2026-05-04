@@ -502,6 +502,8 @@ export default function DashboardPage() {
                     <TableColumn>收入</TableColumn>
                     <TableColumn>支出</TableColumn>
                     <TableColumn>利润</TableColumn>
+                    <TableColumn>本站 1×</TableColumn>
+                    <TableColumn>上游 1×</TableColumn>
                     <TableColumn>差异 (1×)</TableColumn>
                   </TableHeader>
                   <TableBody>
@@ -590,6 +592,22 @@ export default function DashboardPage() {
                               }
                             >
                               {fmtMoneyShort(profit)}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className="font-medium"
+                              title={fmtMoney(b.siteCostBase)}
+                            >
+                              {fmtMoneyShort(b.siteCostBase)}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className="font-medium"
+                              title={fmtMoney(b.upstreamTodayCostBase)}
+                            >
+                              {fmtMoneyShort(b.upstreamTodayCostBase)}
                             </span>
                           </TableCell>
                           <TableCell>
