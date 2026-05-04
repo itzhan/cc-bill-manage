@@ -777,7 +777,7 @@ export default function DashboardPage() {
                     <TableColumn>收入</TableColumn>
                     <TableColumn>支出</TableColumn>
                     <TableColumn>利润</TableColumn>
-                    <TableColumn>差异 (1×)</TableColumn>
+                    <TableColumn>差异 / 盈余 (1×)</TableColumn>
                     <TableColumn>更新时间</TableColumn>
                   </TableHeader>
                   <TableBody>
@@ -818,8 +818,36 @@ export default function DashboardPage() {
                               {fmtMoneyShort(d.profit)}
                             </span>
                           </TableCell>
-                          <TableCell className="text-default-500">
-                            {fmtMoneyShort(d.diff)}
+                          <TableCell>
+                            {(() => {
+                              const surplus = Math.max(
+                                0,
+                                d.siteCostBase - d.upstreamCostBase,
+                              );
+                              if (d.diff > 0) {
+                                return (
+                                  <span
+                                    className="text-danger font-medium"
+                                    title={`上游 1× ${fmtMoneyShort(d.upstreamCostBase)} > 本站 1× ${fmtMoneyShort(d.siteCostBase)}`}
+                                  >
+                                    −{fmtMoneyShort(d.diff)}
+                                  </span>
+                                );
+                              }
+                              if (surplus > 0) {
+                                return (
+                                  <span
+                                    className="text-success font-medium"
+                                    title={`本站 1× ${fmtMoneyShort(d.siteCostBase)} > 上游 1× ${fmtMoneyShort(d.upstreamCostBase)}`}
+                                  >
+                                    +{fmtMoneyShort(surplus)}
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span className="text-default-400">0</span>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell className="text-xs text-default-400">
                             {fmtDate(d.updatedAt)}
