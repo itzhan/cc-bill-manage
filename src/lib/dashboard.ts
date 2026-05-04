@@ -296,10 +296,13 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     .filter((d): d is Date => d != null)
     .sort((a, b) => b.getTime() - a.getTime());
 
+  // az 的 fixedCost 是一次性投入（500/账号），不算到"今日"成本里——
+  // 只有 az 当日产生的 userCost 计入今日收入。az fixedCost 只在每日利润
+  // 累计层用 totalAzExpense 一次性扣减。
   return {
     totalRevenue: totalRevenue + totalAzRevenue,
-    totalExpense: totalExpense + totalAzExpense,
-    totalProfit: totalRevenue - totalExpense + totalAzProfit,
+    totalExpense: totalExpense,
+    totalProfit: totalRevenue + totalAzRevenue - totalExpense,
     totalSiteCostBase,
     totalUpstreamCostBase,
     totalDiff,

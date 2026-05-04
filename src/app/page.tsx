@@ -364,8 +364,8 @@ export default function DashboardPage() {
                   trendDeltas ? { delta: trendDeltas.profit } : undefined
                 }
                 hint={
-                  data.totalAzProfit !== 0
-                    ? `含 az ${fmtMoneyShort(data.totalAzProfit)}`
+                  data.totalAzRevenue > 0
+                    ? `含 az 今日 +${fmtMoneyShort(data.totalAzRevenue)}（不扣 az 投入）`
                     : "收入 − 支出"
                 }
                 positiveIsGood
@@ -756,7 +756,9 @@ export default function DashboardPage() {
                   回填
                 </Button>
                 {(() => {
-                  const totalProfit = daily.reduce((s, d) => s + d.profit, 0);
+                  const grossProfit = daily.reduce((s, d) => s + d.profit, 0);
+                  const azInvestment = data?.totalAzExpense ?? 0;
+                  const netProfit = grossProfit - azInvestment;
                   const totalLoss = daily.reduce(
                     (s, d) => s + Math.max(0, d.upstreamCostBase - d.siteCostBase),
                     0,
@@ -777,16 +779,40 @@ export default function DashboardPage() {
                         累计利润{" "}
                         <b
                           className={
-                            totalProfit > 0
+                            grossProfit > 0
                               ? "text-success"
-                              : totalProfit < 0
+                              : grossProfit < 0
                                 ? "text-danger"
                                 : "text-foreground"
                           }
                         >
-                          {fmtMoneyShort(totalProfit)}
+                          {fmtMoneyShort(grossProfit)}
                         </b>
                       </span>
+                      {azInvestment > 0 && (
+                        <>
+                          <span>
+                            扣 az 投入{" "}
+                            <b className="text-warning">
+                              −{fmtMoneyShort(azInvestment)}
+                            </b>
+                          </span>
+                          <span>
+                            净利润{" "}
+                            <b
+                              className={
+                                netProfit > 0
+                                  ? "text-success"
+                                  : netProfit < 0
+                                    ? "text-danger"
+                                    : "text-foreground"
+                              }
+                            >
+                              {fmtMoneyShort(netProfit)}
+                            </b>
+                          </span>
+                        </>
+                      )}
                       <span>
                         累计盈余{" "}
                         <b className="text-success">
