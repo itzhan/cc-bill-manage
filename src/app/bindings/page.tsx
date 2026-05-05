@@ -7,6 +7,7 @@ import {
   CardHeader,
   Checkbox,
   Chip,
+  Input,
   Modal,
   ModalBody,
   ModalContent,
@@ -39,6 +40,7 @@ interface Option {
 }
 interface BindingItem {
   id: number;
+  maxConcurrency: number | null;
   upstreamKey: {
     id: number;
     name: string;
@@ -74,6 +76,10 @@ export default function BindingsPage() {
   );
   const [siteIds, setSiteIds] = useState<Set<string>>(new Set());
   const [keyIds, setKeyIds] = useState<Set<string>>(new Set());
+  const [newMaxConcurrency, setNewMaxConcurrency] = useState<string>("");
+  const editDlg = useDisclosure();
+  const [editing, setEditing] = useState<BindingItem | null>(null);
+  const [editMax, setEditMax] = useState<string>("");
 
   async function load() {
     setLoading(true);
@@ -106,12 +112,15 @@ export default function BindingsPage() {
       });
       return;
     }
+    const maxNum = Number(newMaxConcurrency);
     const res = await fetch("/api/bindings/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         siteBoundAccountIds: sIds.map(Number),
         upstreamKeyIds: kIds.map(Number),
+        maxConcurrency:
+          Number.isFinite(maxNum) && maxNum > 0 ? maxNum : null,
       }),
     });
     if (!res.ok) {
@@ -254,15 +263,45 @@ export default function BindingsPage() {
                           >
                             ×{b.siteBoundAccount.rateMultiplier}
                           </Chip>
+                          {b.maxConcurrency != null && (
+                            <Chip
+                              size="sm"
+                              variant="flat"
+                              color="primary"
+                              classNames={{
+                                base: "h-5",
+                                content: "text-[11px] px-1.5",
+                              }}
+                            >
+                              max {b.maxConcurrency}
+                            </Chip>
+                          )}
                         </div>
-                        <Button
-                          size="sm"
-                          color="danger"
-                          variant="light"
-                          onPress={() => remove(b.id)}
-                        >
-                          删除
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="light"
+                            onPress={() => {
+                              setEditing(b);
+                              setEditMax(
+                                b.maxConcurrency != null
+                                  ? String(b.maxConcurrency)
+                                  : "",
+                              );
+                              editDlg.onOpen();
+                            }}
+                          >
+                            编辑
+                          </Button>
+                          <Button
+                            size="sm"
+                            color="danger"
+                            variant="light"
+                            onPress={() => remove(b.id)}
+                          >
+                            删除
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -544,6 +583,16 @@ export default function BindingsPage() {
                 </>
               );
             })()}
+            <Input
+              type="number"
+              size="sm"
+              label="上游 key 最大并发（可选）"
+              description="每条新建的绑定都会写入这个值，用于资源调度页的容量提示。留空表示不设上限。"
+              placeholder="例如 600"
+              value={newMaxConcurrency}
+              onValueChange={setNewMaxConcurrency}
+              min={0}
+            />
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" onPress={dlg.onClose}>
@@ -551,6 +600,71 @@ export default function BindingsPage() {
             </Button>
             <Button color="primary" onPress={add}>
               添加
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={editDlg.isOpen} onClose={editDlg.onClose}>
+        <ModalContent>
+          <ModalHeader>编辑绑定</ModalHeader>
+          <ModalBody className="gap-3">
+            {editing && (
+              <>
+                <div className="text-sm text-default-500 leading-relaxed">
+                  本站账号：
+                  <span className="font-medium text-foreground">
+                    {editing.siteBoundAccount.siteAccount.name} /{" "}
+                    {editing.siteBoundAccount.name}
+                  </span>
+                  <br />
+                  上游 Key：
+                  <span className="font-medium text-foreground">
+                    {editing.upstreamKey.upstreamAccount.name} /{" "}
+                    {editing.upstreamKey.name}
+                  </span>
+                </div>
+                <Input
+                  type="number"
+                  label="最大并发"
+                  description="留空清除上限"
+                  value={editMax}
+                  onValueChange={setEditMax}
+                  min={0}
+                />
+              </>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={editDlg.onClose}>
+              取消
+            </Button>
+            <Button
+              color="primary"
+              onPress={async () => {
+                if (!editing) return;
+                const n = Number(editMax);
+                const v =
+                  editMax.trim() === ""
+                    ? null
+                    : Number.isFinite(n) && n > 0
+                      ? Math.floor(n)
+                      : null;
+                const r = await fetch(`/api/bindings/${editing.id}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ maxConcurrency: v }),
+                });
+                if (!r.ok) {
+                  addToast({ title: "保存失败", color: "danger" });
+                  return;
+                }
+                addToast({ title: "已保存", color: "success" });
+                editDlg.onClose();
+                await load();
+              }}
+            >
+              保存
             </Button>
           </ModalFooter>
         </ModalContent>

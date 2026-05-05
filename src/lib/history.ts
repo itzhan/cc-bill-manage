@@ -13,6 +13,7 @@ interface SiteAccountRow {
   baseUrl: string;
   email: string;
   password: string;
+  apiKey: string | null;
   accessToken: string | null;
 }
 
@@ -44,6 +45,7 @@ function makeSiteClient(acc: SiteAccountRow) {
       baseUrl: acc.baseUrl,
       email: acc.email,
       password: acc.password,
+      apiKey: acc.apiKey,
       accessToken: acc.accessToken,
     },
     {

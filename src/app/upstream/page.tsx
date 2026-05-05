@@ -67,6 +67,7 @@ interface UpstreamAccount {
   balanceUpdatedAt: string | null;
   notes: string | null;
   inventory: string | null;
+  todayCost?: number;
   _count?: { keys: number };
 }
 
@@ -384,7 +385,19 @@ export default function UpstreamPage() {
                       最后同步 {fmtDate(a.lastSyncAt)}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex flex-col items-end leading-tight">
+                      <div className="text-default-500 text-xs">今日消费</div>
+                      <span
+                        className={`font-bold ${
+                          (a.todayCost ?? 0) > 0
+                            ? "text-foreground"
+                            : "text-default-400"
+                        }`}
+                      >
+                        ${fmtMoneyShort(a.todayCost ?? 0)}
+                      </span>
+                    </div>
                     <div className="flex flex-col items-end leading-tight">
                       <div className="flex items-center gap-1 text-default-500 text-xs">
                         <Wallet size={12} /> 余额

@@ -11,6 +11,7 @@ import {
   HelpCircle,
   Wallet,
   Wand2,
+  Activity,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -27,6 +28,7 @@ const items: NavItem[] = [
   { href: "/upstream", label: "渠道管理", icon: <Server size={18} /> },
   { href: "/site", label: "本站账号", icon: <Building2 size={18} /> },
   { href: "/bindings", label: "绑定", icon: <Link2 size={18} /> },
+  { href: "/scheduling", label: "资源调度", icon: <Activity size={18} /> },
   { href: "/az", label: "az 管理", icon: <Wand2 size={18} /> },
   { href: "/settings", label: "设置", icon: <Settings size={18} /> },
 ];

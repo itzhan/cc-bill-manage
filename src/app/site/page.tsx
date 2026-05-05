@@ -42,6 +42,7 @@ interface SiteAccount {
   type: string;
   baseUrl: string;
   email: string;
+  apiKey: string | null;
   lastSyncAt: string | null;
   lastSyncError: string | null;
   _count?: { accounts: number };
@@ -110,6 +111,7 @@ export default function SitePage() {
     baseUrl: "",
     email: "",
     password: "",
+    apiKey: "",
   });
 
   async function load() {
@@ -188,7 +190,14 @@ export default function SitePage() {
   }
 
   function openNew() {
-    setForm({ name: "", type: "sub2api", baseUrl: "", email: "", password: "" });
+    setForm({
+      name: "",
+      type: "sub2api",
+      baseUrl: "",
+      email: "",
+      password: "",
+      apiKey: "",
+    });
     newDlg.onOpen();
   }
   function openEdit(a: SiteAccount) {
@@ -199,13 +208,21 @@ export default function SitePage() {
       baseUrl: a.baseUrl,
       email: a.email,
       password: "",
+      apiKey: a.apiKey ?? "",
     });
     editDlg.onOpen();
   }
 
   async function submitNew() {
-    if (!form.name || !form.baseUrl || !form.email || !form.password) {
-      addToast({ title: "请填写完整", color: "warning" });
+    if (!form.name || !form.baseUrl) {
+      addToast({ title: "名称和 Base URL 必填", color: "warning" });
+      return;
+    }
+    if (!form.apiKey && (!form.email || !form.password)) {
+      addToast({
+        title: "请填写 apiKey，或填写 email + password",
+        color: "warning",
+      });
       return;
     }
     const res = await fetch("/api/site", {
@@ -229,6 +246,7 @@ export default function SitePage() {
       name: form.name,
       baseUrl: form.baseUrl,
       email: form.email,
+      apiKey: form.apiKey || null,
     };
     if (form.password) payload.password = form.password;
     const res = await fetch(`/api/site/${editing.id}`, {
@@ -516,12 +534,19 @@ export default function SitePage() {
               onValueChange={(v) => setForm({ ...form, baseUrl: v })}
             />
             <Input
-              label="Email"
+              label="Admin API Key（推荐）"
+              description="填写后请求走 x-api-key，免登录；email/password 仅作记录。也可只填 email/password 走登录流程。"
+              type="password"
+              value={form.apiKey}
+              onValueChange={(v) => setForm({ ...form, apiKey: v })}
+            />
+            <Input
+              label="Email（记录或登录）"
               value={form.email}
               onValueChange={(v) => setForm({ ...form, email: v })}
             />
             <Input
-              label="密码"
+              label="密码（记录或登录）"
               type="password"
               value={form.password}
               onValueChange={(v) => setForm({ ...form, password: v })}
@@ -551,6 +576,13 @@ export default function SitePage() {
               label="Base URL"
               value={form.baseUrl}
               onValueChange={(v) => setForm({ ...form, baseUrl: v })}
+            />
+            <Input
+              label="Admin API Key"
+              description="留空则使用 email + password 登录"
+              type="password"
+              value={form.apiKey}
+              onValueChange={(v) => setForm({ ...form, apiKey: v })}
             />
             <Input
               label="Email"

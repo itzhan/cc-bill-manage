@@ -33,6 +33,7 @@ export async function PATCH(
     baseUrl: string;
     email: string;
     password: string;
+    apiKey: string | null;
   }>;
   const data: Record<string, unknown> = {};
   if (body.name != null) data.name = body.name;
@@ -40,6 +41,12 @@ export async function PATCH(
   if (body.email != null) data.email = body.email;
   if (body.password != null) {
     data.password = body.password;
+    data.accessToken = null;
+    data.tokenExpiresAt = null;
+  }
+  if (body.apiKey !== undefined) {
+    data.apiKey = body.apiKey;
+    // Switching to/from apiKey invalidates any cached login token.
     data.accessToken = null;
     data.tokenExpiresAt = null;
   }

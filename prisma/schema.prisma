@@ -99,6 +99,9 @@ model SiteAccount {
   name            String
   type            String    @default("sub2api")
   baseUrl         String
+  // For sub2api: admin api key (sent as x-api-key). Preferred over email/password.
+  // When non-null, login flow is skipped entirely. email/password become record-only.
+  apiKey          String?
   email           String
   password        String
   accessToken     String?
@@ -191,12 +194,35 @@ model Binding {
   id                  Int @id @default(autoincrement())
   siteBoundAccountId  Int
   upstreamKeyId       Int
+  // Capacity hint: total concurrency the upstream key can safely accept.
+  // Surfaced in /scheduling so user can see if total in-flight across bound
+  // site channels is approaching upstream's tolerance. Not enforced here.
+  maxConcurrency      Int?
   createdAt           DateTime @default(now())
 
   siteBoundAccount SiteBoundAccount @relation(fields: [siteBoundAccountId], references: [id], onDelete: Cascade)
   upstreamKey      UpstreamKey      @relation(fields: [upstreamKeyId], references: [id], onDelete: Cascade)
 
   @@unique([siteBoundAccountId, upstreamKeyId])
+}
+
+// Reusable preset for "create channel" form on the scheduling page.
+// Stores type / platform / group_ids / model_mapping defaults.
+model SchedulingTemplate {
+  id                       Int      @id @default(autoincrement())
+  name                     String
+  // null = available across all sub2api site accounts
+  siteAccountId            Int?
+  platform                 String   @default("anthropic")
+  type                     String   @default("apikey")
+  rateMultiplier           Float    @default(1)
+  // JSON arrays
+  groupIds                 String   // [int]
+  modelList                String   // [string] — model ids (for whitelist / mapping defaults)
+  confirmMixedChannelRisk  Boolean  @default(true)
+  notes                    String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 }
 
 // Time-series snapshot persisted once per syncAll (or manual sync) so we can

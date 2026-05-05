@@ -14,6 +14,7 @@ export async function makeSiteClient(siteId: number): Promise<Sub2ApiClient> {
       baseUrl: acc.baseUrl,
       email: acc.email,
       password: acc.password,
+      apiKey: acc.apiKey,
       accessToken: acc.accessToken,
     },
     {

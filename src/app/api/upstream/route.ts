@@ -7,10 +7,24 @@ export const runtime = "nodejs";
 
 export async function GET() {
   await ensureScheduler();
-  const items = await prisma.upstreamAccount.findMany({
-    orderBy: { id: "asc" },
-    include: { _count: { select: { keys: true } } },
+  const accounts = await prisma.upstreamAccount.findMany({
+    include: {
+      _count: { select: { keys: true } },
+      keys: { select: { todayActualCost: true } },
+    },
   });
+  // Sort by today's total spend desc (sum of all keys' todayActualCost),
+  // ties broken by id ascending so order is stable.
+  const items = accounts
+    .map((a) => {
+      const todayCost = a.keys.reduce(
+        (s, k) => s + (k.todayActualCost ?? 0),
+        0,
+      );
+      const { keys: _keys, ...rest } = a;
+      return { ...rest, todayCost };
+    })
+    .sort((a, b) => b.todayCost - a.todayCost || a.id - b.id);
   return NextResponse.json({ items });
 }
 

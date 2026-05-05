@@ -11,3 +11,25 @@ export async function DELETE(
   await prisma.binding.delete({ where: { id: Number(id) } });
   return NextResponse.json({ ok: true });
 }
+
+export async function PATCH(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id } = await ctx.params;
+  const body = (await req.json().catch(() => ({}))) as Partial<{
+    maxConcurrency: number | null;
+  }>;
+  const data: Record<string, unknown> = {};
+  if (body.maxConcurrency !== undefined) {
+    data.maxConcurrency =
+      body.maxConcurrency == null
+        ? null
+        : Math.max(0, Math.floor(Number(body.maxConcurrency))) || null;
+  }
+  const item = await prisma.binding.update({
+    where: { id: Number(id) },
+    data,
+  });
+  return NextResponse.json({ item });
+}

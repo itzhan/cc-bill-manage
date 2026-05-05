@@ -11,6 +11,7 @@ export async function POST(req: Request) {
     siteBoundAccountIds: number[];
     upstreamKeyId: number;
     upstreamKeyIds: number[];
+    maxConcurrency: number | null;
   }>;
   const siteIds = (body.siteBoundAccountIds ?? []).map(Number).filter(Boolean);
   const keyIds = [
@@ -19,6 +20,10 @@ export async function POST(req: Request) {
   ]
     .map(Number)
     .filter(Boolean);
+  const maxConcurrency =
+    typeof body.maxConcurrency === "number" && body.maxConcurrency > 0
+      ? Math.floor(body.maxConcurrency)
+      : null;
   if (siteIds.length === 0 || keyIds.length === 0) {
     return NextResponse.json(
       {
@@ -39,7 +44,11 @@ export async function POST(req: Request) {
     for (const kid of keyIds) {
       try {
         await prisma.binding.create({
-          data: { siteBoundAccountId: sid, upstreamKeyId: kid },
+          data: {
+            siteBoundAccountId: sid,
+            upstreamKeyId: kid,
+            maxConcurrency,
+          },
         });
         created++;
       } catch (e: unknown) {

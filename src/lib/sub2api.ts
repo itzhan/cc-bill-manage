@@ -99,6 +99,10 @@ export interface Sub2ApiCredsState {
   baseUrl: string;
   email: string;
   password: string;
+  // Admin api key. When set, requests use `x-api-key` header instead of
+  // logging in for a JWT — no expiry, no relogin path. email/password
+  // become record-only.
+  apiKey?: string | null;
   accessToken?: string | null;
 }
 
@@ -157,6 +161,7 @@ export class Sub2ApiClient {
   }
 
   private async ensureToken() {
+    if (this.creds.apiKey) return; // x-api-key path: no token needed
     if (!this.creds.accessToken) await this.login();
   }
 
@@ -167,17 +172,26 @@ export class Sub2ApiClient {
     retried = false,
   ): Promise<T> {
     await this.ensureToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (this.creds.apiKey) {
+      headers["x-api-key"] = this.creds.apiKey;
+    } else {
+      headers.Authorization = `Bearer ${this.creds.accessToken}`;
+    }
     const res = await fetch(`${this.base}${path}`, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${this.creds.accessToken}`,
-      },
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     });
 
     if (res.status === 401 || res.status === 403) {
+      // x-api-key never expires — surface the auth error directly.
+      if (this.creds.apiKey) {
+        throw new Error(`x-api-key auth failed: ${res.status}`);
+      }
       if (retried) {
         throw new Error(`auth still failing after relogin: ${res.status}`);
       }
@@ -447,5 +461,100 @@ export class Sub2ApiClient {
       { account_ids: ids },
     );
     return data.stats || {};
+  }
+
+  // ============================================================
+  // Resource scheduling (used by /scheduling page)
+  // ============================================================
+
+  // Real-time in-flight counts. Server-side Redis aggregation; very fast.
+  async getOpsConcurrency(): Promise<{
+    enabled: boolean;
+    timestamp?: string;
+    platform?: Record<string, { in_flight: number }>;
+    group?: Record<string, { in_flight: number; group_name?: string }>;
+    account?: Record<string, { in_flight: number; account_name?: string }>;
+  }> {
+    return this.request("GET", `/api/v1/admin/ops/concurrency`);
+  }
+
+  async listAdminGroupsAll(): Promise<
+    Array<{
+      id: number;
+      name: string;
+      description?: string;
+      platform: string;
+      status: string;
+      is_exclusive?: boolean;
+      rate_multiplier: number;
+      subscription_type?: string;
+      daily_limit_usd?: number;
+      weekly_limit_usd?: number;
+      monthly_limit_usd?: number;
+      created_at?: string;
+      updated_at?: string;
+    }>
+  > {
+    return this.request("GET", `/api/v1/admin/groups/all`);
+  }
+
+  async getAccountModels(id: number): Promise<
+    Array<{ id: string; display_name?: string; type?: string }>
+  > {
+    return this.request("GET", `/api/v1/admin/accounts/${id}/models`);
+  }
+
+  // Test endpoint returns SSE; we don't need streaming on the admin side —
+  // we just want to know whether it succeeded. Read the response as text and
+  // detect failure markers. Bypasses the JSON envelope path because SSE.
+  async testAdminAccount(
+    id: number,
+    body: { model_id?: string; prompt?: string; mode?: string } = {},
+  ): Promise<{ ok: boolean; output: string }> {
+    if (!this.creds.apiKey && !this.creds.accessToken) await this.login();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    };
+    if (this.creds.apiKey) {
+      headers["x-api-key"] = this.creds.apiKey;
+    } else {
+      headers.Authorization = `Bearer ${this.creds.accessToken}`;
+    }
+    const res = await fetch(
+      `${this.base}/api/v1/admin/accounts/${id}/test`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      },
+    );
+    const text = await res.text();
+    if (!res.ok) {
+      return { ok: false, output: text.slice(0, 800) };
+    }
+    // SSE stream: success usually finishes with `event: done` or `[DONE]`,
+    // failure carries an `error` event payload. Use coarse heuristic.
+    const failed =
+      /\bevent:\s*error\b/i.test(text) ||
+      /"error"\s*:/.test(text) ||
+      /"code"\s*:\s*[1-9]/.test(text);
+    return { ok: !failed, output: text.slice(-1500) };
+  }
+
+  // Bulk fetch usage stats per group (per day). Used to sort groups by today
+  // consumption. Fall back to per-account aggregation if this 404s on older
+  // sub2api builds.
+  async getGroupUsageStatsToday(
+    groupId: number,
+    today: string,
+  ): Promise<{ total_actual_cost?: number; total_cost?: number; total_requests?: number; total_tokens?: number }> {
+    const qs = new URLSearchParams({
+      group_id: String(groupId),
+      start_date: today,
+      end_date: today,
+      timezone: "Asia/Shanghai",
+    });
+    return this.request("GET", `/api/v1/admin/usage/stats?${qs.toString()}`);
   }
 }

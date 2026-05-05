@@ -120,6 +120,7 @@ function makeSiteClient(acc: {
   baseUrl: string;
   email: string;
   password: string;
+  apiKey: string | null;
   accessToken: string | null;
 }) {
   return new Sub2ApiClient(
@@ -127,6 +128,7 @@ function makeSiteClient(acc: {
       baseUrl: acc.baseUrl,
       email: acc.email,
       password: acc.password,
+      apiKey: acc.apiKey,
       accessToken: acc.accessToken,
     },
     {
