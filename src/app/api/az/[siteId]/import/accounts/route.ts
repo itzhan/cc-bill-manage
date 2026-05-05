@@ -104,15 +104,23 @@ export async function POST(
     10,
     async (t) => {
       try {
+        // Auto-pause-on-error: sub2api stores this on credentials as
+        // custom_error_codes_enabled + custom_error_codes (int[]).
+        const errCodes = cfg.auto_pause_error_codes ?? [];
+        const credentials: Record<string, unknown> = {
+          base_url: t.base_url,
+          api_key: t.api_key,
+          model_mapping: cfg.model_mapping,
+        };
+        if (errCodes.length > 0) {
+          credentials.custom_error_codes_enabled = true;
+          credentials.custom_error_codes = errCodes;
+        }
         const res = await client.createAdminAccount({
           name: t.name,
           platform: cfg.platform,
           type: cfg.type,
-          credentials: {
-            base_url: t.base_url,
-            api_key: t.api_key,
-            model_mapping: cfg.model_mapping,
-          },
+          credentials,
           concurrency: cfg.concurrency,
           priority: cfg.priority,
           rate_multiplier: cfg.rate_multiplier,

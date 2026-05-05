@@ -1003,6 +1003,23 @@ claude-haiku-4-5-20251001`}
               </Switch>
             </div>
           </div>
+
+          <Input
+            size="sm"
+            label="停止调度的错误码"
+            description="逗号分隔，例如 400, 429。命中任一即自动停止该账号调度。留空表示禁用此规则"
+            placeholder="400"
+            value={(c.auto_pause_error_codes ?? []).join(", ")}
+            onValueChange={(v) =>
+              update(
+                "auto_pause_error_codes",
+                v
+                  .split(/[,\s]+/)
+                  .map((s) => Number(s.trim()))
+                  .filter((n) => Number.isFinite(n) && n > 0),
+              )
+            }
+          />
         </ModalBody>
         <ModalFooter>
           <Button variant="flat" onPress={onClose}>

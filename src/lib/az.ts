@@ -21,6 +21,11 @@ export interface AzConfig {
   // Proxy
   proxy_protocol: string;
   auto_bind_proxy: boolean;
+
+  // Stop scheduling automatically when the upstream returns one of these
+  // HTTP status codes. Maps to credentials.custom_error_codes on sub2api.
+  // Empty array → feature disabled (custom_error_codes_enabled=false).
+  auto_pause_error_codes: number[];
 }
 
 export const DEFAULT_AZ_CONFIG: AzConfig = {
@@ -46,6 +51,7 @@ export const DEFAULT_AZ_CONFIG: AzConfig = {
   proxy_start_index: 1,
   proxy_protocol: "socks5",
   auto_bind_proxy: true,
+  auto_pause_error_codes: [400],
 };
 
 export function readConfig(json: string | null | undefined): AzConfig {
