@@ -526,6 +526,9 @@ export default function SchedulingPage() {
       {
         group: GroupRow;
         accounts: AccountRow[];
+        // Schedulable=false members of THIS group, regardless of global filter.
+        // GroupCard renders these on demand via its 显示未调度 toggle.
+        unscheduled: AccountRow[];
         inFlight: number;
         capacity: number;
         active: number;
@@ -536,6 +539,7 @@ export default function SchedulingPage() {
       byGroup.set(g.id, {
         group: g,
         accounts: [],
+        unscheduled: [],
         inFlight: 0,
         capacity: 0,
         active: 0,
@@ -555,8 +559,19 @@ export default function SchedulingPage() {
         else slot.inactive++;
       }
     }
+    // Build unscheduled list across the *unfiltered* accounts so cards can
+    // expose "显示未调度" view even when the global filter hides them.
+    for (const a of accounts) {
+      if (a.schedulable !== false) continue;
+      const ids = a.group_ids ?? [];
+      for (const gid of ids) {
+        const slot = byGroup.get(gid);
+        if (!slot) continue;
+        slot.unscheduled.push(a);
+      }
+    }
     const arr = [...byGroup.values()]
-      .filter((g) => g.accounts.length > 0)
+      .filter((g) => g.accounts.length > 0 || g.unscheduled.length > 0)
       .map((g) => ({
         ...g,
         todayCost: groupUsage[String(g.group.id)]?.actualCost ?? 0,
@@ -564,7 +579,7 @@ export default function SchedulingPage() {
     // Primary: today's actual cost desc. Tiebreak: in-flight desc.
     arr.sort((a, b) => b.todayCost - a.todayCost || b.inFlight - a.inFlight);
     return arr;
-  }, [groups, filteredAccounts, concurrency, groupUsage]);
+  }, [groups, filteredAccounts, accounts, concurrency, groupUsage]);
 
   const hiddenCount = accounts.length - filteredAccounts.length;
 
@@ -789,12 +804,15 @@ export default function SchedulingPage() {
               key={g.group.id}
               group={g.group}
               accounts={g.accounts}
+              unscheduled={g.unscheduled}
               inFlight={g.inFlight}
               capacity={g.capacity}
               todayCost={g.todayCost}
               concurrency={concurrency}
               bindings={bindings}
               accountStats={accountStats}
+              siteId={siteId}
+              onAfterChange={refreshAll}
               onEditAccount={(a) => {
                 setEditAcc(a);
                 setEditConcurrency(String(a.concurrency ?? 0));
@@ -1110,17 +1128,21 @@ function GroupUsersView({
 function GroupCard({
   group,
   accounts,
+  unscheduled,
   inFlight,
   capacity,
   todayCost,
   concurrency,
   bindings,
   accountStats,
+  siteId,
   onEditAccount,
   onAddChannel,
+  onAfterChange,
 }: {
   group: GroupRow;
   accounts: AccountRow[];
+  unscheduled: AccountRow[];
   inFlight: number;
   capacity: number;
   todayCost: number;
@@ -1130,14 +1152,25 @@ function GroupCard({
     string,
     { requests: number; cost: number; user_cost: number }
   >;
+  siteId: number | null;
   onEditAccount: (a: AccountRow) => void;
   onAddChannel: () => void;
+  onAfterChange: () => Promise<void> | void;
 }) {
+  const [mode, setMode] = useState<"scheduled" | "unscheduled">("scheduled");
+  const [search, setSearch] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const baseList = mode === "scheduled" ? accounts : unscheduled;
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? baseList.filter((a) => (a.name ?? "").toLowerCase().includes(q))
+    : baseList;
   const pct =
     capacity > 0 ? Math.min(100, Math.round((inFlight / capacity) * 100)) : 0;
   const barColor =
     pct >= 90 ? "bg-danger" : pct >= 70 ? "bg-warning" : "bg-primary";
-  const sortedAccounts = [...accounts].sort((a, b) => {
+  const sortedAccounts = [...filtered].sort((a, b) => {
     const ai = concurrency.account?.[String(a.id)]?.current_in_use ?? 0;
     const bi = concurrency.account?.[String(b.id)]?.current_in_use ?? 0;
     return bi - ai;
@@ -1166,6 +1199,27 @@ function GroupCard({
               </span>
             )}
             {accounts.length} 渠道
+            {unscheduled.length > 0 && (
+              <Chip
+                size="sm"
+                variant={mode === "unscheduled" ? "solid" : "flat"}
+                color={mode === "unscheduled" ? "warning" : "default"}
+                className="cursor-pointer"
+                onClick={() =>
+                  setMode((m) =>
+                    m === "scheduled" ? "unscheduled" : "scheduled",
+                  )
+                }
+                classNames={{
+                  base: "h-5",
+                  content: "text-[11px] px-1.5",
+                }}
+              >
+                {mode === "unscheduled"
+                  ? `回到调度中`
+                  : `未调度 ${unscheduled.length}`}
+              </Chip>
+            )}
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -1178,6 +1232,64 @@ function GroupCard({
           <span className="text-xs font-mono text-default-600">
             {inFlight} / {capacity || "∞"}
           </span>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input
+            size="sm"
+            placeholder="搜索账号名…"
+            value={search}
+            onValueChange={setSearch}
+            classNames={{ inputWrapper: "h-7 min-h-7" }}
+            className="flex-1 min-w-[140px]"
+          />
+          {mode === "unscheduled" && unscheduled.length > 0 && (
+            <Button
+              size="sm"
+              color="primary"
+              variant="flat"
+              isLoading={bulkBusy}
+              onPress={async () => {
+                if (siteId == null) return;
+                const targets = filtered;
+                if (targets.length === 0) return;
+                if (
+                  !confirm(
+                    `确定将这 ${targets.length} 个账号的"参与调度"全部打开？`,
+                  )
+                ) {
+                  return;
+                }
+                setBulkBusy(true);
+                try {
+                  const results = await Promise.all(
+                    targets.map((a) =>
+                      fetch(
+                        `/api/scheduling/${siteId}/channels/${a.id}/schedulable`,
+                        {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ schedulable: true }),
+                        },
+                      )
+                        .then((r) => r.ok)
+                        .catch(() => false),
+                    ),
+                  );
+                  const ok = results.filter(Boolean).length;
+                  addToast({
+                    title: `已启用调度 ${ok}/${targets.length}`,
+                    color: ok === targets.length ? "success" : "warning",
+                  });
+                  await onAfterChange();
+                  setMode("scheduled");
+                } finally {
+                  setBulkBusy(false);
+                }
+              }}
+            >
+              一键启用调度（{filtered.length}）
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardBody className="pt-0 gap-1">
@@ -1204,7 +1316,12 @@ function GroupCard({
                 )}
               </span>
               <div className="flex-1 min-w-0">
-                <div className="font-medium truncate">{a.name}</div>
+                <div className="font-medium truncate flex items-center gap-1.5">
+                  <span className="truncate">{a.name}</span>
+                  <span className="text-[10px] text-default-400 font-normal shrink-0">
+                    P{a.priority ?? 0}
+                  </span>
+                </div>
                 <div className="flex items-center gap-1 leading-tight">
                   {a.schedulable === false && (
                     <span className="text-[10px] text-warning">未调度</span>
