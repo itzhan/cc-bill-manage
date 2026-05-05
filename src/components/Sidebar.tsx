@@ -24,7 +24,7 @@ interface NavItem {
 
 const items: NavItem[] = [
   { href: "/", label: "仪表盘", icon: <LayoutDashboard size={18} /> },
-  { href: "/upstream", label: "上游账号", icon: <Server size={18} /> },
+  { href: "/upstream", label: "渠道管理", icon: <Server size={18} /> },
   { href: "/site", label: "本站账号", icon: <Building2 size={18} /> },
   { href: "/bindings", label: "绑定", icon: <Link2 size={18} /> },
   { href: "/az", label: "az 管理", icon: <Wand2 size={18} /> },

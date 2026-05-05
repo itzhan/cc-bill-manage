@@ -28,6 +28,8 @@ export async function PATCH(
     baseUrl: string;
     email: string;
     password: string;
+    notes: string | null;
+    inventory: string | null;
   }>;
   const data: Record<string, unknown> = {};
   if (body.name != null) data.name = body.name;
@@ -39,6 +41,8 @@ export async function PATCH(
     data.accessToken = null;
     data.tokenExpiresAt = null;
   }
+  if (body.notes !== undefined) data.notes = body.notes;
+  if (body.inventory !== undefined) data.inventory = body.inventory;
   const item = await prisma.upstreamAccount.update({
     where: { id: numId },
     data,

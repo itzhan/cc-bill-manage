@@ -128,7 +128,7 @@ export default function AzPage() {
   const [accountsRefreshedAt, setAccountsRefreshedAt] = useState<Date | null>(
     null,
   );
-  const [statsDays, setStatsDays] = useState(30);
+  const [statsDays, setStatsDays] = useState(1);
   const [stats, setStats] = useState<StatsData | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsRefreshedAt, setStatsRefreshedAt] = useState<Date | null>(null);
@@ -1361,7 +1361,7 @@ function StatsTab({
     <div className="space-y-3 pt-2">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-default-500">区间</span>
-        {[7, 30, 60, 90].map((d) => (
+        {[1, 7, 30, 60, 90].map((d) => (
           <Chip
             key={d}
             size="sm"
@@ -1370,7 +1370,7 @@ function StatsTab({
             className="cursor-pointer"
             onClick={() => setDays(d)}
           >
-            {d} 天
+            {d === 1 ? "今日" : `${d} 天`}
           </Chip>
         ))}
         <Button size="sm" variant="flat" onPress={reload} isLoading={loading}>

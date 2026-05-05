@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   CardBody,
+  CardFooter,
   CardHeader,
   Checkbox,
   Chip,
@@ -16,18 +17,41 @@ import {
   Select,
   SelectItem,
   Spinner,
+  Tab,
   Table,
   TableBody,
   TableCell,
   TableColumn,
   TableHeader,
   TableRow,
+  Tabs,
+  Textarea,
   addToast,
   useDisclosure,
 } from "@heroui/react";
-import { ChevronRight } from "lucide-react";
+import {
+  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Mail,
+  Package,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Wallet,
+  X,
+} from "lucide-react";
 import Shell from "@/components/Shell";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
+
+interface InventoryItem {
+  name: string;
+  price?: string;
+  concurrency?: string;
+  note?: string;
+}
 
 interface UpstreamAccount {
   id: number;
@@ -35,11 +59,14 @@ interface UpstreamAccount {
   type: string;
   baseUrl: string;
   email: string;
+  password?: string;
   remoteUserId: number | null;
   lastSyncAt: string | null;
   lastSyncError: string | null;
   balance: number | null;
   balanceUpdatedAt: string | null;
+  notes: string | null;
+  inventory: string | null;
   _count?: { keys: number };
 }
 
@@ -57,24 +84,46 @@ interface UpstreamKey {
   lastUpdatedAt: string | null;
 }
 
+function parseInventory(raw: string | null): InventoryItem[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function UpstreamPage() {
   const [accounts, setAccounts] = useState<UpstreamAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const [busyRefresh, setBusyRefresh] = useState<number | null>(null);
   const [keys, setKeys] = useState<Record<number, UpstreamKey[]>>({});
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [keysModalAccount, setKeysModalAccount] =
+    useState<UpstreamAccount | null>(null);
   const [showZero, setShowZero] = useState(false);
+  const [revealed, setRevealed] = useState<Set<number>>(new Set());
 
   const newDlg = useDisclosure();
   const editDlg = useDisclosure();
+  const keysDlg = useDisclosure();
   const [editing, setEditing] = useState<UpstreamAccount | null>(null);
+  const [editTab, setEditTab] = useState<string>("creds");
   const [form, setForm] = useState({
     name: "",
     type: "sub2api",
     baseUrl: "",
     email: "",
     password: "",
+    notes: "",
+    inventory: [] as InventoryItem[],
+  });
+  const [invDraft, setInvDraft] = useState<InventoryItem>({
+    name: "",
+    price: "",
+    concurrency: "",
+    note: "",
   });
 
   async function load() {
@@ -104,7 +153,7 @@ export default function UpstreamPage() {
       } else {
         addToast({ title: "用量已更新", color: "success" });
         await load();
-        if (expanded === id) await loadKeys(id);
+        if (keysModalAccount?.id === id) await loadKeys(id);
       }
     } finally {
       setBusy(null);
@@ -123,7 +172,7 @@ export default function UpstreamPage() {
       } else {
         addToast({ title: "结构已刷新", color: "success" });
         await load();
-        if (expanded === id) await loadKeys(id);
+        if (keysModalAccount?.id === id) await loadKeys(id);
       }
     } finally {
       setBusyRefresh(null);
@@ -143,7 +192,17 @@ export default function UpstreamPage() {
   }
 
   function openNew() {
-    setForm({ name: "", type: "sub2api", baseUrl: "", email: "", password: "" });
+    setForm({
+      name: "",
+      type: "sub2api",
+      baseUrl: "",
+      email: "",
+      password: "",
+      notes: "",
+      inventory: [],
+    });
+    setInvDraft({ name: "", price: "", concurrency: "", note: "" });
+    setEditTab("creds");
     newDlg.onOpen();
   }
   function openEdit(a: UpstreamAccount) {
@@ -154,24 +213,74 @@ export default function UpstreamPage() {
       baseUrl: a.baseUrl,
       email: a.email,
       password: "",
+      notes: a.notes ?? "",
+      inventory: parseInventory(a.inventory),
     });
+    setInvDraft({ name: "", price: "", concurrency: "", note: "" });
+    setEditTab("inventory");
     editDlg.onOpen();
+  }
+
+  function openKeys(a: UpstreamAccount) {
+    setKeysModalAccount(a);
+    keysDlg.onOpen();
+    if (!keys[a.id]) loadKeys(a.id);
+  }
+
+  function addInventoryDraft() {
+    if (!invDraft.name.trim()) return;
+    setForm((f) => ({ ...f, inventory: [...f.inventory, { ...invDraft }] }));
+    setInvDraft({ name: "", price: "", concurrency: "", note: "" });
+  }
+  function removeInventory(i: number) {
+    setForm((f) => ({
+      ...f,
+      inventory: f.inventory.filter((_, idx) => idx !== i),
+    }));
+  }
+
+  // Pull pending invDraft (user typed but didn't click +) into the list at
+  // submit time so saves don't silently drop the row they just typed.
+  function flushedInventory(): InventoryItem[] {
+    if (invDraft.name.trim()) {
+      return [...form.inventory, { ...invDraft }];
+    }
+    return form.inventory;
   }
 
   async function submitNew() {
     if (!form.name || !form.baseUrl || !form.email || !form.password) {
-      addToast({ title: "请填写完整", color: "warning" });
+      addToast({ title: "请填写完整凭据", color: "warning" });
       return;
     }
+    const inv = flushedInventory();
+    const payload = {
+      name: form.name,
+      type: form.type,
+      baseUrl: form.baseUrl,
+      email: form.email,
+      password: form.password,
+    };
     const res = await fetch("/api/upstream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       addToast({ title: "创建失败", description: j.error, color: "danger" });
       return;
+    }
+    const created = await res.json();
+    if (form.notes || inv.length) {
+      await fetch(`/api/upstream/${created.item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notes: form.notes || null,
+          inventory: inv.length ? JSON.stringify(inv) : null,
+        }),
+      });
     }
     newDlg.onClose();
     addToast({ title: "已创建", color: "success" });
@@ -180,10 +289,13 @@ export default function UpstreamPage() {
 
   async function submitEdit() {
     if (!editing) return;
+    const inv = flushedInventory();
     const payload: Record<string, unknown> = {
       name: form.name,
       baseUrl: form.baseUrl,
       email: form.email,
+      notes: form.notes || null,
+      inventory: inv.length ? JSON.stringify(inv) : null,
     };
     if (form.password) payload.password = form.password;
     const res = await fetch(`/api/upstream/${editing.id}`, {
@@ -201,13 +313,20 @@ export default function UpstreamPage() {
     await load();
   }
 
-  async function toggleExpand(id: number) {
-    if (expanded === id) {
-      setExpanded(null);
-      return;
-    }
-    setExpanded(id);
-    if (!keys[id]) await loadKeys(id);
+  function toggleReveal(id: number) {
+    setRevealed((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function copy(text: string) {
+    navigator.clipboard.writeText(text).then(
+      () => addToast({ title: "已复制", color: "success" }),
+      () => addToast({ title: "复制失败", color: "danger" }),
+    );
   }
 
   useEffect(() => {
@@ -216,10 +335,15 @@ export default function UpstreamPage() {
 
   return (
     <Shell>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">上游账号</h1>
-        <Button color="primary" onPress={openNew}>
-          + 新建
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h1 className="text-2xl font-bold">渠道管理</h1>
+          <p className="text-xs text-default-500 mt-0.5">
+            凭据 · 余额 · 货源情况 · 点卡片底部按钮查看消费明细
+          </p>
+        </div>
+        <Button color="primary" startContent={<Plus size={14} />} onPress={openNew}>
+          新建
         </Button>
       </div>
 
@@ -232,227 +356,225 @@ export default function UpstreamPage() {
           <CardBody className="text-default-500">暂无上游账号</CardBody>
         </Card>
       ) : (
-        <div className="space-y-4">
-          {accounts.map((a) => (
-            <Card key={a.id}>
-              <CardHeader
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  // ignore clicks that come from action buttons
-                  if ((e.target as HTMLElement).closest("[data-stop-toggle]"))
-                    return;
-                  toggleExpand(a.id);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    toggleExpand(a.id);
-                  }
-                }}
-                className="flex justify-between flex-wrap gap-2 cursor-pointer hover:bg-default-50 transition-colors"
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {accounts.map((a) => {
+            const inv = parseInventory(a.inventory);
+            const isRevealed = revealed.has(a.id);
+            return (
+              <Card
+                key={a.id}
+                className="bg-content1 border border-divider/50 shadow-none"
               >
-                <div className="flex items-start gap-2">
-                  <ChevronRight
-                    size={16}
-                    className={`mt-1 text-default-400 transition-transform ${expanded === a.id ? "rotate-90" : ""}`}
-                  />
-                  <div>
+                <CardHeader className="flex justify-between items-start gap-2 pb-2">
+                  <div className="flex flex-col leading-tight min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold">{a.name}</h3>
+                      <h3 className="font-semibold text-base truncate">
+                        {a.name}
+                      </h3>
                       <Chip size="sm" variant="flat">
                         {a.type}
                       </Chip>
-                      <Chip size="sm" variant="flat" color="default">
-                        {a._count?.keys ?? 0} keys
-                      </Chip>
-                      {a.balance != null && (
-                        <Chip
-                          size="sm"
-                          variant="flat"
-                          color={a.balance > 0 ? "success" : "warning"}
-                        >
-                          余额 {fmtMoneyShort(a.balance)}
-                        </Chip>
-                      )}
                       {a.lastSyncError && (
                         <Chip size="sm" color="danger" variant="flat">
                           同步失败
                         </Chip>
                       )}
                     </div>
-                    <p className="text-xs text-default-500 mt-1">
-                      {a.email} @ {a.baseUrl} · 最后同步:{" "}
-                      {fmtDate(a.lastSyncAt)}
-                      {a.balanceUpdatedAt && (
-                        <>
-                          {" "}· 余额更新: {fmtDate(a.balanceUpdatedAt)}
-                        </>
-                      )}
-                    </p>
-                    {a.lastSyncError && (
-                      <p className="text-xs text-danger mt-1 break-all">
-                        {a.lastSyncError}
-                      </p>
-                    )}
+                    <span className="text-xs text-default-400 mt-0.5">
+                      最后同步 {fmtDate(a.lastSyncAt)}
+                    </span>
                   </div>
-                </div>
-                <div className="flex gap-2" data-stop-toggle>
-                  <Button
-                    size="sm"
-                    variant="flat"
-                    onPress={() => syncOne(a.id)}
-                    isLoading={busy === a.id}
-                  >
-                    同步用量
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="flat"
-                    onPress={() => refreshOne(a.id)}
-                    isLoading={busyRefresh === a.id}
-                  >
-                    结构刷新
-                  </Button>
-                  <Button size="sm" variant="flat" onPress={() => openEdit(a)}>
-                    编辑
-                  </Button>
-                  <Button
-                    size="sm"
-                    color="danger"
-                    variant="flat"
-                    onPress={() => remove(a.id)}
-                  >
-                    删除
-                  </Button>
-                </div>
-              </CardHeader>
-              {expanded === a.id && (
-                <CardBody>
-                  {!keys[a.id] ? (
-                    <Spinner size="sm" />
-                  ) : keys[a.id].length === 0 ? (
-                    <p className="text-default-500 text-sm">
-                      暂无 keys。点同步先拉一次。
-                    </p>
-                  ) : (() => {
-                    const base = showZero
-                      ? keys[a.id]
-                      : keys[a.id].filter((k) => k.todayActualCost > 0);
-                    const filtered = [...base].sort(
-                      (x, y) => y.todayActualCost - x.todayActualCost,
-                    );
-                    const hiddenCount = keys[a.id].length - filtered.length;
-                    return (
-                      <>
-                        <div className="flex items-center justify-between mb-2 text-xs text-default-500">
-                          <Checkbox
-                            size="sm"
-                            isSelected={showZero}
-                            onValueChange={setShowZero}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex flex-col items-end leading-tight">
+                      <div className="flex items-center gap-1 text-default-500 text-xs">
+                        <Wallet size={12} /> 余额
+                      </div>
+                      <span
+                        className={`font-bold ${
+                          a.balance == null
+                            ? "text-default-400"
+                            : a.balance > 0
+                              ? "text-success"
+                              : "text-warning"
+                        }`}
+                      >
+                        {a.balance == null
+                          ? "—"
+                          : `$${fmtMoneyShort(a.balance)}`}
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      isIconOnly
+                      onPress={() => refreshOne(a.id)}
+                      isLoading={busyRefresh === a.id || busy === a.id}
+                      title="刷新（结构 + 用量）"
+                    >
+                      <RefreshCw size={14} />
+                    </Button>
+                  </div>
+                </CardHeader>
+
+                <CardBody className="pt-0 gap-3">
+                  {/* 凭据 */}
+                  <section className="rounded-lg bg-content2/50 p-2.5 space-y-1.5">
+                    <CredRow
+                      icon={<KeyRound size={12} />}
+                      label="URL"
+                      value={a.baseUrl}
+                      onCopy={() => copy(a.baseUrl)}
+                    />
+                    <CredRow
+                      icon={<Mail size={12} />}
+                      label="Email"
+                      value={a.email}
+                      onCopy={() => copy(a.email)}
+                    />
+                    <CredRow
+                      icon={<KeyRound size={12} />}
+                      label="密码"
+                      value={
+                        a.password
+                          ? isRevealed
+                            ? a.password
+                            : "•".repeat(Math.min(a.password.length, 12))
+                          : "—"
+                      }
+                      mono
+                      after={
+                        a.password ? (
+                          <button
+                            className="text-default-400 hover:text-default-700"
+                            onClick={() => toggleReveal(a.id)}
+                            title={isRevealed ? "隐藏" : "显示"}
                           >
-                            显示今日 0 消费的 key
-                          </Checkbox>
-                          {!showZero && hiddenCount > 0 && (
-                            <span>
-                              已隐藏 {hiddenCount} 个 0 消费 key
-                            </span>
-                          )}
+                            {isRevealed ? (
+                              <EyeOff size={14} />
+                            ) : (
+                              <Eye size={14} />
+                            )}
+                          </button>
+                        ) : null
+                      }
+                      onCopy={a.password ? () => copy(a.password!) : undefined}
+                    />
+                  </section>
+
+                  {/* 货源 */}
+                  <section>
+                    <div className="flex items-center gap-1.5 text-xs text-default-500 mb-1.5">
+                      <Package size={12} />
+                      <span>货源</span>
+                      <span className="text-default-400">{inv.length}</span>
+                    </div>
+                    {inv.length === 0 ? (
+                      <p className="text-xs text-default-400 italic">
+                        未填写。点编辑添加。
+                      </p>
+                    ) : (
+                      <div className="rounded-lg overflow-hidden border border-divider/40">
+                        <div className="grid grid-cols-3 gap-1 px-2.5 py-1 text-[10px] uppercase tracking-wide text-default-400 bg-content2/40">
+                          <span>名称</span>
+                          <span>倍率 / 价格</span>
+                          <span>并发</span>
                         </div>
-                        {filtered.length === 0 ? (
-                          <p className="text-default-500 text-sm">
-                            没有今日有消费的 key。勾选上方可显示全部。
-                          </p>
-                        ) : (
-                          <Table removeWrapper aria-label="keys">
-                            <TableHeader>
-                              <TableColumn>名称</TableColumn>
-                              <TableColumn>分组×倍率</TableColumn>
-                              <TableColumn>今日</TableColumn>
-                              <TableColumn>累计</TableColumn>
-                            </TableHeader>
-                            <TableBody>
-                              {filtered.map((k) => (
-                                <TableRow key={k.id}>
-                                  <TableCell>
-                                    <div className="flex flex-col leading-tight">
-                                      <span className="text-sm">{k.name}</span>
-                                      <span className="font-mono text-xs text-default-400">
-                                        {k.keyMasked}
-                                      </span>
-                                    </div>
-                                  </TableCell>
-                                  <TableCell>
-                                    <div className="flex flex-col leading-tight">
-                                      <span className="text-sm">
-                                        {k.groupName}
-                                      </span>
-                                      <span className="text-xs text-default-400">
-                                        {k.hasExclusiveRate ? (
-                                          <span className="text-primary">
-                                            专属 ×{k.effectiveRateMultiplier}
-                                          </span>
-                                        ) : (
-                                          <>×{k.groupRateMultiplier}</>
-                                        )}
-                                      </span>
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="font-medium">
-                                    {fmtMoneyShort(k.todayActualCost)}
-                                  </TableCell>
-                                  <TableCell className="text-default-500">
-                                    {fmtMoneyShort(k.totalActualCost)}
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        )}
-                      </>
-                    );
-                  })()}
+                        {inv.map((it, i) => (
+                          <div
+                            key={i}
+                            className="grid grid-cols-3 gap-1 px-2.5 py-1.5 text-xs border-t border-divider/40 items-center"
+                            title={it.note || undefined}
+                          >
+                            <span className="font-medium truncate">
+                              {it.name}
+                            </span>
+                            <span className="font-medium truncate">
+                              {it.price || (
+                                <span className="text-default-400">—</span>
+                              )}
+                            </span>
+                            <span className="font-medium truncate">
+                              {it.concurrency || (
+                                <span className="text-default-400">—</span>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* 备注 */}
+                  {a.notes && (
+                    <section className="text-xs text-default-500 whitespace-pre-wrap break-words border-l-2 border-default-200 pl-2">
+                      {a.notes}
+                    </section>
+                  )}
+
+                  {a.lastSyncError && (
+                    <p className="text-xs text-danger break-all">
+                      ⚠ {a.lastSyncError}
+                    </p>
+                  )}
                 </CardBody>
-              )}
-            </Card>
-          ))}
+
+                <CardFooter className="flex justify-between items-center gap-2 pt-0 flex-wrap">
+                  <Chip
+                    size="sm"
+                    variant="flat"
+                    className="cursor-pointer"
+                    onClick={() => openKeys(a)}
+                  >
+                    {a._count?.keys ?? 0} keys →
+                  </Chip>
+                  <div className="flex gap-1.5 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="light"
+                      isIconOnly
+                      onPress={() => openEdit(a)}
+                      title="编辑"
+                    >
+                      <Pencil size={14} />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="light"
+                      isIconOnly
+                      color="danger"
+                      onPress={() => remove(a.id)}
+                      title="删除"
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  </div>
+                </CardFooter>
+              </Card>
+            );
+          })}
         </div>
       )}
 
-      <Modal isOpen={newDlg.isOpen} onClose={newDlg.onClose}>
+      {/* 新建 / 编辑 对话框 (共用同一套 Tabs UI) */}
+      <Modal
+        isOpen={newDlg.isOpen}
+        onClose={newDlg.onClose}
+        size="2xl"
+        scrollBehavior="inside"
+      >
         <ModalContent>
           <ModalHeader>新建上游账号</ModalHeader>
-          <ModalBody className="gap-3">
-            <Input
-              label="名称"
-              value={form.name}
-              onValueChange={(v) => setForm({ ...form, name: v })}
-            />
-            <Select
-              label="类型"
-              selectedKeys={new Set([form.type])}
-              onSelectionChange={(k) =>
-                setForm({ ...form, type: Array.from(k)[0] as string })
-              }
-            >
-              <SelectItem key="sub2api">sub2api</SelectItem>
-            </Select>
-            <Input
-              label="Base URL"
-              placeholder="http://1.2.3.4:8080"
-              value={form.baseUrl}
-              onValueChange={(v) => setForm({ ...form, baseUrl: v })}
-            />
-            <Input
-              label="Email"
-              value={form.email}
-              onValueChange={(v) => setForm({ ...form, email: v })}
-            />
-            <Input
-              label="密码"
-              type="password"
-              value={form.password}
-              onValueChange={(v) => setForm({ ...form, password: v })}
+          <ModalBody>
+            <AccountFormTabs
+              tab={editTab}
+              setTab={setEditTab}
+              form={form}
+              setForm={setForm}
+              invDraft={invDraft}
+              setInvDraft={setInvDraft}
+              addInventoryDraft={addInventoryDraft}
+              removeInventory={removeInventory}
+              isNew
             />
           </ModalBody>
           <ModalFooter>
@@ -466,30 +588,25 @@ export default function UpstreamPage() {
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={editDlg.isOpen} onClose={editDlg.onClose}>
+      <Modal
+        isOpen={editDlg.isOpen}
+        onClose={editDlg.onClose}
+        size="2xl"
+        scrollBehavior="inside"
+      >
         <ModalContent>
-          <ModalHeader>编辑上游账号</ModalHeader>
-          <ModalBody className="gap-3">
-            <Input
-              label="名称"
-              value={form.name}
-              onValueChange={(v) => setForm({ ...form, name: v })}
-            />
-            <Input
-              label="Base URL"
-              value={form.baseUrl}
-              onValueChange={(v) => setForm({ ...form, baseUrl: v })}
-            />
-            <Input
-              label="Email"
-              value={form.email}
-              onValueChange={(v) => setForm({ ...form, email: v })}
-            />
-            <Input
-              label="新密码（留空则不修改）"
-              type="password"
-              value={form.password}
-              onValueChange={(v) => setForm({ ...form, password: v })}
+          <ModalHeader>编辑 · {editing?.name}</ModalHeader>
+          <ModalBody>
+            <AccountFormTabs
+              tab={editTab}
+              setTab={setEditTab}
+              form={form}
+              setForm={setForm}
+              invDraft={invDraft}
+              setInvDraft={setInvDraft}
+              addInventoryDraft={addInventoryDraft}
+              removeInventory={removeInventory}
+              isNew={false}
             />
           </ModalBody>
           <ModalFooter>
@@ -502,6 +619,379 @@ export default function UpstreamPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
+
+      {/* keys 详情 modal */}
+      <Modal
+        isOpen={keysDlg.isOpen}
+        onClose={keysDlg.onClose}
+        size="4xl"
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          <ModalHeader>
+            {keysModalAccount?.name} · keys 消费
+          </ModalHeader>
+          <ModalBody>
+            {!keysModalAccount ? null : !keys[keysModalAccount.id] ? (
+              <Spinner size="sm" />
+            ) : keys[keysModalAccount.id].length === 0 ? (
+              <p className="text-default-500 text-sm">
+                暂无 keys。先点同步或结构刷新。
+              </p>
+            ) : (
+              (() => {
+                const all = keys[keysModalAccount.id];
+                const base = showZero
+                  ? all
+                  : all.filter((k) => k.todayActualCost > 0);
+                const filtered = [...base].sort(
+                  (x, y) => y.todayActualCost - x.todayActualCost,
+                );
+                const hidden = all.length - filtered.length;
+                return (
+                  <>
+                    <div className="flex items-center justify-between mb-2 text-xs text-default-500">
+                      <Checkbox
+                        size="sm"
+                        isSelected={showZero}
+                        onValueChange={setShowZero}
+                      >
+                        显示今日 0 消费的 key
+                      </Checkbox>
+                      {!showZero && hidden > 0 && (
+                        <span>已隐藏 {hidden} 个 0 消费 key</span>
+                      )}
+                    </div>
+                    {filtered.length === 0 ? (
+                      <p className="text-default-500 text-sm">
+                        没有今日有消费的 key。
+                      </p>
+                    ) : (
+                      <Table removeWrapper aria-label="keys">
+                        <TableHeader>
+                          <TableColumn>名称</TableColumn>
+                          <TableColumn>分组×倍率</TableColumn>
+                          <TableColumn>今日</TableColumn>
+                          <TableColumn>累计</TableColumn>
+                        </TableHeader>
+                        <TableBody>
+                          {filtered.map((k) => (
+                            <TableRow key={k.id}>
+                              <TableCell>
+                                <div className="flex flex-col leading-tight">
+                                  <span className="text-sm">{k.name}</span>
+                                  <span className="font-mono text-xs text-default-400">
+                                    {k.keyMasked}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-col leading-tight">
+                                  <span className="text-sm">
+                                    {k.groupName}
+                                  </span>
+                                  <span className="text-xs text-default-400">
+                                    {k.hasExclusiveRate ? (
+                                      <span className="text-primary">
+                                        专属 ×{k.effectiveRateMultiplier}
+                                      </span>
+                                    ) : (
+                                      <>×{k.groupRateMultiplier}</>
+                                    )}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="font-medium">
+                                {fmtMoneyShort(k.todayActualCost)}
+                              </TableCell>
+                              <TableCell className="text-default-500">
+                                {fmtMoneyShort(k.totalActualCost)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </>
+                );
+              })()
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              size="sm"
+              variant="flat"
+              onPress={() =>
+                keysModalAccount && syncOne(keysModalAccount.id)
+              }
+              isLoading={busy === keysModalAccount?.id}
+            >
+              同步用量
+            </Button>
+            <Button
+              size="sm"
+              variant="flat"
+              onPress={() =>
+                keysModalAccount && refreshOne(keysModalAccount.id)
+              }
+              isLoading={busyRefresh === keysModalAccount?.id}
+            >
+              结构刷新
+            </Button>
+            <Button variant="flat" onPress={keysDlg.onClose}>
+              关闭
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </Shell>
+  );
+}
+
+function CredRow({
+  icon,
+  label,
+  value,
+  mono,
+  after,
+  onCopy,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  mono?: boolean;
+  after?: React.ReactNode;
+  onCopy?: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="text-default-400 flex items-center gap-1 w-12 shrink-0">
+        {icon}
+        {label}
+      </span>
+      <span
+        className={`flex-1 truncate ${mono ? "font-mono" : ""}`}
+        title={value}
+      >
+        {value}
+      </span>
+      {after}
+      {onCopy && (
+        <button
+          className="text-default-400 hover:text-default-700"
+          onClick={onCopy}
+          title="复制"
+        >
+          <Copy size={12} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function AccountFormTabs({
+  tab,
+  setTab,
+  form,
+  setForm,
+  invDraft,
+  setInvDraft,
+  addInventoryDraft,
+  removeInventory,
+  isNew,
+}: {
+  tab: string;
+  setTab: (v: string) => void;
+  form: {
+    name: string;
+    type: string;
+    baseUrl: string;
+    email: string;
+    password: string;
+    notes: string;
+    inventory: InventoryItem[];
+  };
+  setForm: (
+    f: (prev: {
+      name: string;
+      type: string;
+      baseUrl: string;
+      email: string;
+      password: string;
+      notes: string;
+      inventory: InventoryItem[];
+    }) => {
+      name: string;
+      type: string;
+      baseUrl: string;
+      email: string;
+      password: string;
+      notes: string;
+      inventory: InventoryItem[];
+    },
+  ) => void;
+  invDraft: InventoryItem;
+  setInvDraft: (v: InventoryItem) => void;
+  addInventoryDraft: () => void;
+  removeInventory: (i: number) => void;
+  isNew: boolean;
+}) {
+  return (
+    <Tabs
+      selectedKey={tab}
+      onSelectionChange={(k) => setTab(String(k))}
+      variant="underlined"
+      classNames={{ tabList: "px-0" }}
+    >
+      <Tab key="inventory" title="货源">
+        <div className="space-y-3 pt-2">
+          <div className="grid grid-cols-12 gap-2 items-end">
+            <Input
+              size="sm"
+              label="名称"
+              placeholder="Claude Sonnet"
+              className="col-span-3"
+              value={invDraft.name}
+              onValueChange={(v) =>
+                setInvDraft({ ...invDraft, name: v })
+              }
+            />
+            <Input
+              size="sm"
+              label="价格"
+              placeholder="$5/M"
+              className="col-span-3"
+              value={invDraft.price ?? ""}
+              onValueChange={(v) =>
+                setInvDraft({ ...invDraft, price: v })
+              }
+            />
+            <Input
+              size="sm"
+              label="并发"
+              placeholder="100"
+              className="col-span-2"
+              value={invDraft.concurrency ?? ""}
+              onValueChange={(v) =>
+                setInvDraft({ ...invDraft, concurrency: v })
+              }
+            />
+            <Input
+              size="sm"
+              label="备注"
+              placeholder="可选"
+              className="col-span-3"
+              value={invDraft.note ?? ""}
+              onValueChange={(v) => setInvDraft({ ...invDraft, note: v })}
+            />
+            <Button
+              size="sm"
+              color="primary"
+              variant="flat"
+              isIconOnly
+              className="col-span-1"
+              onPress={addInventoryDraft}
+              isDisabled={!invDraft.name.trim()}
+            >
+              <Plus size={14} />
+            </Button>
+          </div>
+          {invDraft.name.trim() && (
+            <p className="text-xs text-warning">
+              ⚠ 上方有未添加的草稿「{invDraft.name}」，点 + 添加；保存时也会自动加入
+            </p>
+          )}
+          {form.inventory.length === 0 ? (
+            <p className="text-xs text-default-400 italic">
+              未添加货源。填上面的输入框 + 点 + 添加。
+            </p>
+          ) : (
+            <Table removeWrapper aria-label="inventory" classNames={{ td: "py-2" }}>
+              <TableHeader>
+                <TableColumn>名称</TableColumn>
+                <TableColumn>价格</TableColumn>
+                <TableColumn>并发</TableColumn>
+                <TableColumn>备注</TableColumn>
+                <TableColumn> </TableColumn>
+              </TableHeader>
+              <TableBody>
+                {form.inventory.map((it, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-medium">{it.name}</TableCell>
+                    <TableCell>{it.price || "—"}</TableCell>
+                    <TableCell>{it.concurrency || "—"}</TableCell>
+                    <TableCell className="text-default-500 text-xs">
+                      {it.note || "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="light"
+                        isIconOnly
+                        color="danger"
+                        onPress={() => removeInventory(i)}
+                      >
+                        <X size={14} />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </Tab>
+      <Tab key="creds" title="凭据">
+        <div className="space-y-3 pt-2">
+          <Input
+            label="名称"
+            value={form.name}
+            onValueChange={(v) => setForm((f) => ({ ...f, name: v }))}
+          />
+          {isNew && (
+            <Select
+              label="类型"
+              selectedKeys={new Set([form.type])}
+              onSelectionChange={(k) =>
+                setForm((f) => ({
+                  ...f,
+                  type: Array.from(k as Set<string>)[0] ?? "sub2api",
+                }))
+              }
+            >
+              <SelectItem key="sub2api">sub2api</SelectItem>
+            </Select>
+          )}
+          <Input
+            label="Base URL"
+            placeholder="http://1.2.3.4:8080"
+            value={form.baseUrl}
+            onValueChange={(v) => setForm((f) => ({ ...f, baseUrl: v }))}
+          />
+          <Input
+            label="Email"
+            value={form.email}
+            onValueChange={(v) => setForm((f) => ({ ...f, email: v }))}
+          />
+          <Input
+            label={isNew ? "密码" : "新密码（留空则不修改）"}
+            type="password"
+            value={form.password}
+            onValueChange={(v) => setForm((f) => ({ ...f, password: v }))}
+          />
+        </div>
+      </Tab>
+      <Tab key="notes" title="备注">
+        <div className="pt-2">
+          <Textarea
+            label="备注"
+            description="续费提醒、合同细节、联系人等。无格式要求"
+            minRows={6}
+            value={form.notes}
+            onValueChange={(v) => setForm((f) => ({ ...f, notes: v }))}
+          />
+        </div>
+      </Tab>
+    </Tabs>
   );
 }

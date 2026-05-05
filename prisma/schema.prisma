@@ -54,6 +54,10 @@ model UpstreamAccount {
   lastSyncError   String?
   balance         Float?
   balanceUpdatedAt DateTime?
+  // Manually-curated supply info ("货源情况").
+  // notes: free-form remarks; inventory: JSON list [{name,price,concurrency,note}]
+  notes           String?
+  inventory       String?
   createdAt       DateTime  @default(now())
 
   keys UpstreamKey[]
