@@ -336,9 +336,11 @@ export class NewApiClient {
     let totalQuota = 0;
     let totalRequests = 0;
     let totalTokens = 0;
-    const PAGE_SIZE = 1000;
-    const MAX_PAGES = 50; // safety bound: 50k entries per (token, range)
-    for (let p = 0; p < MAX_PAGES; p++) {
+    // No safety bound — paginate until the server returns a short page.
+    // High-traffic tokens may produce hundreds of thousands of entries; we
+    // need them all for an accurate backfill.
+    const PAGE_SIZE = 5000;
+    for (let p = 0; ; p++) {
       const qs = new URLSearchParams({
         type: "2",
         token_name: token.name,
