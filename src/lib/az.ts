@@ -51,7 +51,7 @@ export const DEFAULT_AZ_CONFIG: AzConfig = {
   proxy_start_index: 1,
   proxy_protocol: "socks5",
   auto_bind_proxy: true,
-  auto_pause_error_codes: [400],
+  auto_pause_error_codes: [400, 401],
 };
 
 export function readConfig(json: string | null | undefined): AzConfig {
