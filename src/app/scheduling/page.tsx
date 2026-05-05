@@ -197,6 +197,42 @@ export default function SchedulingPage() {
       });
   }, [siteId]);
 
+  // localStorage cache so the page renders instantly on entry (no waiting
+  // for the slow group-usage fan-out). Auto-poll is OFF; only the explicit
+  // 刷新 button refetches structure / bindings / group-usage / group-users.
+  // Concurrency stays on a 2s poll because it's the live indicator.
+  const cacheKey = (k: string) =>
+    siteId != null ? `scheduling.cache.site${siteId}.${k}` : "";
+  const cacheGet = useCallback(
+    <T,>(k: string): T | null => {
+      const key = cacheKey(k);
+      if (!key) return null;
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        return JSON.parse(raw) as T;
+      } catch {
+        return null;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [siteId],
+  );
+  const cacheSet = useCallback(
+    (k: string, v: unknown) => {
+      const key = cacheKey(k);
+      if (!key) return;
+      try {
+        localStorage.setItem(key, JSON.stringify(v));
+      } catch {
+        // quota etc. — ignore
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [siteId],
+  );
+  const [cacheStamp, setCacheStamp] = useState<string | null>(null);
+
   const loadStructure = useCallback(async () => {
     if (siteId == null) return;
     setStructureLoading(true);
@@ -210,14 +246,17 @@ export default function SchedulingPage() {
         return;
       }
       setError(null);
-      setGroups(j.groups || []);
-      setAccounts(j.accounts || []);
+      const groupsArr = j.groups || [];
+      const accountsArr = j.accounts || [];
+      setGroups(groupsArr);
+      setAccounts(accountsArr);
+      cacheSet("structure", { groups: groupsArr, accounts: accountsArr });
     } catch (e) {
       setError(String(e));
     } finally {
       setStructureLoading(false);
     }
-  }, [siteId]);
+  }, [siteId, cacheSet]);
 
   const loadConcurrency = useCallback(async () => {
     if (siteId == null) return;
@@ -239,11 +278,15 @@ export default function SchedulingPage() {
         cache: "no-store",
       });
       const j = await r.json();
-      if (r.ok) setBindings(j.byRemoteAccountId || {});
+      if (r.ok) {
+        const m = j.byRemoteAccountId || {};
+        setBindings(m);
+        cacheSet("bindings", m);
+      }
     } catch {
       // ignore
     }
-  }, [siteId]);
+  }, [siteId, cacheSet]);
 
   const loadGroupUsage = useCallback(async () => {
     if (siteId == null) return;
@@ -252,11 +295,15 @@ export default function SchedulingPage() {
         cache: "no-store",
       });
       const j = await r.json();
-      if (r.ok) setGroupUsage(j.byGroup || {});
+      if (r.ok) {
+        const m = j.byGroup || {};
+        setGroupUsage(m);
+        cacheSet("groupUsage", m);
+      }
     } catch {
       // ignore
     }
-  }, [siteId]);
+  }, [siteId, cacheSet]);
 
   const loadGroupUsers = useCallback(async () => {
     if (siteId == null) return;
@@ -265,69 +312,108 @@ export default function SchedulingPage() {
         cache: "no-store",
       });
       const j = await r.json();
-      if (r.ok) setGroupUsers(j.groups || []);
+      if (r.ok) {
+        const arr = j.groups || [];
+        setGroupUsers(arr);
+        cacheSet("groupUsers", arr);
+      }
     } catch {
       // ignore
     }
-  }, [siteId]);
+  }, [siteId, cacheSet]);
 
-  // Drive loaders.
-  // structure + bindings: 60s. concurrency: 2s. all paused when tab hidden.
+  // Manual refresh: fetches everything fresh and stamps the cache.
+  const refreshAll = useCallback(async () => {
+    if (siteId == null) return;
+    await Promise.all([
+      loadStructure(),
+      loadBindings(),
+      loadConcurrency(),
+      loadGroupUsage(),
+      ...(view === "users" ? [loadGroupUsers()] : []),
+    ]);
+    const now = new Date().toISOString();
+    cacheSet("stamp", now);
+    setCacheStamp(now);
+  }, [
+    siteId,
+    view,
+    loadStructure,
+    loadBindings,
+    loadConcurrency,
+    loadGroupUsage,
+    loadGroupUsers,
+    cacheSet,
+  ]);
+
   const visibleRef = useRef<boolean>(
     typeof document === "undefined" ? true : !document.hidden,
   );
+
+  // On site change: hydrate from cache (instant render). Only fetch fresh
+  // when there's no cache (first visit) — otherwise the user must hit 刷新.
   useEffect(() => {
     if (siteId == null) return;
-    loadStructure();
-    loadBindings();
+    const cachedStruct = cacheGet<{
+      groups: GroupRow[];
+      accounts: AccountRow[];
+    }>("structure");
+    const cachedBindings = cacheGet<Record<string, BindingInfo[]>>("bindings");
+    const cachedUsage = cacheGet<typeof groupUsage>("groupUsage");
+    const cachedUsers = cacheGet<GroupUsersRow[]>("groupUsers");
+    const cachedStamp = cacheGet<string>("stamp");
+    let hasAny = false;
+    if (cachedStruct) {
+      setGroups(cachedStruct.groups || []);
+      setAccounts(cachedStruct.accounts || []);
+      hasAny = true;
+    }
+    if (cachedBindings) {
+      setBindings(cachedBindings);
+      hasAny = true;
+    }
+    if (cachedUsage) {
+      setGroupUsage(cachedUsage);
+      hasAny = true;
+    }
+    if (cachedUsers) {
+      setGroupUsers(cachedUsers);
+    }
+    if (cachedStamp) setCacheStamp(cachedStamp);
+    if (!hasAny) {
+      // Cold start — fetch once so the page isn't blank.
+      refreshAll();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteId]);
+
+  // Concurrency keeps a 2s poll regardless — it's the live indicator and
+  // the call is cheap. Paused while tab is hidden.
+  useEffect(() => {
+    if (siteId == null) return;
     loadConcurrency();
-    loadGroupUsage();
     const tick = () => {
       if (!visibleRef.current) return;
       loadConcurrency();
     };
-    const tickStruct = () => {
-      if (!visibleRef.current) return;
-      loadStructure();
-    };
-    const tickBind = () => {
-      if (!visibleRef.current) return;
-      loadBindings();
-    };
-    const tickUsage = () => {
-      if (!visibleRef.current) return;
-      loadGroupUsage();
-    };
-    const t1 = setInterval(tick, POLL_MS);
-    const t2 = setInterval(tickStruct, STRUCTURE_MS);
-    const t3 = setInterval(tickBind, BINDINGS_MS);
-    const t4 = setInterval(tickUsage, STRUCTURE_MS);
+    const t = setInterval(tick, POLL_MS);
     const onVis = () => {
       visibleRef.current = !document.hidden;
-      if (!document.hidden) {
-        loadConcurrency();
-      }
+      if (!document.hidden) loadConcurrency();
     };
     document.addEventListener("visibilitychange", onVis);
     return () => {
-      clearInterval(t1);
-      clearInterval(t2);
-      clearInterval(t3);
-      clearInterval(t4);
+      clearInterval(t);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [siteId, loadConcurrency, loadStructure, loadBindings, loadGroupUsage]);
+  }, [siteId, loadConcurrency]);
 
-  // Group-users view: load on demand + slow refresh (60s) while active.
+  // Group-users view: load on first switch if cache empty.
   useEffect(() => {
     if (siteId == null || view !== "users") return;
-    loadGroupUsers();
-    const t = setInterval(() => {
-      if (!visibleRef.current) return;
-      loadGroupUsers();
-    }, STRUCTURE_MS);
-    return () => clearInterval(t);
-  }, [siteId, view, loadGroupUsers]);
+    if (groupUsers.length === 0) loadGroupUsers();
+    // No interval — explicit refresh only.
+  }, [siteId, view, groupUsers.length, loadGroupUsers]);
 
   // === aggregate per group ===
   // Compile exclude prefixes once. Lines starting with # treated as comments.
@@ -497,7 +583,12 @@ export default function SchedulingPage() {
         <div>
           <h1 className="text-2xl font-bold">资源调度</h1>
           <p className="text-xs text-default-500 mt-0.5">
-            按分组聚合 · in-flight 每 2 秒刷新 · 站点结构每 60 秒刷新
+            按分组聚合 · in-flight 每 2 秒刷新 · 结构数据本地缓存，点刷新更新
+            {cacheStamp && (
+              <span className="ml-2 text-default-400">
+                上次刷新 {new Date(cacheStamp).toLocaleString("zh-CN")}
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -519,11 +610,7 @@ export default function SchedulingPage() {
             size="sm"
             variant="flat"
             startContent={<RefreshCw size={14} />}
-            onPress={() => {
-              loadStructure();
-              loadConcurrency();
-              loadBindings();
-            }}
+            onPress={() => refreshAll()}
             isLoading={structureLoading}
           >
             刷新
