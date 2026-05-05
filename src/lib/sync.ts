@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { Sub2ApiClient } from "./sub2api";
 import type { AdminUser } from "./sub2api";
+import { makeUpstreamApiClient } from "./upstream-client";
 import { getDashboardSummary } from "./dashboard";
 import { maybeSendDiffAlert } from "./mailer";
 
@@ -127,30 +128,15 @@ function maskKey(k: string) {
 
 function makeUpstreamClient(acc: {
   id: number;
+  type: string;
   baseUrl: string;
   email: string;
   password: string;
   accessToken: string | null;
+  remoteUserId?: number | null;
 }) {
-  return new Sub2ApiClient(
-    {
-      baseUrl: acc.baseUrl,
-      email: acc.email,
-      password: acc.password,
-      accessToken: acc.accessToken,
-    },
-    {
-      onTokenRefreshed: async (newToken, expiresInSec) => {
-        await prisma.upstreamAccount.update({
-          where: { id: acc.id },
-          data: {
-            accessToken: newToken,
-            tokenExpiresAt: new Date(Date.now() + expiresInSec * 1000),
-          },
-        });
-      },
-    },
-  );
+  // Routes to sub2api or newapi based on type. See upstream-client.ts.
+  return makeUpstreamApiClient(acc);
 }
 
 function makeSiteClient(acc: {
@@ -222,7 +208,12 @@ export async function refreshUpstreamAccount(id: number): Promise<void> {
             ? k.group_id
             : null) ?? k.group?.id ?? 0;
         const groupDefault = k.group?.rate_multiplier ?? 1;
-        const override = userRates[resolvedGroupId];
+        const groupName = k.group?.name ?? "";
+        // sub2api userRates is keyed by group id (number); newapi by group
+        // name (string). Try id first, then name — covers both adapters.
+        const override =
+          (userRates as Record<string | number, number>)[resolvedGroupId] ??
+          (userRates as Record<string | number, number>)[groupName];
         const effective = override ?? groupDefault;
         const hasExclusive = override != null && override !== groupDefault;
         const newToday = u.today_actual_cost;

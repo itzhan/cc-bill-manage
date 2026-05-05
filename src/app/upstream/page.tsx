@@ -973,6 +973,7 @@ function AccountFormTabs({
               }
             >
               <SelectItem key="sub2api">sub2api</SelectItem>
+              <SelectItem key="newapi">newapi</SelectItem>
             </Select>
           )}
           <Input
@@ -982,7 +983,8 @@ function AccountFormTabs({
             onValueChange={(v) => setForm((f) => ({ ...f, baseUrl: v }))}
           />
           <Input
-            label="Email"
+            label="Email / 用户名"
+            description="newapi 的话填用户名（不是邮箱），sub2api 填邮箱"
             value={form.email}
             onValueChange={(v) => setForm((f) => ({ ...f, email: v }))}
           />

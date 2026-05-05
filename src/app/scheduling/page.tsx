@@ -1170,7 +1170,12 @@ function GroupCard({
     capacity > 0 ? Math.min(100, Math.round((inFlight / capacity) * 100)) : 0;
   const barColor =
     pct >= 90 ? "bg-danger" : pct >= 70 ? "bg-warning" : "bg-primary";
+  // Sort by today's user_cost desc (matches the "$X" cell shown on each row).
+  // Fall back to in-flight when stats unavailable so live activity still wins.
   const sortedAccounts = [...filtered].sort((a, b) => {
+    const ac = accountStats[String(a.id)]?.user_cost ?? 0;
+    const bc = accountStats[String(b.id)]?.user_cost ?? 0;
+    if (bc !== ac) return bc - ac;
     const ai = concurrency.account?.[String(a.id)]?.current_in_use ?? 0;
     const bi = concurrency.account?.[String(b.id)]?.current_in_use ?? 0;
     return bi - ai;

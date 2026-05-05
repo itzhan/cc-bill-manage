@@ -3,6 +3,7 @@ import { Sub2ApiClient } from "./sub2api";
 
 interface UpstreamAccountRow {
   id: number;
+  type: string;
   baseUrl: string;
   email: string;
   password: string;
@@ -146,10 +147,14 @@ export async function backfillRange(
     { remoteAccountId: number; account: SiteAccountRow }
   >();
   for (const b of bindings) {
-    upKeyMap.set(b.upstreamKey.id, {
-      remoteKeyId: b.upstreamKey.remoteKeyId,
-      account: b.upstreamKey.upstreamAccount,
-    });
+    // Historical backfill uses sub2api-only endpoints (getKeyUsageStats);
+    // newapi upstreams aren't supported here yet — skip silently.
+    if (b.upstreamKey.upstreamAccount.type === "sub2api") {
+      upKeyMap.set(b.upstreamKey.id, {
+        remoteKeyId: b.upstreamKey.remoteKeyId,
+        account: b.upstreamKey.upstreamAccount,
+      });
+    }
     siteAccMap.set(b.siteBoundAccount.id, {
       remoteAccountId: b.siteBoundAccount.remoteAccountId,
       account: b.siteBoundAccount.siteAccount,
