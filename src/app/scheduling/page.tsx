@@ -132,6 +132,18 @@ export default function SchedulingPage() {
     Record<string, { cost: number; actualCost: number; requests: number }>
   >({});
   const [groupUsers, setGroupUsers] = useState<GroupUsersRow[]>([]);
+  const [accountStats, setAccountStats] = useState<
+    Record<
+      string,
+      {
+        requests: number;
+        tokens: number;
+        cost: number;
+        user_cost: number;
+        standard_cost?: number;
+      }
+    >
+  >({});
   const [view, setView] = useState<"channels" | "users">("channels");
   const [structureLoading, setStructureLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -305,6 +317,23 @@ export default function SchedulingPage() {
     }
   }, [siteId, cacheSet]);
 
+  const loadAccountStats = useCallback(async () => {
+    if (siteId == null) return;
+    try {
+      const r = await fetch(`/api/scheduling/${siteId}/today-stats`, {
+        cache: "no-store",
+      });
+      const j = await r.json();
+      if (r.ok) {
+        const m = j.stats || {};
+        setAccountStats(m);
+        cacheSet("accountStats", m);
+      }
+    } catch {
+      // ignore
+    }
+  }, [siteId, cacheSet]);
+
   const loadGroupUsers = useCallback(async () => {
     if (siteId == null) return;
     try {
@@ -330,6 +359,7 @@ export default function SchedulingPage() {
       loadBindings(),
       loadConcurrency(),
       loadGroupUsage(),
+      loadAccountStats(),
       ...(view === "users" ? [loadGroupUsers()] : []),
     ]);
     const now = new Date().toISOString();
@@ -342,6 +372,7 @@ export default function SchedulingPage() {
     loadBindings,
     loadConcurrency,
     loadGroupUsage,
+    loadAccountStats,
     loadGroupUsers,
     cacheSet,
   ]);
@@ -361,6 +392,7 @@ export default function SchedulingPage() {
     const cachedBindings = cacheGet<Record<string, BindingInfo[]>>("bindings");
     const cachedUsage = cacheGet<typeof groupUsage>("groupUsage");
     const cachedUsers = cacheGet<GroupUsersRow[]>("groupUsers");
+    const cachedStats = cacheGet<typeof accountStats>("accountStats");
     const cachedStamp = cacheGet<string>("stamp");
     let hasAny = false;
     if (cachedStruct) {
@@ -378,6 +410,9 @@ export default function SchedulingPage() {
     }
     if (cachedUsers) {
       setGroupUsers(cachedUsers);
+    }
+    if (cachedStats) {
+      setAccountStats(cachedStats);
     }
     if (cachedStamp) setCacheStamp(cachedStamp);
     if (!hasAny) {
@@ -414,6 +449,21 @@ export default function SchedulingPage() {
     if (groupUsers.length === 0) loadGroupUsers();
     // No interval — explicit refresh only.
   }, [siteId, view, groupUsers.length, loadGroupUsers]);
+
+  // Account today stats: 2-minute auto-poll (cheaper than concurrency,
+  // independent cadence). Paused while tab is hidden.
+  useEffect(() => {
+    if (siteId == null) return;
+    const ACCOUNT_STATS_MS = 2 * 60 * 1000;
+    const tick = () => {
+      if (!visibleRef.current) return;
+      loadAccountStats();
+    };
+    // No initial fetch here — cache hydrate already populated state.
+    // First fetch happens at the 2-min tick or when user clicks 刷新.
+    const t = setInterval(tick, ACCOUNT_STATS_MS);
+    return () => clearInterval(t);
+  }, [siteId, loadAccountStats]);
 
   // === aggregate per group ===
   // Compile exclude prefixes once. Lines starting with # treated as comments.
@@ -744,6 +794,7 @@ export default function SchedulingPage() {
               todayCost={g.todayCost}
               concurrency={concurrency}
               bindings={bindings}
+              accountStats={accountStats}
               onEditAccount={(a) => {
                 setEditAcc(a);
                 setEditConcurrency(String(a.concurrency ?? 0));
@@ -1064,6 +1115,7 @@ function GroupCard({
   todayCost,
   concurrency,
   bindings,
+  accountStats,
   onEditAccount,
   onAddChannel,
 }: {
@@ -1074,6 +1126,10 @@ function GroupCard({
   todayCost: number;
   concurrency: ConcurrencyState;
   bindings: Record<string, BindingInfo[]>;
+  accountStats: Record<
+    string,
+    { requests: number; cost: number; user_cost: number }
+  >;
   onEditAccount: (a: AccountRow) => void;
   onAddChannel: () => void;
 }) {
@@ -1165,6 +1221,19 @@ function GroupCard({
                   )}
                 </div>
               </div>
+              {(() => {
+                const s = accountStats[String(a.id)];
+                const userCost = s?.user_cost ?? 0;
+                if (userCost <= 0) return null;
+                return (
+                  <span
+                    className="font-mono shrink-0 text-default-500"
+                    title={`今日 cost ${s?.cost ?? 0} · user_cost ${userCost} · req ${s?.requests ?? 0}`}
+                  >
+                    ${fmtMoneyShort(userCost)}
+                  </span>
+                );
+              })()}
               <span
                 className={`font-mono shrink-0 ${
                   off
