@@ -371,6 +371,7 @@ function ImportAccountsTab({
 }) {
   const [text, setText] = useState("");
   const [costText, setCostText] = useState("500");
+  const [alias, setAlias] = useState("");
   const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [preview, setPreview] = useState<{
@@ -378,8 +379,11 @@ function ImportAccountsTab({
     nextSequenceStart: number;
     existingAccountCount: number;
     unboundProxyCount: number;
+    aliasMode?: boolean;
+    effectivePrefix?: string;
   } | null>(null);
   const [results, setResults] = useState<ResultRow[] | null>(null);
+  const aliasMode = alias.trim().length > 0;
   const [shareProxy, setShareProxy] = useState(false);
   const [proxies, setProxies] = useState<
     Array<{ id: number; name: string }> | null
@@ -387,7 +391,8 @@ function ImportAccountsTab({
   const [sharedProxyId, setSharedProxyId] = useState<string>("");
 
   useEffect(() => {
-    if (!shareProxy || proxies !== null) return;
+    // Load proxies when share-proxy is toggled OR alias mode requires it.
+    if (!(shareProxy || aliasMode) || proxies !== null) return;
     let cancelled = false;
     fetch(`/api/az/${siteId}/proxies`)
       .then((r) => r.json())
@@ -400,7 +405,7 @@ function ImportAccountsTab({
     return () => {
       cancelled = true;
     };
-  }, [shareProxy, proxies, siteId]);
+  }, [shareProxy, aliasMode, proxies, siteId]);
 
   async function parse() {
     setParsing(true);
@@ -409,7 +414,7 @@ function ImportAccountsTab({
       const r = await fetch(`/api/az/${siteId}/parse/accounts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, alias: alias.trim() || undefined }),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -433,16 +438,26 @@ function ImportAccountsTab({
       const costNum = Number(costText);
       const cost =
         Number.isFinite(costNum) && costNum >= 0 ? costNum : null;
+      // alias mode forces shareProxy: user must pick a single proxy.
+      const effectiveShareProxy = shareProxy || aliasMode;
       const singleProxyId =
-        shareProxy && sharedProxyId ? Number(sharedProxyId) : null;
-      if (shareProxy && !singleProxyId) {
-        addToast({ title: "请选择共用代理", color: "warning" });
+        effectiveShareProxy && sharedProxyId ? Number(sharedProxyId) : null;
+      if (effectiveShareProxy && !singleProxyId) {
+        addToast({
+          title: aliasMode ? "别称模式下必须指定共用代理" : "请选择共用代理",
+          color: "warning",
+        });
         return;
       }
       const r = await fetch(`/api/az/${siteId}/import/accounts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows, cost, singleProxyId }),
+        body: JSON.stringify({
+          rows,
+          cost,
+          singleProxyId,
+          alias: alias.trim() || undefined,
+        }),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -486,28 +501,48 @@ sk-yyyy`}
           className="w-[200px]"
           min={0}
         />
+        <Input
+          size="sm"
+          label="账号别称（可选）"
+          description={
+            aliasMode
+              ? `账号将命名为 ${config.account_prefix}${alias.trim()}-N · 该模式自动关闭代理自动配对，必须手动指定一个共用代理`
+              : `留空则用默认前缀 ${config.account_prefix}N；填写后命名为 ${config.account_prefix}{别称}-N`
+          }
+          placeholder="例如 o总"
+          value={alias}
+          onValueChange={setAlias}
+          className="w-[220px]"
+        />
         <Button color="primary" onPress={parse} isLoading={parsing} isDisabled={!text.trim()}>
           解析 + 预览
         </Button>
         <span className="text-xs text-default-500 self-center">
           应用规则：分组 [{config.group_ids.join(",") || "未配置"}] · 并发{" "}
           {config.concurrency} · 倍率 ×{config.rate_multiplier} ·{" "}
-          {config.auto_bind_proxy ? "自动绑定代理" : "不绑代理"}
+          {aliasMode
+            ? "（别称模式 · 共用代理）"
+            : config.auto_bind_proxy
+              ? "自动绑定代理"
+              : "不绑代理"}
         </span>
       </div>
 
       <div className="flex items-end gap-3 flex-wrap">
         <Checkbox
           size="sm"
-          isSelected={shareProxy}
+          isSelected={shareProxy || aliasMode}
+          isDisabled={aliasMode}
           onValueChange={(v) => {
             setShareProxy(v);
             if (!v) setSharedProxyId("");
           }}
         >
-          <span className="text-xs">本批共用同一个代理</span>
+          <span className="text-xs">
+            本批共用同一个代理{aliasMode && "（别称模式下强制开启）"}
+          </span>
         </Checkbox>
-        {shareProxy && (
+        {(shareProxy || aliasMode) && (
           <Select
             size="sm"
             label="代理"
@@ -525,9 +560,9 @@ sk-yyyy`}
             ))}
           </Select>
         )}
-        {shareProxy && (
+        {(shareProxy || aliasMode) && (
           <span className="text-xs text-default-500 self-center">
-            勾选后忽略默认的"未绑代理顺序分配"，整批账号都绑这一个代理
+            整批账号都绑这一个代理（自动配对被禁用）
           </span>
         )}
       </div>
@@ -1004,22 +1039,122 @@ claude-haiku-4-5-20251001`}
             </div>
           </div>
 
-          <Input
-            size="sm"
-            label="停止调度的错误码"
-            description="逗号分隔，例如 400, 429。命中任一即自动停止该账号调度。留空表示禁用此规则"
-            placeholder="400"
-            value={(c.auto_pause_error_codes ?? []).join(", ")}
-            onValueChange={(v) =>
-              update(
-                "auto_pause_error_codes",
-                v
-                  .split(/[,\s]+/)
-                  .map((s) => Number(s.trim()))
-                  .filter((n) => Number.isFinite(n) && n > 0),
-              )
-            }
-          />
+          <div className="flex flex-col gap-2 p-3 rounded-lg bg-content2/40">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">临时不可调度规则</span>
+              <Switch
+                size="sm"
+                isSelected={c.temp_unschedulable_enabled !== false}
+                onValueChange={(v) => update("temp_unschedulable_enabled", v)}
+              />
+            </div>
+            <p className="text-xs text-default-500">
+              命中错误码 + 关键词时，临时停用该渠道指定分钟数；过后自动恢复
+            </p>
+            <div className="flex flex-col gap-2">
+              {(c.temp_unschedulable_rules ?? []).map((rule, idx) => (
+                <div
+                  key={idx}
+                  className="grid grid-cols-12 gap-1 items-end"
+                >
+                  <Input
+                    size="sm"
+                    type="number"
+                    label="错误码"
+                    className="col-span-2"
+                    value={String(rule.error_code)}
+                    onValueChange={(v) => {
+                      const next = [...(c.temp_unschedulable_rules ?? [])];
+                      next[idx] = {
+                        ...rule,
+                        error_code: Math.max(0, Math.floor(Number(v) || 0)),
+                      };
+                      update("temp_unschedulable_rules", next);
+                    }}
+                  />
+                  <Input
+                    size="sm"
+                    label="关键词（逗号分隔）"
+                    className="col-span-5"
+                    value={rule.keywords.join(", ")}
+                    onValueChange={(v) => {
+                      const next = [...(c.temp_unschedulable_rules ?? [])];
+                      next[idx] = {
+                        ...rule,
+                        keywords: v
+                          .split(/,\s*/)
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      };
+                      update("temp_unschedulable_rules", next);
+                    }}
+                  />
+                  <Input
+                    size="sm"
+                    type="number"
+                    label="时长（分钟）"
+                    className="col-span-2"
+                    value={String(rule.duration_minutes)}
+                    onValueChange={(v) => {
+                      const next = [...(c.temp_unschedulable_rules ?? [])];
+                      next[idx] = {
+                        ...rule,
+                        duration_minutes: Math.max(
+                          1,
+                          Math.floor(Number(v) || 1),
+                        ),
+                      };
+                      update("temp_unschedulable_rules", next);
+                    }}
+                  />
+                  <Input
+                    size="sm"
+                    label="说明"
+                    className="col-span-2"
+                    value={rule.description ?? ""}
+                    onValueChange={(v) => {
+                      const next = [...(c.temp_unschedulable_rules ?? [])];
+                      next[idx] = { ...rule, description: v };
+                      update("temp_unschedulable_rules", next);
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    isIconOnly
+                    color="danger"
+                    variant="light"
+                    className="col-span-1"
+                    onPress={() => {
+                      const next = (c.temp_unschedulable_rules ?? []).filter(
+                        (_, i) => i !== idx,
+                      );
+                      update("temp_unschedulable_rules", next);
+                    }}
+                  >
+                    ×
+                  </Button>
+                </div>
+              ))}
+              <Button
+                size="sm"
+                variant="flat"
+                onPress={() => {
+                  const next = [
+                    ...(c.temp_unschedulable_rules ?? []),
+                    {
+                      error_code: 400,
+                      keywords: ["has been blocked"],
+                      duration_minutes: 120,
+                      description: "",
+                    },
+                  ];
+                  update("temp_unschedulable_rules", next);
+                }}
+              >
+                + 添加规则
+              </Button>
+            </div>
+          </div>
         </ModalBody>
         <ModalFooter>
           <Button variant="flat" onPress={onClose}>
@@ -1056,14 +1191,23 @@ function BulkUpdateTab({
   const [updateMapping, setUpdateMapping] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // When the account list arrives (or changes), default-select everything
-  // not currently in the user's `selected` set IF the list is freshly empty.
+  // Bulk apply only operates on healthy (status=active) channels — never
+  // touch the broken ones. Hidden / non-active accounts can be unblocked
+  // from sub2api admin first; they reappear here once back to active.
+  const visibleAccounts = useMemo(
+    () => (accounts ?? []).filter((a) => a.status === "active"),
+    [accounts],
+  );
+  const hiddenCount = (accounts?.length ?? 0) - visibleAccounts.length;
+
+  // When the visible list arrives (or changes), default-select everything
+  // IF the list is freshly empty.
   useEffect(() => {
-    if (accounts && selected.size === 0) {
-      setSelected(new Set(accounts.map((a) => a.id)));
+    if (visibleAccounts.length > 0 && selected.size === 0) {
+      setSelected(new Set(visibleAccounts.map((a) => a.id)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accounts]);
+  }, [visibleAccounts]);
 
   function toggle(id: number) {
     const next = new Set(selected);
@@ -1126,7 +1270,8 @@ function BulkUpdateTab({
           </span>
         )}
         <span className="text-xs text-default-500">
-          已选 {selected.size} / {accounts?.length ?? 0} ·{" "}
+          已选 {selected.size} / {visibleAccounts.length}（仅显示 status=active
+          {hiddenCount > 0 ? `，已隐藏 ${hiddenCount} 个非活跃` : ""}） ·{" "}
           规则：并发 {config.concurrency} · 优先级 {config.priority} · 倍率 ×
           {config.rate_multiplier} · 分组 [{config.group_ids.join(",") || "—"}]
         </span>
@@ -1151,8 +1296,12 @@ function BulkUpdateTab({
       </div>
       {loading ? (
         <Spinner size="sm" />
-      ) : !accounts || accounts.length === 0 ? (
-        <p className="text-default-500 text-sm">没有匹配 az-N 命名的账号</p>
+      ) : visibleAccounts.length === 0 ? (
+        <p className="text-default-500 text-sm">
+          {(accounts?.length ?? 0) === 0
+            ? "没有匹配 az-N 命名的账号"
+            : `共 ${accounts?.length ?? 0} 个 az 账号，但当前都不是 active 状态`}
+        </p>
       ) : (
         <Table removeWrapper aria-label="bulk-update" classNames={{ td: "py-2" }}>
           <TableHeader>
@@ -1160,17 +1309,18 @@ function BulkUpdateTab({
               <input
                 type="checkbox"
                 checked={
-                  selected.size > 0 && selected.size === accounts.length
+                  selected.size > 0 && selected.size === visibleAccounts.length
                 }
                 ref={(el) => {
                   if (el)
                     el.indeterminate =
-                      selected.size > 0 && selected.size < accounts.length;
+                      selected.size > 0 &&
+                      selected.size < visibleAccounts.length;
                 }}
                 onChange={(e) =>
                   setSelected(
                     e.target.checked
-                      ? new Set(accounts.map((a) => a.id))
+                      ? new Set(visibleAccounts.map((a) => a.id))
                       : new Set(),
                   )
                 }
@@ -1184,7 +1334,7 @@ function BulkUpdateTab({
             <TableColumn>分组</TableColumn>
           </TableHeader>
           <TableBody>
-            {accounts.map((a) => (
+            {visibleAccounts.map((a) => (
               <TableRow key={a.id}>
                 <TableCell>
                   <input
@@ -1195,17 +1345,7 @@ function BulkUpdateTab({
                 </TableCell>
                 <TableCell className="font-medium">{a.name}</TableCell>
                 <TableCell>
-                  <Chip
-                    size="sm"
-                    variant="flat"
-                    color={
-                      a.status === "active"
-                        ? "success"
-                        : a.status === "error"
-                          ? "danger"
-                          : "default"
-                    }
-                  >
+                  <Chip size="sm" variant="flat" color="success">
                     {a.status}
                   </Chip>
                 </TableCell>

@@ -43,8 +43,18 @@ export async function POST(
     group_ids: cfg.group_ids,
     confirm_mixed_channel_risk: cfg.confirm_mixed_channel_risk,
   };
+  // Build credentials patch when there's anything to ship.
+  const credentialsPatch: Record<string, unknown> = {};
   if (body.updateModelMapping) {
-    payload.credentials = { model_mapping: cfg.model_mapping };
+    credentialsPatch.model_mapping = cfg.model_mapping;
+  }
+  const tempRules = cfg.temp_unschedulable_rules ?? [];
+  if (cfg.temp_unschedulable_enabled && tempRules.length > 0) {
+    credentialsPatch.temp_unschedulable_enabled = true;
+    credentialsPatch.temp_unschedulable_rules = tempRules;
+  }
+  if (Object.keys(credentialsPatch).length > 0) {
+    payload.credentials = credentialsPatch;
   }
 
   try {

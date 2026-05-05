@@ -39,7 +39,7 @@ async function syncSiteUsersFor(
   > = {};
   let usageMapWorked = true;
   try {
-    usageMap = await client.getUsersUsage();
+    usageMap = await client.getUsersUsage(users.map((u) => u.id));
   } catch {
     usageMapWorked = false;
   }

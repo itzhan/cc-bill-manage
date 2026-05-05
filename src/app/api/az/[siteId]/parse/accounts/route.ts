@@ -12,8 +12,12 @@ export async function POST(
 ) {
   const { siteId } = await ctx.params;
   const id = Number(siteId);
-  const body = (await req.json().catch(() => ({}))) as { text?: string };
+  const body = (await req.json().catch(() => ({}))) as {
+    text?: string;
+    alias?: string;
+  };
   const text = body.text ?? "";
+  const alias = (body.alias ?? "").trim();
   const parsed = parseAccountText(text);
 
   // Load preset for naming convention
@@ -21,6 +25,13 @@ export async function POST(
     where: { siteAccountId: id },
   });
   const cfg = readConfig(preset?.config);
+  // When alias is set, effective prefix becomes `{cfg.account_prefix}{alias}-`
+  // (e.g. cfg.account_prefix=az- + alias=o总 → "az-o总-"). Numbering starts
+  // from 1 within that namespace.
+  const effectivePrefix = alias
+    ? `${cfg.account_prefix}${alias}-`
+    : cfg.account_prefix;
+  const aliasMode = alias.length > 0;
 
   // Hit upstream to learn current account names + proxies (for dedupe and
   // assigning the next az-N number)
@@ -33,19 +44,22 @@ export async function POST(
     //   - "existing names matching az-prefix" → filter client-side by name
     //   - "which proxies are already used"     → scan proxy_id field
     // Previously this fired listAdminAccountsFiltered TWICE.
+    // alias mode disables proxy auto-bind (user picks one shared proxy at
+    // submit time); skip the proxies fetch entirely in that mode.
+    const wantProxies = cfg.auto_bind_proxy && !aliasMode;
     const [allAccsResp, allProxies] = await Promise.all([
       client.listAdminAccountsFiltered({ page_size: 1000 }),
-      cfg.auto_bind_proxy
+      wantProxies
         ? client.listAdminProxiesAll()
         : Promise.resolve([] as Awaited<ReturnType<typeof client.listAdminProxiesAll>>),
     ]);
     const allAccounts = allAccsResp.items;
-    const prefix = cfg.account_prefix;
+    // Match against effective prefix so alias namespaces have their own counter.
     existingNames = allAccounts
-      .filter((a) => a.name.startsWith(prefix))
+      .filter((a) => a.name.startsWith(effectivePrefix))
       .map((a) => a.name);
 
-    if (cfg.auto_bind_proxy) {
+    if (wantProxies) {
       const usedProxyIds = new Set(
         allAccounts
           .map((a) => (a as { proxy_id?: number }).proxy_id ?? null)
@@ -72,6 +86,7 @@ export async function POST(
 
   // Detect duplicate (base_url + api_key) within input
   const seen = new Set<string>();
+  const proxyAuto = cfg.auto_bind_proxy && !aliasMode;
   const previewRows = parsed.map((p, i) => {
     const key = `${p.base_url}|${p.api_key}`;
     const isDup = seen.has(key);
@@ -79,19 +94,19 @@ export async function POST(
     const nextNum =
       nextSequenceNumber(
         existingNames,
-        cfg.account_prefix,
+        effectivePrefix,
         cfg.account_start_index,
       ) + i;
-    const matched = cfg.auto_bind_proxy ? proxyByNum.get(nextNum) : undefined;
+    const matched = proxyAuto ? proxyByNum.get(nextNum) : undefined;
     return {
       index: p.index,
-      proposedName: `${cfg.account_prefix}${nextNum}`,
+      proposedName: `${effectivePrefix}${nextNum}`,
       base_url: p.base_url,
       api_key: p.api_key,
       warnings: [
         ...p.warnings,
         ...(isDup ? ["与同一批次内的另一行重复"] : []),
-        ...(cfg.auto_bind_proxy && !matched
+        ...(proxyAuto && !matched
           ? [`未找到对应代理 (proxy-${nextNum})`]
           : []),
       ],
@@ -104,10 +119,12 @@ export async function POST(
     rows: previewRows,
     nextSequenceStart: nextSequenceNumber(
       existingNames,
-      cfg.account_prefix,
+      effectivePrefix,
       cfg.account_start_index,
     ),
     existingAccountCount: existingNames.length,
     unboundProxyCount: unboundProxyIds.length,
+    aliasMode,
+    effectivePrefix,
   });
 }

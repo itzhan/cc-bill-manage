@@ -65,6 +65,8 @@ interface AccountRow {
   // Dedicated "participate in dispatch" flag on sub2api admin account.
   // When false, the dispatcher excludes this account regardless of status.
   schedulable?: boolean;
+  // Free-text annotation on the channel (sub2api `notes` field).
+  notes?: string | null;
 }
 
 interface ConcurrencyState {
@@ -154,6 +156,7 @@ export default function SchedulingPage() {
   const [editActive, setEditActive] = useState(true);
   const [editSchedulable, setEditSchedulable] = useState(true);
   const [editGroupIds, setEditGroupIds] = useState<Set<string>>(new Set());
+  const [editNotes, setEditNotes] = useState<string>("");
   // Filters (persisted to localStorage)
   const [statusFilter, setStatusFilter] = useState<
     "all" | "active" | "inactive"
@@ -832,6 +835,7 @@ export default function SchedulingPage() {
                 setEditGroupIds(
                   new Set((a.group_ids ?? []).map(String)),
                 );
+                setEditNotes(a.notes ?? "");
                 editDlg.onOpen();
               }}
               onAddChannel={() => {
@@ -956,6 +960,13 @@ export default function SchedulingPage() {
                     </SelectItem>
                   ))}
                 </Select>
+                <Textarea
+                  label="备注"
+                  placeholder="渠道说明 / 续费日期 / 联系人 等"
+                  minRows={2}
+                  value={editNotes}
+                  onValueChange={setEditNotes}
+                />
                 <Button
                   size="sm"
                   variant="flat"
@@ -1001,6 +1012,7 @@ export default function SchedulingPage() {
                       ? Math.floor(p)
                       : (editAcc.priority ?? 0),
                   group_ids: Array.from(editGroupIds).map(Number),
+                  notes: editNotes || null,
                 });
                 editDlg.onClose();
               }}
@@ -1288,6 +1300,14 @@ function GroupCard({
                   {bind.length > 0 && bind[0].maxConcurrency != null && (
                     <span className="text-[10px] text-primary">
                       绑 max {bind[0].maxConcurrency}
+                    </span>
+                  )}
+                  {a.notes && (
+                    <span
+                      className="text-[10px] text-default-500 truncate"
+                      title={a.notes}
+                    >
+                      📝 {a.notes}
                     </span>
                   )}
                   {errored && a.error_message && (

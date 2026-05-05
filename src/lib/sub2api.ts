@@ -495,7 +495,10 @@ export class Sub2ApiClient {
 
   // Bulk per-user today + lifetime cost in a single call. Replaces the
   // pattern of fanning out /admin/usage/stats?user_id=N per user.
-  async getUsersUsage(): Promise<
+  // Sub2api requires user_ids in the body (otherwise 400).
+  async getUsersUsage(
+    userIds: number[],
+  ): Promise<
     Record<
       string,
       {
@@ -506,6 +509,7 @@ export class Sub2ApiClient {
       }
     >
   > {
+    if (!userIds.length) return {};
     const data = await this.request<{
       stats:
         | Record<
@@ -523,7 +527,9 @@ export class Sub2ApiClient {
             today_cost?: number;
             total_actual_cost?: number;
           }>;
-    }>("POST", `/api/v1/admin/dashboard/users-usage`, {});
+    }>("POST", `/api/v1/admin/dashboard/users-usage`, {
+      user_ids: userIds,
+    });
     // Server may return either array or object. Normalise to object.
     const out: Record<
       string,

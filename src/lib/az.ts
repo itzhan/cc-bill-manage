@@ -1,6 +1,16 @@
 // Default rule config and parsing helpers for the az batch tool.
 // Stored as JSON string on AzPreset.config; client and server share this shape.
 
+// Maps to sub2api credentials.temp_unschedulable_rules item.
+// On match (error code + any keyword), the channel is auto-paused for
+// `duration_minutes` then re-eligible for dispatch.
+export interface TempUnschedulableRule {
+  error_code: number;
+  keywords: string[];
+  duration_minutes: number;
+  description: string;
+}
+
 export interface AzConfig {
   // Account creation defaults
   platform: string;
@@ -22,10 +32,10 @@ export interface AzConfig {
   proxy_protocol: string;
   auto_bind_proxy: boolean;
 
-  // Stop scheduling automatically when the upstream returns one of these
-  // HTTP status codes. Maps to credentials.custom_error_codes on sub2api.
-  // Empty array → feature disabled (custom_error_codes_enabled=false).
-  auto_pause_error_codes: number[];
+  // Temporary auto-pause on error+keyword match.
+  // Replaces the old `custom_error_codes` flat list.
+  temp_unschedulable_enabled: boolean;
+  temp_unschedulable_rules: TempUnschedulableRule[];
 }
 
 export const DEFAULT_AZ_CONFIG: AzConfig = {
@@ -51,7 +61,15 @@ export const DEFAULT_AZ_CONFIG: AzConfig = {
   proxy_start_index: 1,
   proxy_protocol: "socks5",
   auto_bind_proxy: true,
-  auto_pause_error_codes: [400, 401, 403],
+  temp_unschedulable_enabled: true,
+  temp_unschedulable_rules: [
+    {
+      error_code: 400,
+      keywords: ["has been blocked"],
+      duration_minutes: 120,
+      description: "",
+    },
+  ],
 };
 
 export function readConfig(json: string | null | undefined): AzConfig {
