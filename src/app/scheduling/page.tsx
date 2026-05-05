@@ -559,10 +559,15 @@ export default function SchedulingPage() {
         else slot.inactive++;
       }
     }
-    // Build unscheduled list across the *unfiltered* accounts so cards can
-    // expose "显示未调度" view even when the global filter hides them.
+    // Build unscheduled list — apply the same name-prefix excludeList
+    // (e.g. "az-" / "test-") so cards don't surface accounts the user
+    // explicitly hid. Status filter is intentionally NOT applied here:
+    // the unscheduled view is its own scope.
+    const isExcluded = (n: string) =>
+      excludeList.some((p) => n.toLowerCase().startsWith(p.toLowerCase()));
     for (const a of accounts) {
       if (a.schedulable !== false) continue;
+      if (isExcluded(a.name ?? "")) continue;
       const ids = a.group_ids ?? [];
       for (const gid of ids) {
         const slot = byGroup.get(gid);
@@ -579,7 +584,14 @@ export default function SchedulingPage() {
     // Primary: today's actual cost desc. Tiebreak: in-flight desc.
     arr.sort((a, b) => b.todayCost - a.todayCost || b.inFlight - a.inFlight);
     return arr;
-  }, [groups, filteredAccounts, accounts, concurrency, groupUsage]);
+  }, [
+    groups,
+    filteredAccounts,
+    accounts,
+    concurrency,
+    groupUsage,
+    excludeList,
+  ]);
 
   const hiddenCount = accounts.length - filteredAccounts.length;
 
@@ -811,8 +823,6 @@ export default function SchedulingPage() {
               concurrency={concurrency}
               bindings={bindings}
               accountStats={accountStats}
-              siteId={siteId}
-              onAfterChange={refreshAll}
               onEditAccount={(a) => {
                 setEditAcc(a);
                 setEditConcurrency(String(a.concurrency ?? 0));
@@ -1135,10 +1145,8 @@ function GroupCard({
   concurrency,
   bindings,
   accountStats,
-  siteId,
   onEditAccount,
   onAddChannel,
-  onAfterChange,
 }: {
   group: GroupRow;
   accounts: AccountRow[];
@@ -1152,14 +1160,11 @@ function GroupCard({
     string,
     { requests: number; cost: number; user_cost: number }
   >;
-  siteId: number | null;
   onEditAccount: (a: AccountRow) => void;
   onAddChannel: () => void;
-  onAfterChange: () => Promise<void> | void;
 }) {
   const [mode, setMode] = useState<"scheduled" | "unscheduled">("scheduled");
   const [search, setSearch] = useState("");
-  const [bulkBusy, setBulkBusy] = useState(false);
 
   const baseList = mode === "scheduled" ? accounts : unscheduled;
   const q = search.trim().toLowerCase();
@@ -1238,64 +1243,13 @@ function GroupCard({
             {inFlight} / {capacity || "∞"}
           </span>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Input
-            size="sm"
-            placeholder="搜索账号名…"
-            value={search}
-            onValueChange={setSearch}
-            classNames={{ inputWrapper: "h-7 min-h-7" }}
-            className="flex-1 min-w-[140px]"
-          />
-          {mode === "unscheduled" && unscheduled.length > 0 && (
-            <Button
-              size="sm"
-              color="primary"
-              variant="flat"
-              isLoading={bulkBusy}
-              onPress={async () => {
-                if (siteId == null) return;
-                const targets = filtered;
-                if (targets.length === 0) return;
-                if (
-                  !confirm(
-                    `确定将这 ${targets.length} 个账号的"参与调度"全部打开？`,
-                  )
-                ) {
-                  return;
-                }
-                setBulkBusy(true);
-                try {
-                  const results = await Promise.all(
-                    targets.map((a) =>
-                      fetch(
-                        `/api/scheduling/${siteId}/channels/${a.id}/schedulable`,
-                        {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ schedulable: true }),
-                        },
-                      )
-                        .then((r) => r.ok)
-                        .catch(() => false),
-                    ),
-                  );
-                  const ok = results.filter(Boolean).length;
-                  addToast({
-                    title: `已启用调度 ${ok}/${targets.length}`,
-                    color: ok === targets.length ? "success" : "warning",
-                  });
-                  await onAfterChange();
-                  setMode("scheduled");
-                } finally {
-                  setBulkBusy(false);
-                }
-              }}
-            >
-              一键启用调度（{filtered.length}）
-            </Button>
-          )}
-        </div>
+        <Input
+          size="sm"
+          placeholder="搜索账号名…"
+          value={search}
+          onValueChange={setSearch}
+          classNames={{ inputWrapper: "h-7 min-h-7" }}
+        />
       </CardHeader>
       <CardBody className="pt-0 gap-1">
         {sortedAccounts.map((a) => {
