@@ -1,5 +1,9 @@
 import { prisma } from "./db";
 import { Sub2ApiClient } from "./sub2api";
+import {
+  makeUpstreamApiClient,
+  type UpstreamApiClient,
+} from "./upstream-client";
 
 interface UpstreamAccountRow {
   id: number;
@@ -7,7 +11,9 @@ interface UpstreamAccountRow {
   baseUrl: string;
   email: string;
   password: string;
+  apiKey?: string | null;
   accessToken: string | null;
+  remoteUserId?: number | null;
 }
 interface SiteAccountRow {
   id: number;
@@ -18,26 +24,8 @@ interface SiteAccountRow {
   accessToken: string | null;
 }
 
-function makeUpstreamClient(acc: UpstreamAccountRow) {
-  return new Sub2ApiClient(
-    {
-      baseUrl: acc.baseUrl,
-      email: acc.email,
-      password: acc.password,
-      accessToken: acc.accessToken,
-    },
-    {
-      onTokenRefreshed: async (newToken, expiresInSec) => {
-        await prisma.upstreamAccount.update({
-          where: { id: acc.id },
-          data: {
-            accessToken: newToken,
-            tokenExpiresAt: new Date(Date.now() + expiresInSec * 1000),
-          },
-        });
-      },
-    },
-  );
+function makeUpstreamClient(acc: UpstreamAccountRow): UpstreamApiClient {
+  return makeUpstreamApiClient(acc);
 }
 
 function makeSiteClient(acc: SiteAccountRow) {
@@ -147,14 +135,10 @@ export async function backfillRange(
     { remoteAccountId: number; account: SiteAccountRow }
   >();
   for (const b of bindings) {
-    // Historical backfill uses sub2api-only endpoints (getKeyUsageStats);
-    // newapi upstreams aren't supported here yet — skip silently.
-    if (b.upstreamKey.upstreamAccount.type === "sub2api") {
-      upKeyMap.set(b.upstreamKey.id, {
-        remoteKeyId: b.upstreamKey.remoteKeyId,
-        account: b.upstreamKey.upstreamAccount,
-      });
-    }
+    upKeyMap.set(b.upstreamKey.id, {
+      remoteKeyId: b.upstreamKey.remoteKeyId,
+      account: b.upstreamKey.upstreamAccount,
+    });
     siteAccMap.set(b.siteBoundAccount.id, {
       remoteAccountId: b.siteBoundAccount.remoteAccountId,
       account: b.siteBoundAccount.siteAccount,
@@ -162,9 +146,9 @@ export async function backfillRange(
   }
 
   // Reuse one client per parent account to share tokens / connection.
-  const upstreamClients = new Map<number, Sub2ApiClient>();
+  const upstreamClients = new Map<number, UpstreamApiClient>();
   const siteClients = new Map<number, Sub2ApiClient>();
-  function clientForUp(acc: UpstreamAccountRow): Sub2ApiClient {
+  function clientForUp(acc: UpstreamAccountRow): UpstreamApiClient {
     let c = upstreamClients.get(acc.id);
     if (!c) {
       c = makeUpstreamClient(acc);

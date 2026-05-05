@@ -18,6 +18,18 @@ export interface UpstreamApiClient {
   listKeys(): Promise<KeyItem[]>;
   getKeysUsage(ids: number[]): Promise<Record<string, KeyUsageItem>>;
   getUserGroupRates(): Promise<Record<string | number, number>>;
+  // Historical per-key usage between two YYYY-MM-DD dates (inclusive).
+  // Used by the historical backfill flow.
+  getKeyUsageStats(
+    apiKeyId: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<{
+    total_requests: number;
+    total_cost: number;
+    total_actual_cost: number;
+    total_tokens?: number;
+  }>;
 }
 
 interface UpstreamAccountRow {

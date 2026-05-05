@@ -299,6 +299,99 @@ export class NewApiClient {
     return out;
   }
 
+  // Per-key historical usage between two YYYY-MM-DD dates (inclusive).
+  // Used by the historical backfill flow. newapi has no dedicated stats
+  // endpoint, so we paginate /api/log/self filtered by token_name + the
+  // date range and aggregate quota.
+  //
+  // The sub2api shape returns BOTH total_cost (1× base) and
+  // total_actual_cost (× user rate). On newapi the log's `quota` is the
+  // already-charged amount → that's the actual_cost. We derive 1× base
+  // by dividing by the token's current group rate (best-effort; historical
+  // rate changes aren't tracked).
+  async getKeyUsageStats(
+    apiKeyId: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<{
+    total_requests: number;
+    total_cost: number;
+    total_actual_cost: number;
+    total_tokens?: number;
+  }> {
+    if (!this.tokensCache) await this.listKeys();
+    const token = this.tokensCache?.find((t) => t.id === apiKeyId);
+    if (!token) {
+      return { total_requests: 0, total_cost: 0, total_actual_cost: 0 };
+    }
+
+    const startMs = Date.parse(`${startDate}T00:00:00+08:00`);
+    const endMs = Date.parse(`${endDate}T00:00:00+08:00`) + 86_400_000;
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      throw new Error(`bad date range: ${startDate}..${endDate}`);
+    }
+    const startTs = Math.floor(startMs / 1000);
+    const endTs = Math.floor(endMs / 1000);
+
+    let totalQuota = 0;
+    let totalRequests = 0;
+    let totalTokens = 0;
+    const PAGE_SIZE = 1000;
+    const MAX_PAGES = 50; // safety bound: 50k entries per (token, range)
+    for (let p = 0; p < MAX_PAGES; p++) {
+      const qs = new URLSearchParams({
+        type: "2",
+        token_name: token.name,
+        start_timestamp: String(startTs),
+        end_timestamp: String(endTs),
+        p: String(p),
+        size: String(PAGE_SIZE),
+      });
+      const resp = await this.request<
+        | {
+            items?: NewApiLogRow[];
+            data?: NewApiLogRow[];
+            records?: NewApiLogRow[];
+          }
+        | NewApiLogRow[]
+      >("GET", `/api/log/self?${qs.toString()}`);
+      const rows: NewApiLogRow[] = Array.isArray(resp)
+        ? resp
+        : (resp.items ?? resp.records ?? resp.data ?? []);
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        totalQuota += Number(r.quota ?? 0);
+        totalRequests++;
+        const pt = Number(
+          (r as { prompt_tokens?: number }).prompt_tokens ?? 0,
+        );
+        const ct = Number(
+          (r as { completion_tokens?: number }).completion_tokens ?? 0,
+        );
+        totalTokens += pt + ct;
+      }
+      if (rows.length < PAGE_SIZE) break;
+    }
+
+    const actualCost = totalQuota / QUOTA_PER_USD;
+    // Estimate 1× base via current group rate (good enough; historical
+    // rate changes are rare in practice).
+    let rate = 1;
+    try {
+      const rates = await this.getUserGroupRates();
+      const r = rates[token.group || ""];
+      if (typeof r === "number" && r > 0) rate = r;
+    } catch {
+      // ignore — fall back to 1×
+    }
+    return {
+      total_requests: totalRequests,
+      total_cost: rate > 0 ? actualCost / rate : actualCost,
+      total_actual_cost: actualCost,
+      total_tokens: totalTokens,
+    };
+  }
+
   async getUserGroupRates(): Promise<Record<string | number, number>> {
     type GroupRow = { ratio?: number | string; desc?: string };
     const data = await this.request<Record<string, GroupRow>>(
