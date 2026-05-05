@@ -39,9 +39,8 @@ import TopBar from "@/components/TopBar";
 import ExpenseBarChart, {
   type ExpenseBarPoint,
 } from "@/components/ExpenseBarChart";
-import TrendLineChart, {
-  type TrendPoint,
-} from "@/components/TrendLineChart";
+import { type TrendPoint } from "@/components/TrendLineChart";
+import DailyRevenueChart from "@/components/DailyRevenueChart";
 import { fmtDate, fmtMoney, fmtMoneyShort } from "@/lib/format";
 import type { DashboardSummary } from "@/lib/dashboard";
 
@@ -392,60 +391,58 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div
-            className={`grid grid-cols-1 ${view === "overview" ? "lg:grid-cols-2" : ""} gap-4 mb-6`}
-          >
-            {(view === "overview" || view === "expense") && (
-              <Card className="bg-content1 border border-divider/50 shadow-none">
-                <CardHeader className="flex justify-between items-center pb-1">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-danger/10 text-danger flex items-center justify-center">
-                      <TrendingDown size={16} />
+          {view !== "overview" && (
+            <div className="grid grid-cols-1 gap-4 mb-6">
+              {view === "expense" && (
+                <Card className="bg-content1 border border-divider/50 shadow-none">
+                  <CardHeader className="flex justify-between items-center pb-1">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-danger/10 text-danger flex items-center justify-center">
+                        <TrendingDown size={16} />
+                      </div>
+                      <div>
+                        <h2 className="font-semibold leading-tight">
+                          支出 Top（按上游 Key）
+                        </h2>
+                        <p className="text-xs text-default-500 mt-0.5">
+                          今日 today_actual_cost
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h2 className="font-semibold leading-tight">支出 Top（按上游 Key）</h2>
-                      <p className="text-xs text-default-500 mt-0.5">
-                        今日 today_actual_cost
-                      </p>
-                    </div>
-                  </div>
-                  <Chip variant="flat" size="sm">
-                    {topExpense.length} keys
-                  </Chip>
-                </CardHeader>
-                <CardBody className="pt-2">
-                  <ExpenseBarChart data={topExpense} />
-                </CardBody>
-              </Card>
-            )}
+                    <Chip variant="flat" size="sm">
+                      {topExpense.length} keys
+                    </Chip>
+                  </CardHeader>
+                  <CardBody className="pt-2">
+                    <ExpenseBarChart data={topExpense} />
+                  </CardBody>
+                </Card>
+              )}
 
-            {(view === "overview" || view === "revenue") && (
-              <Card className="bg-content1 border border-divider/50 shadow-none">
-                <CardHeader className="flex justify-between items-center pb-1 gap-3 flex-wrap">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                      <TrendingUp size={16} />
+              {view === "revenue" && (
+                <Card className="bg-content1 border border-divider/50 shadow-none">
+                  <CardHeader className="flex justify-between items-center pb-1 gap-3 flex-wrap">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-success/10 text-success flex items-center justify-center">
+                        <TrendingUp size={16} />
+                      </div>
+                      <div>
+                        <h2 className="font-semibold leading-tight">每日收入</h2>
+                        <p className="text-xs text-default-500 mt-0.5">
+                          按 Asia/Shanghai 日期 · 最近 {daily.length} 天
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h2 className="font-semibold leading-tight">收入·支出·利润 趋势</h2>
-                      <p className="text-xs text-default-500 mt-0.5">
-                        {RANGE_LABELS[range] ?? range} · 每次同步落一个快照
-                      </p>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardBody className="pt-2">
-                  <TrendLineChart data={trend} />
-                  <div className="flex flex-wrap gap-4 mt-2 text-xs text-default-500">
-                    <Legend color="bg-success" label="收入" />
-                    <Legend color="bg-danger" label="支出" />
-                    <Legend color="bg-primary" label="利润" />
-                  </div>
-                </CardBody>
-              </Card>
-            )}
-          </div>
+                  </CardHeader>
+                  <CardBody className="pt-2">
+                    <DailyRevenueChart data={daily} />
+                  </CardBody>
+                </Card>
+              )}
+            </div>
+          )}
 
+          {view === "overview" && (
           <Card className="bg-content1 border border-divider/50 shadow-none">
             <CardHeader className="flex justify-between items-center flex-wrap gap-2">
               <div>
@@ -649,11 +646,12 @@ export default function DashboardPage() {
                 </span>
               </div>
               {(() => {
-                const visibleAz = showUnusedBindings
-                  ? data.azAccounts
-                  : data.azAccounts.filter(
-                      (a) => a.todayCost > 0 || a.todayUserCost > 0,
-                    );
+                // az 段固定只展示今日有收入的账号（todayUserCost > 0）—
+                // 不受上方"显示今日无使用" checkbox 影响（该 checkbox 只
+                //控制上游绑定段）。固定成本 fixedCost 不算"今日有消费"。
+                const visibleAz = data.azAccounts.filter(
+                  (a) => a.todayUserCost > 0,
+                );
                 if (data.azAccounts.length === 0) {
                   return (
                     <p className="text-default-500 text-sm">
@@ -664,8 +662,8 @@ export default function DashboardPage() {
                 if (visibleAz.length === 0) {
                   return (
                     <p className="text-default-500 text-sm">
-                      今日 az 暂无使用。勾选「显示今日无使用」查看全部{" "}
-                      {data.azAccounts.length} 个账号。
+                      今日 az 暂无使用。共{" "}
+                      {data.azAccounts.length} 个 az 账号。
                     </p>
                   );
                 }
@@ -738,6 +736,7 @@ export default function DashboardPage() {
               })()}
             </CardBody>
           </Card>
+          )}
 
           <Card className="bg-content1 border border-divider/50 shadow-none mt-6">
             <CardHeader className="flex justify-between items-start flex-wrap gap-3">

@@ -5,9 +5,10 @@ import { getDashboardSummary } from "./dashboard";
 import { maybeSendDiffAlert } from "./mailer";
 
 // Sync admin users + their total_recharged for one site account.
-// Runs N+1 calls (1 list + N history); we parallelize history calls.
-// Errors are swallowed (logged) — users sync failure should not break the
-// account/usage sync flow.
+// Optimized to **2 calls total** (was 2N+1):
+//   1. listAdminUsers  → already includes total_recharged on newer sub2api
+//   2. getUsersUsage   → per-user today_cost / today_actual_cost in one call
+// Falls back to per-user usage stats only when the bulk endpoint 404s.
 async function syncSiteUsersFor(
   id: number,
   client: Sub2ApiClient,
@@ -25,42 +26,79 @@ async function syncSiteUsersFor(
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-  // Per user: pull total_recharged AND today's spend in parallel. Failures
-  // degrade to zero so missing endpoints don't break the whole sync.
-  const extras = await Promise.all(
-    users.map((u) =>
-      Promise.all([
-        client
-          .getUserBalanceHistory(u.id)
-          .then((h) => h.totalRecharged)
-          .catch(() => 0),
-        client
-          .getAdminUserUsageStats(u.id, today, today)
-          .catch(() => null),
-      ]),
-    ),
-  );
+
+  // One call returns today's spend for ALL users at once.
+  let usageMap: Record<
+    string,
+    {
+      user_id: number;
+      today_actual_cost: number;
+      today_cost?: number;
+    }
+  > = {};
+  let usageMapWorked = true;
+  try {
+    usageMap = await client.getUsersUsage();
+  } catch {
+    usageMapWorked = false;
+  }
+  // If bulk endpoint failed, fall back to per-user fan-out (legacy path).
+  const fallbackStats = !usageMapWorked
+    ? await Promise.all(
+        users.map((u) =>
+          client.getAdminUserUsageStats(u.id, today, today).catch(() => null),
+        ),
+      )
+    : null;
   const now = new Date();
   const seen = users.map((u) => u.id);
   await prisma.$transaction([
     ...users.map((u, i) => {
-      const [recharged, todayStats] = extras[i];
-      const data = {
+      // Normalise into a single shape regardless of source endpoint.
+      let todayCost = 0;
+      let todayActualCost = 0;
+      let hasStats = false;
+      if (usageMapWorked) {
+        const m = usageMap[String(u.id)];
+        if (m) {
+          hasStats = true;
+          todayCost = m.today_cost ?? 0;
+          todayActualCost = m.today_actual_cost ?? 0;
+        }
+      } else {
+        const fb = fallbackStats?.[i];
+        if (fb) {
+          hasStats = true;
+          todayCost = fb.total_cost ?? 0;
+          todayActualCost = fb.total_actual_cost ?? 0;
+        }
+      }
+      // Don't overwrite a previously-known totalRecharged with 0 just because
+      // this sub2api build omits it from /admin/users — only set when present.
+      const data: Record<string, unknown> = {
         email: u.email,
         username: u.username || "",
         role: u.role,
         status: u.status,
         balance: u.balance,
-        totalRecharged: recharged,
-        todayCost: todayStats?.total_cost ?? 0,
-        todayActualCost: todayStats?.total_actual_cost ?? 0,
-        todayStatsAt: todayStats ? now : null,
+        todayCost,
+        todayActualCost,
+        todayStatsAt: hasStats ? now : null,
         notes: u.notes ?? null,
         lastActiveAt: u.last_active_at ? new Date(u.last_active_at) : null,
         lastUsedAt: u.last_used_at ? new Date(u.last_used_at) : null,
         remoteCreatedAt: u.created_at ? new Date(u.created_at) : null,
         lastSyncAt: now,
       };
+      if (typeof u.total_recharged === "number") {
+        data.totalRecharged = u.total_recharged;
+      }
+      const createData = {
+        siteAccountId: id,
+        remoteUserId: u.id,
+        totalRecharged: 0,
+        ...data,
+      } as Parameters<typeof prisma.siteUser.create>[0]["data"];
       return prisma.siteUser.upsert({
         where: {
           siteAccountId_remoteUserId: {
@@ -68,7 +106,7 @@ async function syncSiteUsersFor(
             remoteUserId: u.id,
           },
         },
-        create: { siteAccountId: id, remoteUserId: u.id, ...data },
+        create: createData,
         update: data,
       });
     }),

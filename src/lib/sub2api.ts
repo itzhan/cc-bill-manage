@@ -67,6 +67,9 @@ export interface AdminUser {
   role: string;
   status: string;
   balance: number;
+  // Lifetime recharged amount — already returned by GET /admin/users on
+  // newer sub2api builds, so we don't need /balance-history per user.
+  total_recharged?: number;
   notes?: string | null;
   last_active_at?: string | null;
   last_used_at?: string | null;
@@ -467,15 +470,76 @@ export class Sub2ApiClient {
   // Resource scheduling (used by /scheduling page)
   // ============================================================
 
-  // Real-time in-flight counts. Server-side Redis aggregation; very fast.
+  // Real-time concurrency snapshot. Server-side Redis aggregation; very fast.
+  // Real shape (verified live): account map keyed by account_id with
+  // current_in_use / max_capacity / load_percentage / waiting_in_queue,
+  // plus group_id and group_name on each row.
   async getOpsConcurrency(): Promise<{
-    enabled: boolean;
-    timestamp?: string;
-    platform?: Record<string, { in_flight: number }>;
-    group?: Record<string, { in_flight: number; group_name?: string }>;
-    account?: Record<string, { in_flight: number; account_name?: string }>;
+    account?: Record<
+      string,
+      {
+        account_id: number;
+        account_name?: string;
+        platform?: string;
+        group_id?: number;
+        group_name?: string;
+        current_in_use: number;
+        max_capacity: number;
+        load_percentage?: number;
+        waiting_in_queue?: number;
+      }
+    >;
   }> {
     return this.request("GET", `/api/v1/admin/ops/concurrency`);
+  }
+
+  // Bulk per-user today + lifetime cost in a single call. Replaces the
+  // pattern of fanning out /admin/usage/stats?user_id=N per user.
+  async getUsersUsage(): Promise<
+    Record<
+      string,
+      {
+        user_id: number;
+        today_actual_cost: number;
+        today_cost?: number;
+        total_actual_cost?: number;
+      }
+    >
+  > {
+    const data = await this.request<{
+      stats:
+        | Record<
+            string,
+            {
+              user_id: number;
+              today_actual_cost: number;
+              today_cost?: number;
+              total_actual_cost?: number;
+            }
+          >
+        | Array<{
+            user_id: number;
+            today_actual_cost: number;
+            today_cost?: number;
+            total_actual_cost?: number;
+          }>;
+    }>("POST", `/api/v1/admin/dashboard/users-usage`, {});
+    // Server may return either array or object. Normalise to object.
+    const out: Record<
+      string,
+      {
+        user_id: number;
+        today_actual_cost: number;
+        today_cost?: number;
+        total_actual_cost?: number;
+      }
+    > = {};
+    if (Array.isArray(data.stats)) {
+      for (const s of data.stats) out[String(s.user_id)] = s;
+    } else if (data.stats) {
+      for (const [k, v] of Object.entries(data.stats)) out[k] = v;
+    }
+    return out;
   }
 
   async listAdminGroupsAll(): Promise<
@@ -540,6 +604,49 @@ export class Sub2ApiClient {
       /"error"\s*:/.test(text) ||
       /"code"\s*:\s*[1-9]/.test(text);
     return { ok: !failed, output: text.slice(-1500) };
+  }
+
+  // Toggle "participate in dispatch" (schedulable). Distinct from status:
+  // when false, the dispatcher excludes the account regardless of status.
+  async setAccountSchedulable(
+    id: number,
+    schedulable: boolean,
+  ): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/api/v1/admin/accounts/${id}/schedulable`,
+      { schedulable },
+    );
+  }
+
+  // Per-user cost breakdown for a single group on a date range.
+  // One HTTP call returns all users in that group with per-user cost fields.
+  async getGroupUserBreakdown(
+    groupId: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<{
+    users: Array<{
+      user_id: number;
+      email?: string;
+      requests: number;
+      total_tokens: number;
+      cost: number;
+      actual_cost: number;
+      account_cost?: number;
+    }>;
+  }> {
+    const qs = new URLSearchParams({
+      group_id: String(groupId),
+      start_date: startDate,
+      end_date: endDate,
+      timezone: "Asia/Shanghai",
+      limit: "200",
+    });
+    return this.request(
+      "GET",
+      `/api/v1/admin/dashboard/user-breakdown?${qs.toString()}`,
+    );
   }
 
   // Bulk fetch usage stats per group (per day). Used to sort groups by today

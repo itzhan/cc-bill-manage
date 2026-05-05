@@ -29,23 +29,29 @@ export async function POST(
   const proxyByNum = new Map<number, { id: number; name: string }>();
   try {
     const client = await makeSiteClient(id);
-    // 1) existing account names matching az-prefix
-    const accs = await client.listAdminAccountsFiltered({
-      search: cfg.account_prefix,
-      page_size: 1000,
-    });
-    existingNames = accs.items.map((a) => a.name);
+    // ONE list of accounts (1000 page_size) covers both:
+    //   - "existing names matching az-prefix" → filter client-side by name
+    //   - "which proxies are already used"     → scan proxy_id field
+    // Previously this fired listAdminAccountsFiltered TWICE.
+    const [allAccsResp, allProxies] = await Promise.all([
+      client.listAdminAccountsFiltered({ page_size: 1000 }),
+      cfg.auto_bind_proxy
+        ? client.listAdminProxiesAll()
+        : Promise.resolve([] as Awaited<ReturnType<typeof client.listAdminProxiesAll>>),
+    ]);
+    const allAccounts = allAccsResp.items;
+    const prefix = cfg.account_prefix;
+    existingNames = allAccounts
+      .filter((a) => a.name.startsWith(prefix))
+      .map((a) => a.name);
 
-    // 2) which proxies are already attached to some account
     if (cfg.auto_bind_proxy) {
-      const all = await client.listAdminProxiesAll();
-      const allAccs = await client.listAdminAccountsFiltered({
-        page_size: 1000,
-      });
       const usedProxyIds = new Set(
-        allAccs.items.map((a) => (a as { proxy_id?: number }).proxy_id ?? null),
+        allAccounts
+          .map((a) => (a as { proxy_id?: number }).proxy_id ?? null)
+          .filter((v): v is number => v != null),
       );
-      const unbound = all.filter((p) => !usedProxyIds.has(p.id));
+      const unbound = allProxies.filter((p) => !usedProxyIds.has(p.id));
       unboundProxyIds = unbound.map((p) => p.id);
       // name-suffix → id+name map (for az-N ↔ proxy-N pairing in preview/import)
       for (const p of unbound) {

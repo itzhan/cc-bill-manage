@@ -59,12 +59,32 @@ interface AccountRow {
   group_ids?: number[];
   platform?: string;
   type?: string;
+  // sub2api keeps status=active even when the account is failing; the real
+  // signal lives in error_message. Treat non-empty as a soft "error" flag.
+  error_message?: string | null;
+  // Dedicated "participate in dispatch" flag on sub2api admin account.
+  // When false, the dispatcher excludes this account regardless of status.
+  schedulable?: boolean;
 }
 
 interface ConcurrencyState {
-  enabled: boolean;
-  account?: Record<string, { in_flight: number }>;
-  group?: Record<string, { in_flight: number }>;
+  account?: Record<
+    string,
+    {
+      current_in_use: number;
+      max_capacity?: number;
+      group_id?: number;
+      group_name?: string;
+      waiting_in_queue?: number;
+    }
+  >;
+}
+
+function isErrored(a: AccountRow): boolean {
+  return (
+    a.status === "error" ||
+    (typeof a.error_message === "string" && a.error_message.trim().length > 0)
+  );
 }
 
 interface BindingInfo {
@@ -72,6 +92,18 @@ interface BindingInfo {
   maxConcurrency: number | null;
   upstreamKeyName: string;
   upstreamAccountName: string;
+}
+
+interface GroupUsersRow {
+  group_id: number;
+  group_name: string;
+  users: Array<{
+    user_id: number;
+    email?: string;
+    requests: number;
+    cost: number;
+    actual_cost: number;
+  }>;
 }
 
 interface TemplateRow {
@@ -92,18 +124,67 @@ export default function SchedulingPage() {
   const [siteId, setSiteId] = useState<number | null>(null);
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
-  const [concurrency, setConcurrency] = useState<ConcurrencyState>({
-    enabled: false,
-  });
+  const [concurrency, setConcurrency] = useState<ConcurrencyState>({});
   const [bindings, setBindings] = useState<
     Record<string, BindingInfo[]>
   >({});
+  const [groupUsage, setGroupUsage] = useState<
+    Record<string, { cost: number; actualCost: number; requests: number }>
+  >({});
+  const [groupUsers, setGroupUsers] = useState<GroupUsersRow[]>([]);
+  const [view, setView] = useState<"channels" | "users">("channels");
   const [structureLoading, setStructureLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyAcc, setBusyAcc] = useState<number | null>(null);
+  const [editAcc, setEditAcc] = useState<AccountRow | null>(null);
+  const [editConcurrency, setEditConcurrency] = useState<string>("");
+  const [editPriority, setEditPriority] = useState<string>("");
+  const [editActive, setEditActive] = useState(true);
+  const [editSchedulable, setEditSchedulable] = useState(true);
+  const [editGroupIds, setEditGroupIds] = useState<Set<string>>(new Set());
+  // Filters (persisted to localStorage)
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "active" | "inactive"
+  >("all");
+  const [excludePrefixes, setExcludePrefixes] = useState<string>("");
+  const [prefixDraft, setPrefixDraft] = useState<string>("");
+
+  useEffect(() => {
+    try {
+      const sf = localStorage.getItem("scheduling.statusFilter");
+      const ep = localStorage.getItem("scheduling.excludePrefixes");
+      if (sf === "all" || sf === "active" || sf === "inactive")
+        setStatusFilter(sf);
+      if (ep != null) {
+        setExcludePrefixes(ep);
+        setPrefixDraft(ep);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  function persistStatus(v: "all" | "active" | "inactive") {
+    setStatusFilter(v);
+    try {
+      localStorage.setItem("scheduling.statusFilter", v);
+    } catch {
+      // ignore
+    }
+  }
+  function persistPrefixes(v: string) {
+    setExcludePrefixes(v);
+    try {
+      localStorage.setItem("scheduling.excludePrefixes", v);
+    } catch {
+      // ignore
+    }
+  }
 
   const newDlg = useDisclosure();
   const tplDlg = useDisclosure();
+  const editDlg = useDisclosure();
+  const filterDlg = useDisclosure();
 
   // Load sub2api sites once
   useEffect(() => {
@@ -164,6 +245,32 @@ export default function SchedulingPage() {
     }
   }, [siteId]);
 
+  const loadGroupUsage = useCallback(async () => {
+    if (siteId == null) return;
+    try {
+      const r = await fetch(`/api/scheduling/${siteId}/group-usage`, {
+        cache: "no-store",
+      });
+      const j = await r.json();
+      if (r.ok) setGroupUsage(j.byGroup || {});
+    } catch {
+      // ignore
+    }
+  }, [siteId]);
+
+  const loadGroupUsers = useCallback(async () => {
+    if (siteId == null) return;
+    try {
+      const r = await fetch(`/api/scheduling/${siteId}/group-users`, {
+        cache: "no-store",
+      });
+      const j = await r.json();
+      if (r.ok) setGroupUsers(j.groups || []);
+    } catch {
+      // ignore
+    }
+  }, [siteId]);
+
   // Drive loaders.
   // structure + bindings: 60s. concurrency: 2s. all paused when tab hidden.
   const visibleRef = useRef<boolean>(
@@ -174,6 +281,7 @@ export default function SchedulingPage() {
     loadStructure();
     loadBindings();
     loadConcurrency();
+    loadGroupUsage();
     const tick = () => {
       if (!visibleRef.current) return;
       loadConcurrency();
@@ -186,9 +294,14 @@ export default function SchedulingPage() {
       if (!visibleRef.current) return;
       loadBindings();
     };
+    const tickUsage = () => {
+      if (!visibleRef.current) return;
+      loadGroupUsage();
+    };
     const t1 = setInterval(tick, POLL_MS);
     const t2 = setInterval(tickStruct, STRUCTURE_MS);
     const t3 = setInterval(tickBind, BINDINGS_MS);
+    const t4 = setInterval(tickUsage, STRUCTURE_MS);
     const onVis = () => {
       visibleRef.current = !document.hidden;
       if (!document.hidden) {
@@ -200,11 +313,77 @@ export default function SchedulingPage() {
       clearInterval(t1);
       clearInterval(t2);
       clearInterval(t3);
+      clearInterval(t4);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [siteId, loadConcurrency, loadStructure, loadBindings]);
+  }, [siteId, loadConcurrency, loadStructure, loadBindings, loadGroupUsage]);
+
+  // Group-users view: load on demand + slow refresh (60s) while active.
+  useEffect(() => {
+    if (siteId == null || view !== "users") return;
+    loadGroupUsers();
+    const t = setInterval(() => {
+      if (!visibleRef.current) return;
+      loadGroupUsers();
+    }, STRUCTURE_MS);
+    return () => clearInterval(t);
+  }, [siteId, view, loadGroupUsers]);
 
   // === aggregate per group ===
+  // Compile exclude prefixes once. Lines starting with # treated as comments.
+  const excludeList = useMemo(
+    () =>
+      excludePrefixes
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter((s) => s && !s.startsWith("#")),
+    [excludePrefixes],
+  );
+
+  // schedulable === false → user explicitly took the channel out of dispatch.
+  // Default-hide; can opt back in via the chip below.
+  const [showUnscheduled, setShowUnscheduled] = useState(false);
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("scheduling.showUnscheduled");
+      if (v === "1") setShowUnscheduled(true);
+    } catch {
+      // ignore
+    }
+  }, []);
+  function persistShowUnscheduled(v: boolean) {
+    setShowUnscheduled(v);
+    try {
+      localStorage.setItem("scheduling.showUnscheduled", v ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }
+
+  const filteredAccounts = useMemo(() => {
+    return accounts.filter((a) => {
+      if (!showUnscheduled && a.schedulable === false) return false;
+      if (statusFilter === "active" && a.status !== "active") return false;
+      if (statusFilter === "inactive" && a.status === "active") return false;
+      if (
+        excludeList.some((p) =>
+          (a.name ?? "").toLowerCase().startsWith(p.toLowerCase()),
+        )
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [accounts, statusFilter, excludeList, showUnscheduled]);
+
+  const unscheduledHiddenCount = useMemo(
+    () =>
+      showUnscheduled
+        ? 0
+        : accounts.filter((a) => a.schedulable === false).length,
+    [accounts, showUnscheduled],
+  );
+
   const grouped = useMemo(() => {
     const byGroup = new Map<
       number,
@@ -227,32 +406,44 @@ export default function SchedulingPage() {
         inactive: 0,
       });
     }
-    for (const a of accounts) {
+    for (const a of filteredAccounts) {
       const ids = a.group_ids ?? [];
       for (const gid of ids) {
         const slot = byGroup.get(gid);
         if (!slot) continue;
         slot.accounts.push(a);
         slot.capacity += a.concurrency ?? 0;
-        const inflight = concurrency.account?.[String(a.id)]?.in_flight ?? 0;
+        const inflight = concurrency.account?.[String(a.id)]?.current_in_use ?? 0;
         slot.inFlight += inflight;
         if (a.status === "active") slot.active++;
         else slot.inactive++;
       }
     }
-    const arr = [...byGroup.values()].filter((g) => g.accounts.length > 0);
-    arr.sort((a, b) => b.inFlight - a.inFlight);
+    const arr = [...byGroup.values()]
+      .filter((g) => g.accounts.length > 0)
+      .map((g) => ({
+        ...g,
+        todayCost: groupUsage[String(g.group.id)]?.actualCost ?? 0,
+      }));
+    // Primary: today's actual cost desc. Tiebreak: in-flight desc.
+    arr.sort((a, b) => b.todayCost - a.todayCost || b.inFlight - a.inFlight);
     return arr;
-  }, [groups, accounts, concurrency]);
+  }, [groups, filteredAccounts, concurrency, groupUsage]);
+
+  const hiddenCount = accounts.length - filteredAccounts.length;
 
   const stats = useMemo(() => {
     const totalInFlight = grouped.reduce((s, g) => s + g.inFlight, 0);
     const totalCap = grouped.reduce((s, g) => s + g.capacity, 0);
-    const totalAcc = accounts.length;
-    const errCount = accounts.filter((a) => a.status === "error").length;
-    const activeCount = accounts.filter((a) => a.status === "active").length;
+    const totalAcc = filteredAccounts.length;
+    const errCount = filteredAccounts.filter(isErrored).length;
+    // "Active and healthy" — exclude accounts with error_message even when
+    // sub2api still reports status=active.
+    const activeCount = filteredAccounts.filter(
+      (a) => a.status === "active" && !isErrored(a),
+    ).length;
     return { totalInFlight, totalCap, totalAcc, errCount, activeCount };
-  }, [grouped, accounts]);
+  }, [grouped, filteredAccounts]);
 
   async function patchAccount(
     accId: number,
@@ -356,6 +547,52 @@ export default function SchedulingPage() {
         </div>
       </div>
 
+      {/* Filters: status + name-prefix exclusion (persisted to localStorage) */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <span className="text-xs text-default-500">状态</span>
+        {(["all", "active", "inactive"] as const).map((v) => (
+          <Chip
+            key={v}
+            size="sm"
+            variant={statusFilter === v ? "solid" : "flat"}
+            color={statusFilter === v ? "primary" : "default"}
+            className="cursor-pointer"
+            onClick={() => persistStatus(v)}
+          >
+            {v === "all" ? "全部" : v === "active" ? "仅启用" : "仅禁用"}
+          </Chip>
+        ))}
+        <Chip
+          size="sm"
+          variant={showUnscheduled ? "solid" : "flat"}
+          color={showUnscheduled ? "primary" : "default"}
+          className="cursor-pointer"
+          onClick={() => persistShowUnscheduled(!showUnscheduled)}
+        >
+          {showUnscheduled ? "含未调度" : "仅调度中"}
+          {unscheduledHiddenCount > 0 && !showUnscheduled && (
+            <span className="ml-1 text-default-400">
+              ({unscheduledHiddenCount})
+            </span>
+          )}
+        </Chip>
+        <Button
+          size="sm"
+          variant="flat"
+          onPress={() => {
+            setPrefixDraft(excludePrefixes);
+            filterDlg.onOpen();
+          }}
+        >
+          排除前缀{excludeList.length > 0 && ` (${excludeList.length})`}
+        </Button>
+        {hiddenCount > 0 && (
+          <span className="text-xs text-default-400">
+            已隐藏 {hiddenCount} 个账号
+          </span>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         <StatCard
           label="当前总并发"
@@ -386,22 +623,30 @@ export default function SchedulingPage() {
         </Card>
       )}
 
-      {!concurrency.enabled && (
-        <Card className="mb-4 bg-warning-50 border border-warning-200 shadow-none">
-          <CardBody className="text-warning text-xs">
-            站点未启用 ops/concurrency 实时统计，in-flight 数值可能为 0。请到 sub2api 后台开启。
-          </CardBody>
-        </Card>
-      )}
+      <Tabs
+        selectedKey={view}
+        onSelectionChange={(k) => setView(String(k) as "channels" | "users")}
+        variant="underlined"
+        className="mb-4"
+        classNames={{ tabList: "px-0" }}
+      >
+        <Tab key="channels" title="渠道调度" />
+        <Tab key="users" title="分组使用" />
+      </Tabs>
 
-      {grouped.length === 0 && !structureLoading ? (
+      {view === "users" ? (
+        <GroupUsersView
+          rows={groupUsers}
+          excludeList={excludeList}
+        />
+      ) : grouped.length === 0 && !structureLoading ? (
         <Card>
           <CardBody className="text-default-500 text-sm">
             没有可显示的分组（或站点尚未拉取结构）。
           </CardBody>
         </Card>
       ) : (
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {grouped.map((g) => (
             <GroupCard
               key={g.group.id}
@@ -409,11 +654,20 @@ export default function SchedulingPage() {
               accounts={g.accounts}
               inFlight={g.inFlight}
               capacity={g.capacity}
+              todayCost={g.todayCost}
               concurrency={concurrency}
               bindings={bindings}
-              busyAcc={busyAcc}
-              onPatchAccount={patchAccount}
-              onTestAccount={testAccount}
+              onEditAccount={(a) => {
+                setEditAcc(a);
+                setEditConcurrency(String(a.concurrency ?? 0));
+                setEditPriority(String(a.priority ?? 0));
+                setEditActive(a.status === "active");
+                setEditSchedulable(a.schedulable !== false);
+                setEditGroupIds(
+                  new Set((a.group_ids ?? []).map(String)),
+                );
+                editDlg.onOpen();
+              }}
               onAddChannel={() => {
                 newDlg.onOpen();
               }}
@@ -421,6 +675,175 @@ export default function SchedulingPage() {
           ))}
         </div>
       )}
+
+      <Modal
+        isOpen={filterDlg.isOpen}
+        onClose={filterDlg.onClose}
+        size="md"
+      >
+        <ModalContent>
+          <ModalHeader>排除前缀</ModalHeader>
+          <ModalBody className="gap-3">
+            <p className="text-xs text-default-500">
+              名字以下面任一前缀开头的账号将不显示在这里。每行一个；
+              空行和以 # 开头的注释行会被忽略。大小写不敏感。
+            </p>
+            <Textarea
+              label="前缀列表"
+              placeholder={"# 注释\nxxx\nxxx1\ntest-"}
+              minRows={6}
+              value={prefixDraft}
+              onValueChange={setPrefixDraft}
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={filterDlg.onClose}>
+              取消
+            </Button>
+            <Button
+              color="primary"
+              onPress={() => {
+                persistPrefixes(prefixDraft);
+                filterDlg.onClose();
+              }}
+            >
+              保存
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={editDlg.isOpen}
+        onClose={editDlg.onClose}
+        size="md"
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          <ModalHeader>
+            编辑渠道{editAcc ? ` · ${editAcc.name}` : ""}
+          </ModalHeader>
+          <ModalBody>
+            {editAcc && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">启用 (status)</span>
+                  <Switch
+                    size="sm"
+                    isSelected={editActive}
+                    onValueChange={setEditActive}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">参与调度</span>
+                  <Switch
+                    size="sm"
+                    isSelected={editSchedulable}
+                    onValueChange={setEditSchedulable}
+                  />
+                </div>
+                <Input
+                  type="number"
+                  label="并发上限"
+                  description={`实时使用：${concurrency.account?.[String(editAcc.id)]?.current_in_use ?? 0}`}
+                  value={editConcurrency}
+                  onValueChange={setEditConcurrency}
+                  min={0}
+                />
+                <Input
+                  type="number"
+                  label="优先级"
+                  description="数字越小越靠前；同优先级随机调度"
+                  value={editPriority}
+                  onValueChange={setEditPriority}
+                  min={0}
+                />
+                <Select
+                  size="sm"
+                  label="分组"
+                  description={`已选 ${editGroupIds.size} 个 · 候选 ${groups.length}`}
+                  selectionMode="multiple"
+                  isMultiline
+                  selectedKeys={editGroupIds}
+                  onSelectionChange={(k) =>
+                    setEditGroupIds(
+                      new Set(Array.from(k as Set<React.Key>).map(String)),
+                    )
+                  }
+                  classNames={{ trigger: "min-h-12 py-2" }}
+                  renderValue={(items) => (
+                    <div className="flex flex-wrap gap-1">
+                      {items.map((it) => (
+                        <Chip key={it.key} size="sm" variant="flat">
+                          {it.textValue}
+                        </Chip>
+                      ))}
+                    </div>
+                  )}
+                >
+                  {groups.map((g) => (
+                    <SelectItem
+                      key={String(g.id)}
+                      textValue={`${g.name} (×${g.rate_multiplier})`}
+                    >
+                      {`${g.name} (×${g.rate_multiplier})`}
+                    </SelectItem>
+                  ))}
+                </Select>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  startContent={<TestTube2 size={14} />}
+                  onPress={() => testAccount(editAcc.id)}
+                >
+                  测试此渠道
+                </Button>
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={editDlg.onClose}>
+              取消
+            </Button>
+            <Button
+              color="primary"
+              isLoading={busyAcc === editAcc?.id}
+              onPress={async () => {
+                if (!editAcc || siteId == null) return;
+                const c = Number(editConcurrency);
+                const p = Number(editPriority);
+                // schedulable lives on a dedicated sub2api endpoint — call
+                // separately when it differs from current state.
+                if ((editAcc.schedulable !== false) !== editSchedulable) {
+                  await fetch(
+                    `/api/scheduling/${siteId}/channels/${editAcc.id}/schedulable`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ schedulable: editSchedulable }),
+                    },
+                  );
+                }
+                await patchAccount(editAcc.id, {
+                  status: editActive ? "active" : "inactive",
+                  concurrency:
+                    Number.isFinite(c) && c >= 0
+                      ? Math.floor(c)
+                      : (editAcc.concurrency ?? 0),
+                  priority:
+                    Number.isFinite(p) && p >= 0
+                      ? Math.floor(p)
+                      : (editAcc.priority ?? 0),
+                  group_ids: Array.from(editGroupIds).map(Number),
+                });
+                editDlg.onClose();
+              }}
+            >
+              保存
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       <NewChannelModal
         isOpen={newDlg.isOpen}
@@ -438,27 +861,133 @@ export default function SchedulingPage() {
   );
 }
 
+// ------------------------------------------------------------------
+// Group-users view: per group → list of users that called it today.
+// Useful for re-balancing accounts ("group X is dominated by user Y").
+// ------------------------------------------------------------------
+function GroupUsersView({
+  rows,
+  excludeList,
+}: {
+  rows: GroupUsersRow[];
+  excludeList: string[];
+}) {
+  // Apply the same name-prefix excludeList to filter out groups whose name
+  // starts with one of these. Sort by today's total cost desc.
+  const visible = useMemo(() => {
+    const filtered = rows.filter(
+      (g) =>
+        !excludeList.some((p) =>
+          (g.group_name ?? "").toLowerCase().startsWith(p.toLowerCase()),
+        ),
+    );
+    return filtered
+      .map((g) => ({
+        ...g,
+        totalCost: g.users.reduce((s, u) => s + (u.actual_cost ?? 0), 0),
+        totalRequests: g.users.reduce((s, u) => s + (u.requests ?? 0), 0),
+      }))
+      .filter((g) => g.users.length > 0)
+      .sort((a, b) => b.totalCost - a.totalCost);
+  }, [rows, excludeList]);
+
+  if (rows.length === 0) {
+    return (
+      <Card>
+        <CardBody className="text-default-500 text-sm">
+          加载中…（首次加载会扫描所有分组的用户消费）
+        </CardBody>
+      </Card>
+    );
+  }
+  if (visible.length === 0) {
+    return (
+      <Card>
+        <CardBody className="text-default-500 text-sm">
+          没有今天有消费的分组。
+        </CardBody>
+      </Card>
+    );
+  }
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {visible.map((g) => {
+        const sorted = [...g.users].sort(
+          (a, b) => (b.actual_cost ?? 0) - (a.actual_cost ?? 0),
+        );
+        const top = sorted[0]?.actual_cost ?? 0;
+        return (
+          <Card
+            key={g.group_id}
+            className="bg-content1 border border-divider/50 shadow-none"
+          >
+            <CardHeader className="flex justify-between items-start gap-2 pb-2">
+              <div className="flex flex-col leading-tight min-w-0">
+                <h3 className="font-semibold truncate">{g.group_name}</h3>
+                <span className="text-xs text-default-400">
+                  {g.users.length} 个用户 · {g.totalRequests.toLocaleString()} req
+                </span>
+              </div>
+              <span className="text-sm font-bold text-foreground">
+                ${fmtMoneyShort(g.totalCost)}
+              </span>
+            </CardHeader>
+            <CardBody className="pt-0 gap-1">
+              {sorted.map((u) => {
+                const pct =
+                  top > 0 ? Math.min(100, Math.round((u.actual_cost / top) * 100)) : 0;
+                return (
+                  <div
+                    key={u.user_id}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-content2/40 text-xs"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">
+                        {u.email ?? `user#${u.user_id}`}
+                      </div>
+                      <div className="h-1 rounded-full bg-content2 overflow-hidden mt-1">
+                        <div
+                          className="h-full bg-primary"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                    <span className="text-default-500 text-[11px] shrink-0">
+                      {u.requests.toLocaleString()} req
+                    </span>
+                    <span className="font-mono text-foreground shrink-0 w-16 text-right">
+                      ${fmtMoneyShort(u.actual_cost)}
+                    </span>
+                  </div>
+                );
+              })}
+            </CardBody>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 function GroupCard({
   group,
   accounts,
   inFlight,
   capacity,
+  todayCost,
   concurrency,
   bindings,
-  busyAcc,
-  onPatchAccount,
-  onTestAccount,
+  onEditAccount,
   onAddChannel,
 }: {
   group: GroupRow;
   accounts: AccountRow[];
   inFlight: number;
   capacity: number;
+  todayCost: number;
   concurrency: ConcurrencyState;
   bindings: Record<string, BindingInfo[]>;
-  busyAcc: number | null;
-  onPatchAccount: (id: number, body: Record<string, unknown>) => Promise<void>;
-  onTestAccount: (id: number) => Promise<void>;
+  onEditAccount: (a: AccountRow) => void;
   onAddChannel: () => void;
 }) {
   const pct =
@@ -466,8 +995,8 @@ function GroupCard({
   const barColor =
     pct >= 90 ? "bg-danger" : pct >= 70 ? "bg-warning" : "bg-primary";
   const sortedAccounts = [...accounts].sort((a, b) => {
-    const ai = concurrency.account?.[String(a.id)]?.in_flight ?? 0;
-    const bi = concurrency.account?.[String(b.id)]?.in_flight ?? 0;
+    const ai = concurrency.account?.[String(a.id)]?.current_in_use ?? 0;
+    const bi = concurrency.account?.[String(b.id)]?.current_in_use ?? 0;
     return bi - ai;
   });
   return (
@@ -487,7 +1016,12 @@ function GroupCard({
               {group.status}
             </Chip>
           </div>
-          <span className="text-xs text-default-500">
+          <span className="text-xs text-default-500 flex items-center gap-2">
+            {todayCost > 0 && (
+              <span className="text-foreground font-medium">
+                ${fmtMoneyShort(todayCost)}
+              </span>
+            )}
             {accounts.length} 渠道
           </span>
         </div>
@@ -505,127 +1039,64 @@ function GroupCard({
       </CardHeader>
       <CardBody className="pt-0 gap-1">
         {sortedAccounts.map((a) => {
-          const inflight = concurrency.account?.[String(a.id)]?.in_flight ?? 0;
+          const inflight = concurrency.account?.[String(a.id)]?.current_in_use ?? 0;
           const lim = a.concurrency ?? 0;
           const full = lim > 0 && inflight >= lim;
           const off = a.status !== "active";
           const bind = bindings[String(a.id)] ?? [];
+          const errored = isErrored(a);
           return (
             <div
               key={a.id}
-              className="grid grid-cols-12 items-center gap-2 px-3 py-2 rounded-lg bg-content2/40 text-xs"
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-content2/40 text-xs"
+              title={errored && a.error_message ? a.error_message : undefined}
             >
-              <div className="col-span-4 min-w-0">
-                <div className="font-medium truncate">{a.name}</div>
-                <div className="flex items-center gap-1 text-[11px] text-default-500">
-                  {a.platform && <span>{a.platform}</span>}
-                  {a.type && <span>· {a.type}</span>}
-                  {bind.length > 0 && bind[0].maxConcurrency != null && (
-                    <Chip
-                      size="sm"
-                      variant="flat"
-                      color="primary"
-                      classNames={{
-                        base: "h-4",
-                        content: "text-[10px] px-1",
-                      }}
-                    >
-                      绑 max {bind[0].maxConcurrency}
-                    </Chip>
-                  )}
-                </div>
-              </div>
-              <div className="col-span-2 text-center">
-                <span
-                  className={`font-mono ${
-                    off
-                      ? "text-default-400"
-                      : full
-                        ? "text-danger font-semibold"
-                        : "text-foreground"
-                  }`}
-                >
-                  {inflight} / {lim || "∞"}
-                </span>
-                <div className="text-[10px] text-default-400">in-flight</div>
-              </div>
-              <div className="col-span-1 text-center text-default-500">
-                P{a.priority ?? 0}
-              </div>
-              <div className="col-span-1 text-center">
-                {a.status === "active" ? (
-                  <span className="text-success">✓</span>
-                ) : a.status === "error" ? (
+              <span className="shrink-0 w-3 text-center">
+                {errored ? (
                   <span className="text-danger">⚠</span>
+                ) : a.status === "active" ? (
+                  <span className="text-success">✓</span>
                 ) : (
                   <span className="text-default-400">·</span>
                 )}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium truncate">{a.name}</div>
+                <div className="flex items-center gap-1 leading-tight">
+                  {a.schedulable === false && (
+                    <span className="text-[10px] text-warning">未调度</span>
+                  )}
+                  {bind.length > 0 && bind[0].maxConcurrency != null && (
+                    <span className="text-[10px] text-primary">
+                      绑 max {bind[0].maxConcurrency}
+                    </span>
+                  )}
+                  {errored && a.error_message && (
+                    <span className="text-[10px] text-danger truncate">
+                      {a.error_message}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="col-span-4 flex justify-end gap-1 flex-wrap">
-                <Switch
-                  size="sm"
-                  isSelected={a.status === "active"}
-                  isDisabled={busyAcc === a.id}
-                  onValueChange={(v) =>
-                    onPatchAccount(a.id, { status: v ? "active" : "inactive" })
-                  }
-                />
-                <Button
-                  size="sm"
-                  variant="flat"
-                  isDisabled={busyAcc === a.id}
-                  onPress={() => {
-                    const next = Math.max(0, (a.concurrency ?? 0) - 10);
-                    onPatchAccount(a.id, { concurrency: next });
-                  }}
-                >
-                  -10
-                </Button>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  isDisabled={busyAcc === a.id}
-                  onPress={() => {
-                    const next = (a.concurrency ?? 0) + 10;
-                    onPatchAccount(a.id, { concurrency: next });
-                  }}
-                >
-                  +10
-                </Button>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  isDisabled={busyAcc === a.id}
-                  onPress={() => {
-                    const next = Math.max(0, (a.priority ?? 0) - 1);
-                    onPatchAccount(a.id, { priority: next });
-                  }}
-                  title="优先级 -1"
-                >
-                  P−
-                </Button>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  isDisabled={busyAcc === a.id}
-                  onPress={() => {
-                    const next = (a.priority ?? 0) + 1;
-                    onPatchAccount(a.id, { priority: next });
-                  }}
-                  title="优先级 +1"
-                >
-                  P+
-                </Button>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  isIconOnly
-                  onPress={() => onTestAccount(a.id)}
-                  title="测试"
-                >
-                  <TestTube2 size={12} />
-                </Button>
-              </div>
+              <span
+                className={`font-mono shrink-0 ${
+                  off
+                    ? "text-default-400"
+                    : full
+                      ? "text-danger font-semibold"
+                      : "text-foreground"
+                }`}
+              >
+                {inflight}/{lim || "∞"}
+              </span>
+              <Button
+                size="sm"
+                variant="light"
+                className="shrink-0 min-w-0 h-7 px-2"
+                onPress={() => onEditAccount(a)}
+              >
+                编辑
+              </Button>
             </div>
           );
         })}

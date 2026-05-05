@@ -43,19 +43,19 @@ export async function POST(
 
   const client = await makeSiteClient(id);
 
-  // Re-pull existing names + unbound proxies right before submission to
-  // avoid race with parallel users creating accounts.
-  const existing = await client.listAdminAccountsFiltered({
-    page_size: 1000,
-  });
+  // Re-pull existing names + (optionally) unbound proxies right before
+  // submission. Run them in parallel so we don't pay two RTTs.
+  const [existing, proxies] = await Promise.all([
+    client.listAdminAccountsFiltered({ page_size: 1000 }),
+    cfg.auto_bind_proxy && singleProxyId == null
+      ? client.listAdminProxiesAll()
+      : Promise.resolve([] as Awaited<ReturnType<typeof client.listAdminProxiesAll>>),
+  ]);
   const existingNames = existing.items.map((a) => a.name);
   // Build proxyByNum map keyed by trailing number in proxy name (proxy-13 → 13).
-  // The default pairing rule is name-suffix match: az-N ↔ proxy-N.
-  // We no longer rely on id order; that produced mismatches when a proxy was
-  // deleted and recreated (its new id no longer matched its name's number).
+  // Default pairing: az-N ↔ proxy-N (by name suffix, NOT id order).
   const proxyByNum = new Map<number, number>();
   if (cfg.auto_bind_proxy && singleProxyId == null) {
-    const proxies = await client.listAdminProxiesAll();
     const usedProxyIds = new Set(
       existing.items
         .map((a) => (a as { proxy_id?: number | null }).proxy_id)
@@ -66,7 +66,6 @@ export async function POST(
       const m = p.name.match(/(\d+)$/);
       if (!m) continue;
       const num = Number(m[1]);
-      // First-write-wins; duplicate-numbered proxies keep the lower id.
       if (!proxyByNum.has(num)) proxyByNum.set(num, p.id);
     }
   }
