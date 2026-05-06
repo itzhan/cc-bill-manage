@@ -257,7 +257,7 @@ export default function BindingsPage() {
           (a, b) => b.totalBindings - a.totalBindings,
         );
         return (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
             {channelList.map((ch) => {
               const open = expandedChannels.has(ch.accountId);
               return (
@@ -325,15 +325,15 @@ export default function BindingsPage() {
                   </Button>
                 </CardHeader>
                 {open && (
-                <CardBody className="pt-0 gap-3">
+                <CardBody className="pt-0 gap-2">
                   {[...ch.keys.values()]
                     .sort((a, b) => b.rows.length - a.rows.length)
                     .map((g) => (
                       <div
                         key={g.key.id}
-                        className="rounded-lg border border-divider/40 overflow-hidden"
+                        className="rounded-md border border-divider/40 overflow-hidden text-xs"
                       >
-                        <div className="flex justify-between items-start gap-2 px-3 py-2 bg-content2/30 flex-wrap">
+                        <div className="flex justify-between items-start gap-2 px-2.5 py-1.5 bg-content2/30 flex-wrap">
                           <div className="flex flex-col leading-tight min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-medium text-sm truncate">
@@ -386,18 +386,18 @@ export default function BindingsPage() {
                           {g.rows.map((b, idx) => (
                             <div
                               key={b.id}
-                              className={`flex items-center justify-between gap-2 px-3 py-2 ${
+                              className={`flex items-center justify-between gap-2 px-2.5 py-1.5 ${
                                 idx > 0
                                   ? "border-t border-divider/30"
                                   : ""
                               }`}
                             >
-                              <div className="flex items-center gap-2 flex-wrap min-w-0">
-                                <span className="text-sm font-medium truncate">
+                              <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                                <span className="font-medium truncate">
                                   {b.siteBoundAccount.siteAccount.name}
                                 </span>
                                 <span className="text-default-400">/</span>
-                                <span className="text-sm truncate">
+                                <span className="truncate">
                                   {b.siteBoundAccount.name}
                                 </span>
                                 <Chip
