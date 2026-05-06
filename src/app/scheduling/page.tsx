@@ -599,8 +599,15 @@ export default function SchedulingPage() {
   const hiddenCount = accounts.length - filteredAccounts.length;
 
   const stats = useMemo(() => {
-    const totalInFlight = grouped.reduce((s, g) => s + g.inFlight, 0);
-    const totalCap = grouped.reduce((s, g) => s + g.capacity, 0);
+    // Sum per-account, NOT per-group: an account in N groups would otherwise
+    // get counted N times. filteredAccounts is already unique by id.
+    let totalInFlight = 0;
+    let totalCap = 0;
+    for (const a of filteredAccounts) {
+      totalInFlight +=
+        concurrency.account?.[String(a.id)]?.current_in_use ?? 0;
+      totalCap += a.concurrency ?? 0;
+    }
     const totalAcc = filteredAccounts.length;
     const errCount = filteredAccounts.filter(isErrored).length;
     // "Active and healthy" — exclude accounts with error_message even when
@@ -609,7 +616,7 @@ export default function SchedulingPage() {
       (a) => a.status === "active" && !isErrored(a),
     ).length;
     return { totalInFlight, totalCap, totalAcc, errCount, activeCount };
-  }, [grouped, filteredAccounts]);
+  }, [filteredAccounts, concurrency]);
 
   async function patchAccount(
     accId: number,

@@ -1,0 +1,469 @@
+{
+  "summary": {
+    "model": "claude-opus-4-7",
+    "judge_model": "claude-opus-4-7",
+    "n_attempted": 30,
+    "n_succeeded": 30,
+    "task_resolve_rate": 0.06666666666666667,
+    "must_have_pass_rate": 0.527027027027027,
+    "all_items_pass_rate": 0.527027027027027,
+    "wall_time_s": 3010.9
+  },
+  "tasks": {
+    "6905333b74f22949d97ba9c9": {
+      "must_have": [
+        2,
+        8
+      ],
+      "all_items": [
+        2,
+        8
+      ],
+      "resolved": false,
+      "category": "Root-cause analysis",
+      "language": "python",
+      "answer_latency_s": 102.85,
+      "judge_latency_s": 14.58
+    },
+    "6905333b74f22949d97ba9bd": {
+      "must_have": [
+        7,
+        11
+      ],
+      "all_items": [
+        7,
+        11
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "python",
+      "answer_latency_s": 96.83,
+      "judge_latency_s": 18.63
+    },
+    "6905333b74f22949d97baa16": {
+      "must_have": [
+        4,
+        9
+      ],
+      "all_items": [
+        4,
+        9
+      ],
+      "resolved": false,
+      "category": "Code Onboarding",
+      "language": "go",
+      "answer_latency_s": 81.54,
+      "judge_latency_s": 29.19
+    },
+    "6905333b74f22949d97ba9e4": {
+      "must_have": [
+        4,
+        9
+      ],
+      "all_items": [
+        4,
+        9
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "c",
+      "answer_latency_s": 103.96,
+      "judge_latency_s": 22.44
+    },
+    "6905333b74f22949d97ba9d2": {
+      "must_have": [
+        8,
+        11
+      ],
+      "all_items": [
+        8,
+        11
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "python",
+      "answer_latency_s": 80.4,
+      "judge_latency_s": 18.22
+    },
+    "6905333b74f22949d97ba9c5": {
+      "must_have": [
+        8,
+        12
+      ],
+      "all_items": [
+        8,
+        12
+      ],
+      "resolved": false,
+      "category": "Root-cause analysis",
+      "language": "python",
+      "answer_latency_s": 165.77,
+      "judge_latency_s": 36.58
+    },
+    "6905333b74f22949d97ba9b3": {
+      "must_have": [
+        10,
+        10
+      ],
+      "all_items": [
+        10,
+        10
+      ],
+      "resolved": true,
+      "category": "Code Onboarding",
+      "language": "ts",
+      "answer_latency_s": 43.47,
+      "judge_latency_s": 14.07
+    },
+    "6905333b74f22949d97ba9a8": {
+      "must_have": [
+        7,
+        10
+      ],
+      "all_items": [
+        7,
+        10
+      ],
+      "resolved": false,
+      "category": "Code Onboarding",
+      "language": "ts",
+      "answer_latency_s": 51.19,
+      "judge_latency_s": 15.21
+    },
+    "6905333b74f22949d97ba9eb": {
+      "must_have": [
+        7,
+        9
+      ],
+      "all_items": [
+        7,
+        9
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "c",
+      "answer_latency_s": 101.94,
+      "judge_latency_s": 14.45
+    },
+    "6905333b74f22949d97ba9c8": {
+      "must_have": [
+        8,
+        9
+      ],
+      "all_items": [
+        8,
+        9
+      ],
+      "resolved": false,
+      "category": "Security",
+      "language": "go",
+      "answer_latency_s": 83.37,
+      "judge_latency_s": 13.31
+    },
+    "6905333b74f22949d97ba9f4": {
+      "must_have": [
+        2,
+        11
+      ],
+      "all_items": [
+        2,
+        11
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "c",
+      "answer_latency_s": 69.33,
+      "judge_latency_s": 17.73
+    },
+    "6905333b74f22949d97ba9f8": {
+      "must_have": [
+        7,
+        15
+      ],
+      "all_items": [
+        7,
+        15
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "c",
+      "answer_latency_s": 70.94,
+      "judge_latency_s": 48.29
+    },
+    "6905333b74f22949d97ba9bb": {
+      "must_have": [
+        2,
+        9
+      ],
+      "all_items": [
+        2,
+        9
+      ],
+      "resolved": false,
+      "category": "Security",
+      "language": "go",
+      "answer_latency_s": 35.01,
+      "judge_latency_s": 11.81
+    },
+    "6905333b74f22949d97ba9a3": {
+      "must_have": [
+        5,
+        8
+      ],
+      "all_items": [
+        5,
+        8
+      ],
+      "resolved": false,
+      "category": "Root-cause analysis",
+      "language": "ts",
+      "answer_latency_s": 40.73,
+      "judge_latency_s": 13.19
+    },
+    "6905333b74f22949d97ba999": {
+      "must_have": [
+        6,
+        9
+      ],
+      "all_items": [
+        6,
+        9
+      ],
+      "resolved": false,
+      "category": "Root-cause analysis",
+      "language": "ts",
+      "answer_latency_s": 69.58,
+      "judge_latency_s": 28.05
+    },
+    "6905333b74f22949d97ba99b": {
+      "must_have": [
+        5,
+        11
+      ],
+      "all_items": [
+        5,
+        11
+      ],
+      "resolved": false,
+      "category": "Root-cause analysis",
+      "language": "ts",
+      "answer_latency_s": 70.63,
+      "judge_latency_s": 36.47
+    },
+    "6905333b74f22949d97ba9b8": {
+      "must_have": [
+        0,
+        5
+      ],
+      "all_items": [
+        0,
+        5
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "ts",
+      "answer_latency_s": 56.93,
+      "judge_latency_s": 8.92
+    },
+    "6905333b74f22949d97ba9bc": {
+      "must_have": [
+        7,
+        8
+      ],
+      "all_items": [
+        7,
+        8
+      ],
+      "resolved": false,
+      "category": "Root-cause analysis",
+      "language": "ts",
+      "answer_latency_s": 83.18,
+      "judge_latency_s": 14.35
+    },
+    "6905333b74f22949d97ba9f9": {
+      "must_have": [
+        6,
+        9
+      ],
+      "all_items": [
+        6,
+        9
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "c",
+      "answer_latency_s": 54.87,
+      "judge_latency_s": 20.47
+    },
+    "6905333b74f22949d97ba9f5": {
+      "must_have": [
+        0,
+        7
+      ],
+      "all_items": [
+        0,
+        7
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "c",
+      "answer_latency_s": 117.27,
+      "judge_latency_s": 13.85
+    },
+    "6905333b74f22949d97baa28": {
+      "must_have": [
+        1,
+        9
+      ],
+      "all_items": [
+        1,
+        9
+      ],
+      "resolved": false,
+      "category": "Root-cause analysis",
+      "language": "go",
+      "answer_latency_s": 66.2,
+      "judge_latency_s": 31.09
+    },
+    "6905333b74f22949d97ba9cf": {
+      "must_have": [
+        5,
+        10
+      ],
+      "all_items": [
+        5,
+        10
+      ],
+      "resolved": false,
+      "category": "API & library usage / integration",
+      "language": "python",
+      "answer_latency_s": 91.19,
+      "judge_latency_s": 27.19
+    },
+    "6905333b74f22949d97ba9fa": {
+      "must_have": [
+        1,
+        10
+      ],
+      "all_items": [
+        1,
+        10
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "c",
+      "answer_latency_s": 95.94,
+      "judge_latency_s": 18.61
+    },
+    "6905333b74f22949d97ba9e1": {
+      "must_have": [
+        3,
+        9
+      ],
+      "all_items": [
+        3,
+        9
+      ],
+      "resolved": false,
+      "category": "Root-cause analysis",
+      "language": "go",
+      "answer_latency_s": 77.78,
+      "judge_latency_s": 15.59
+    },
+    "6905333b74f22949d97baa0b": {
+      "must_have": [
+        17,
+        26
+      ],
+      "all_items": [
+        17,
+        26
+      ],
+      "resolved": false,
+      "category": "Root-cause analysis",
+      "language": "go",
+      "answer_latency_s": 90.83,
+      "judge_latency_s": 39.47
+    },
+    "6905333b74f22949d97baa1c": {
+      "must_have": [
+        6,
+        8
+      ],
+      "all_items": [
+        6,
+        8
+      ],
+      "resolved": false,
+      "category": "Code Onboarding",
+      "language": "go",
+      "answer_latency_s": 90.0,
+      "judge_latency_s": 20.4
+    },
+    "6905333b74f22949d97baa22": {
+      "must_have": [
+        8,
+        8
+      ],
+      "all_items": [
+        8,
+        8
+      ],
+      "resolved": true,
+      "category": "Root-cause analysis",
+      "language": "go",
+      "answer_latency_s": 93.19,
+      "judge_latency_s": 13.37
+    },
+    "6905333b74f22949d97baa19": {
+      "must_have": [
+        1,
+        7
+      ],
+      "all_items": [
+        1,
+        7
+      ],
+      "resolved": false,
+      "category": "Security",
+      "language": "go",
+      "answer_latency_s": 45.74,
+      "judge_latency_s": 12.16
+    },
+    "6905333b74f22949d97ba9ff": {
+      "must_have": [
+        4,
+        10
+      ],
+      "all_items": [
+        4,
+        10
+      ],
+      "resolved": false,
+      "category": "Architecture & system design",
+      "language": "c",
+      "answer_latency_s": 77.79,
+      "judge_latency_s": 16.56
+    },
+    "6905333b74f22949d97baa2d": {
+      "must_have": [
+        5,
+        9
+      ],
+      "all_items": [
+        5,
+        9
+      ],
+      "resolved": false,
+      "category": "Code Onboarding",
+      "language": "go",
+      "answer_latency_s": 82.89,
+      "judge_latency_s": 15.26
+    }
+  },
+  "n": 30,
+  "seed": 42,
+  "effort": "high",
+  "endpoint": "https://api.anthropic.com/v1/messages",
+  "generated_at": "2026-05-05"
+}

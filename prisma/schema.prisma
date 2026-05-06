@@ -247,6 +247,89 @@ model Snapshot {
   @@index([takenAt])
 }
 
+// One benchmark run = one (channel, mode, key) combination tested against the
+// SWE-Atlas-QnA dataset. The engine spawns one BenchTask row per sampled
+// question, updates each as it grades, and finalizes summary fields on the
+// run when all tasks complete.
+model BenchRun {
+  id                       Int       @id @default(autoincrement())
+  name                     String
+  baseUrl                  String
+  apiKeyMasked             String
+  apiKey                   String
+  model                    String    @default("claude-opus-4-7")
+  judgeModel               String    @default("claude-opus-4-7")
+  effort                   String    @default("high")
+  judgeEffort              String    @default("high")
+  n                        Int
+  seed                     Int       @default(42)
+  concurrency              Int       @default(10)
+  // queued | running | done | error | canceled
+  status                   String    @default("queued")
+  totalCount               Int
+  completedCount           Int       @default(0)
+  failedCount              Int       @default(0)
+  // Filled when status flips to done.
+  mustHavePassRate         Float?
+  taskResolveRate          Float?
+  allItemsPassRate         Float?
+  avgAnswerLatencyS        Float?
+  avgJudgeLatencyS         Float?
+  totalInputTokens         Int?
+  totalOutputTokens        Int?
+  totalThinkingChars       Int?
+  // Forensic flags — populated from first successful task.
+  hasSignature             Boolean?
+  serviceTierPresent       Boolean?
+  cacheCreationPresent     Boolean?
+  errorSummary             String?
+  // Cancellation flag — engine polls this between tasks.
+  cancelRequested          Boolean   @default(false)
+  startedAt                DateTime?
+  finishedAt               DateTime?
+  createdAt                DateTime  @default(now())
+
+  tasks BenchTask[]
+
+  @@index([createdAt])
+}
+
+model BenchTask {
+  id                  Int       @id @default(autoincrement())
+  runId               Int
+  taskId              String
+  category            String
+  language            String
+  repo                String
+  // pending | running | done | error
+  status              String    @default("pending")
+  mustGot             Int?
+  mustTotal           Int?
+  allGot              Int?
+  allTotal            Int?
+  resolved            Boolean?
+  answerLatencyS      Float?
+  judgeLatencyS       Float?
+  answerInputTokens   Int?
+  answerOutputTokens  Int?
+  judgeInputTokens    Int?
+  judgeOutputTokens   Int?
+  thinkingChars       Int?
+  hasSignature        Boolean?
+  // Bulky payloads, only filled on done.
+  answerText          String?
+  judgeRawText        String?
+  judgeParsedJson     String?
+  errorText           String?
+  startedAt           DateTime?
+  finishedAt          DateTime?
+
+  run BenchRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, taskId])
+  @@index([runId])
+}
+
 // One row per Asia/Shanghai date, keeps refreshing during the day,
 // "freezes" naturally once the calendar date rolls over (next sync
 // writes to a new row).

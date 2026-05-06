@@ -12,6 +12,7 @@ import {
   Wallet,
   Wand2,
   Activity,
+  Gauge,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -30,6 +31,7 @@ const items: NavItem[] = [
   { href: "/bindings", label: "绑定", icon: <Link2 size={18} /> },
   { href: "/scheduling", label: "资源调度", icon: <Activity size={18} /> },
   { href: "/az", label: "az 管理", icon: <Wand2 size={18} /> },
+  { href: "/bench", label: "基准测试", icon: <Gauge size={18} /> },
   { href: "/settings", label: "设置", icon: <Settings size={18} /> },
 ];
 
