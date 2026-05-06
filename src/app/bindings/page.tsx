@@ -25,6 +25,7 @@ import {
   addToast,
   useDisclosure,
 } from "@heroui/react";
+import { ChevronRight } from "lucide-react";
 import Shell from "@/components/Shell";
 
 interface Option {
@@ -78,6 +79,28 @@ export default function BindingsPage() {
   const [siteIds, setSiteIds] = useState<Set<string>>(new Set());
   const [keyIds, setKeyIds] = useState<Set<string>>(new Set());
   const [newMaxConcurrency, setNewMaxConcurrency] = useState<string>("");
+  // Card-level fold state: ids of expanded channel cards (default = collapsed).
+  const [expandedChannels, setExpandedChannels] = useState<Set<number>>(
+    new Set(),
+  );
+  function toggleChannel(id: number) {
+    setExpandedChannels((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function openAddForChannel(channelId: number) {
+    // Pre-pick the channel in the parent-filter chips so users don't have
+    // to scroll to find their channel; key/site selects start empty.
+    setParentUpstreamIds(new Set([String(channelId)]));
+    setParentSiteIds(new Set());
+    setSiteIds(new Set());
+    setKeyIds(new Set());
+    setNewMaxConcurrency("");
+    dlg.onOpen();
+  }
   const editDlg = useDisclosure();
   const [editing, setEditing] = useState<BindingItem | null>(null);
   const [editMax, setEditMax] = useState<string>("");
@@ -234,25 +257,74 @@ export default function BindingsPage() {
           (a, b) => b.totalBindings - a.totalBindings,
         );
         return (
-          <div className="space-y-4">
-            {channelList.map((ch) => (
+          <div className="space-y-3">
+            {channelList.map((ch) => {
+              const open = expandedChannels.has(ch.accountId);
+              return (
               <Card
                 key={ch.accountId}
                 className="bg-content1 border border-divider/50 shadow-none"
               >
-                <CardHeader className="flex justify-between items-center gap-3 flex-wrap">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="font-semibold text-base">
+                <CardHeader
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).closest("[data-stop-toggle]"))
+                      return;
+                    toggleChannel(ch.accountId);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      toggleChannel(ch.accountId);
+                    }
+                  }}
+                  className="flex items-center justify-between gap-2 flex-wrap cursor-pointer hover:bg-content2/30 transition-colors"
+                >
+                  <div className="flex items-center gap-2 flex-wrap min-w-0">
+                    <ChevronRight
+                      size={14}
+                      className={`text-default-400 transition-transform shrink-0 ${
+                        open ? "rotate-90" : ""
+                      }`}
+                    />
+                    <h3 className="font-semibold text-base truncate">
                       {ch.accountName}
                     </h3>
-                    <Chip size="sm" variant="flat">
+                    <Chip
+                      size="sm"
+                      variant="flat"
+                      classNames={{
+                        base: "h-5",
+                        content: "text-[11px] px-1.5",
+                      }}
+                    >
                       {ch.keys.size} keys
                     </Chip>
-                    <Chip size="sm" variant="flat" color="default">
+                    <Chip
+                      size="sm"
+                      variant="flat"
+                      color="default"
+                      classNames={{
+                        base: "h-5",
+                        content: "text-[11px] px-1.5",
+                      }}
+                    >
                       {ch.totalBindings} 个绑定
                     </Chip>
                   </div>
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    color="primary"
+                    className="h-7 min-w-0 px-2"
+                    data-stop-toggle
+                    onPress={() => openAddForChannel(ch.accountId)}
+                  >
+                    + 添加绑定
+                  </Button>
                 </CardHeader>
+                {open && (
                 <CardBody className="pt-0 gap-3">
                   {[...ch.keys.values()]
                     .sort((a, b) => b.rows.length - a.rows.length)
@@ -385,8 +457,10 @@ export default function BindingsPage() {
                       </div>
                     ))}
                 </CardBody>
+                )}
               </Card>
-            ))}
+              );
+            })}
           </div>
         );
       })()}
