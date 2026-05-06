@@ -127,8 +127,14 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     (s, a) => s + effectiveUserCost(a),
     0,
   );
+  // Real upstream expense: face value × rechargeMultiplier (= what we
+  // actually paid for the credits). The 1× / diff math below stays in
+  // face-value space — rechargeMultiplier doesn't change token pricing.
+  function realUpstreamCost(k: (typeof boundUpKeys)[number]): number {
+    return k.todayActualCost * (k.rechargeMultiplier ?? 1);
+  }
   const totalExpense = boundUpKeys.reduce(
-    (s, k) => s + k.todayActualCost,
+    (s, k) => s + realUpstreamCost(k),
     0,
   );
   const totalSiteCostBase = boundSiteAccounts.reduce(
@@ -222,7 +228,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
       upstreamGroupMultiplier: k.groupRateMultiplier,
       upstreamEffectiveMultiplier: eff,
       upstreamHasExclusiveRate: k.hasExclusiveRate,
-      upstreamTodayCost: k.todayActualCost,
+      upstreamTodayCost: realUpstreamCost(k),
       upstreamTodayCostBase: upBase,
       siteAccounts: g.sites,
       siteUserCost: sumUserCost,

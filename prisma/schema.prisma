@@ -86,6 +86,10 @@ model UpstreamKey {
   rateChangedAt                   DateTime?
   todayActualCost          Float    @default(0)
   totalActualCost          Float    @default(0)
+  // 充值倍率：我们买这条 key 余额时实际付了几折钱。例如 0.5 = 半价充值。
+  // 在 sync 时把上游报告的成本×这个倍率写入 todayActualCost/totalActualCost，
+  // 反映"我们真金白银花了多少"。默认 1（按面值计）。
+  rechargeMultiplier       Float    @default(1)
   lastUpdatedAt            DateTime?
 
   upstreamAccount UpstreamAccount @relation(fields: [upstreamAccountId], references: [id], onDelete: Cascade)

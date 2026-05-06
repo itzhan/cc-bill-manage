@@ -28,7 +28,7 @@ async function syncSiteUsersFor(
     day: "2-digit",
   }).format(new Date());
 
-  // One call returns today's spend for ALL users at once.
+  // Today's spend: ONE bulk call for all users.
   let usageMap: Record<
     string,
     {
@@ -43,7 +43,6 @@ async function syncSiteUsersFor(
   } catch {
     usageMapWorked = false;
   }
-  // If bulk endpoint failed, fall back to per-user fan-out (legacy path).
   const fallbackStats = !usageMapWorked
     ? await Promise.all(
         users.map((u) =>
@@ -51,6 +50,16 @@ async function syncSiteUsersFor(
         ),
       )
     : null;
+  // Lifetime total_recharged: /admin/users always returns 0 on current
+  // sub2api builds — must fan out balance-history per user. Parallel.
+  const totalRechargedByUser = await Promise.all(
+    users.map((u) =>
+      client
+        .getUserBalanceHistory(u.id)
+        .then((h) => h.totalRecharged)
+        .catch(() => null),
+    ),
+  );
   const now = new Date();
   const seen = users.map((u) => u.id);
   await prisma.$transaction([
@@ -74,8 +83,9 @@ async function syncSiteUsersFor(
           todayActualCost = fb.total_actual_cost ?? 0;
         }
       }
-      // Don't overwrite a previously-known totalRecharged with 0 just because
-      // this sub2api build omits it from /admin/users — only set when present.
+      // /admin/users.total_recharged is always 0 on current sub2api builds;
+      // use the real value from per-user balance-history fan-out above.
+      const recharged = totalRechargedByUser[i];
       const data: Record<string, unknown> = {
         email: u.email,
         username: u.username || "",
@@ -91,7 +101,12 @@ async function syncSiteUsersFor(
         remoteCreatedAt: u.created_at ? new Date(u.created_at) : null,
         lastSyncAt: now,
       };
-      if (typeof u.total_recharged === "number") {
+      // Prefer the freshly fetched balance-history value; fall back to the
+      // /admin/users field only if the history call failed (it's 0 anyway,
+      // but keeps the previously-stored value on subsequent failures).
+      if (typeof recharged === "number") {
+        data.totalRecharged = recharged;
+      } else if (typeof u.total_recharged === "number") {
         data.totalRecharged = u.total_recharged;
       }
       const createData = {
@@ -219,6 +234,9 @@ export async function refreshUpstreamAccount(id: number): Promise<void> {
         const newToday = u.today_actual_cost;
 
         // Detect rate change vs previous record.
+        // todayActualCost stays in face-value units (what upstream reports);
+        // rechargeMultiplier is applied at READ time in dashboard.ts so the
+        // diff/snapshot math stays clean.
         const prev = existingByRemote.get(k.id);
         let rateSnapshot: {
           previousEffectiveRateMultiplier: number | null;
@@ -233,7 +251,6 @@ export async function refreshUpstreamAccount(id: number): Promise<void> {
         if (prev) {
           const todayDropped = newToday < (prev.todayActualCost ?? 0) - 0.01;
           if (todayDropped) {
-            // New day rolled over — discard old rate snapshot, start fresh.
             rateSnapshot = {
               previousEffectiveRateMultiplier: null,
               costAtRateChange: null,
@@ -245,9 +262,6 @@ export async function refreshUpstreamAccount(id: number): Promise<void> {
             prev.effectiveRateMultiplier !== effective &&
             prev.todayActualCost > 0
           ) {
-            // Rate just changed AND there's already cost accumulated today
-            // under the OLD rate → snapshot it so the historical portion
-            // stays normalized at the old rate.
             rateSnapshot = {
               previousEffectiveRateMultiplier: prev.effectiveRateMultiplier,
               costAtRateChange: prev.todayActualCost,
@@ -255,7 +269,6 @@ export async function refreshUpstreamAccount(id: number): Promise<void> {
             };
           }
         }
-
         const data = {
           name: k.name,
           keyMasked: maskKey(k.key),

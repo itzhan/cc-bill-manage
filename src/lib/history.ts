@@ -128,7 +128,11 @@ export async function backfillRange(
   // Dedupe upstream keys and site accounts (M:N → many bindings may reference same key).
   const upKeyMap = new Map<
     number,
-    { remoteKeyId: number; account: UpstreamAccountRow }
+    {
+      remoteKeyId: number;
+      account: UpstreamAccountRow;
+      rechargeMultiplier: number;
+    }
   >();
   const siteAccMap = new Map<
     number,
@@ -138,6 +142,7 @@ export async function backfillRange(
     upKeyMap.set(b.upstreamKey.id, {
       remoteKeyId: b.upstreamKey.remoteKeyId,
       account: b.upstreamKey.upstreamAccount,
+      rechargeMultiplier: b.upstreamKey.rechargeMultiplier ?? 1,
     });
     siteAccMap.set(b.siteBoundAccount.id, {
       remoteAccountId: b.siteBoundAccount.remoteAccountId,
@@ -195,7 +200,9 @@ export async function backfillRange(
                 kind: "upstream",
                 date,
                 cost: r.total_cost ?? 0,
-                actualCost: r.total_actual_cost ?? 0,
+                // Apply rechargeMultiplier so DailyProfit.expense reflects
+                // real money spent. cost (1× base) stays in face-value space.
+                actualCost: (r.total_actual_cost ?? 0) * info.rechargeMultiplier,
                 id: keyId,
               }) as FetchResult,
           )

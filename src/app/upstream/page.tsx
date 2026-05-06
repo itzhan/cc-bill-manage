@@ -82,6 +82,7 @@ interface UpstreamKey {
   hasExclusiveRate: boolean;
   todayActualCost: number;
   totalActualCost: number;
+  rechargeMultiplier: number;
   lastUpdatedAt: string | null;
 }
 
@@ -686,9 +687,12 @@ export default function UpstreamPage() {
                           <TableColumn>分组×倍率</TableColumn>
                           <TableColumn>今日</TableColumn>
                           <TableColumn>累计</TableColumn>
+                          <TableColumn>充值倍率</TableColumn>
                         </TableHeader>
                         <TableBody>
-                          {filtered.map((k) => (
+                          {filtered.map((k) => {
+                            const rm = k.rechargeMultiplier ?? 1;
+                            return (
                             <TableRow key={k.id}>
                               <TableCell>
                                 <div className="flex flex-col leading-tight">
@@ -714,14 +718,51 @@ export default function UpstreamPage() {
                                   </span>
                                 </div>
                               </TableCell>
-                              <TableCell className="font-medium">
-                                {fmtMoneyShort(k.todayActualCost)}
+                              <TableCell>
+                                <div className="flex flex-col leading-tight">
+                                  <span className="font-medium">
+                                    {fmtMoneyShort(k.todayActualCost * rm)}
+                                  </span>
+                                  {rm !== 1 && (
+                                    <span className="text-[10px] text-default-400">
+                                      面值 {fmtMoneyShort(k.todayActualCost)}
+                                    </span>
+                                  )}
+                                </div>
                               </TableCell>
-                              <TableCell className="text-default-500">
-                                {fmtMoneyShort(k.totalActualCost)}
+                              <TableCell>
+                                <div className="flex flex-col leading-tight">
+                                  <span className="text-default-700">
+                                    {fmtMoneyShort(k.totalActualCost * rm)}
+                                  </span>
+                                  {rm !== 1 && (
+                                    <span className="text-[10px] text-default-400">
+                                      面值 {fmtMoneyShort(k.totalActualCost)}
+                                    </span>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <RechargeMultiplierEditor
+                                  keyId={k.id}
+                                  initial={rm}
+                                  onSaved={(v) => {
+                                    setKeys((prev) => ({
+                                      ...prev,
+                                      [keysModalAccount!.id]: (
+                                        prev[keysModalAccount!.id] ?? []
+                                      ).map((row) =>
+                                        row.id === k.id
+                                          ? { ...row, rechargeMultiplier: v }
+                                          : row,
+                                      ),
+                                    }));
+                                  }}
+                                />
                               </TableCell>
                             </TableRow>
-                          ))}
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     )}
@@ -758,6 +799,64 @@ export default function UpstreamPage() {
         </ModalContent>
       </Modal>
     </Shell>
+  );
+}
+
+function RechargeMultiplierEditor({
+  keyId,
+  initial,
+  onSaved,
+}: {
+  keyId: number;
+  initial: number;
+  onSaved: (v: number) => void;
+}) {
+  const [val, setVal] = useState(String(initial));
+  const [busy, setBusy] = useState(false);
+  const dirty = Number(val) !== initial && !isNaN(Number(val));
+  return (
+    <div className="flex items-center gap-1">
+      <Input
+        size="sm"
+        type="number"
+        value={val}
+        onValueChange={setVal}
+        classNames={{ inputWrapper: "h-7 min-h-7 w-20" }}
+        step={0.01}
+        min={0}
+      />
+      {dirty && (
+        <Button
+          size="sm"
+          variant="flat"
+          color="primary"
+          isLoading={busy}
+          className="h-7 min-w-0 px-2"
+          onPress={async () => {
+            const n = Number(val);
+            if (!Number.isFinite(n) || n < 0) return;
+            setBusy(true);
+            try {
+              const res = await fetch(`/api/upstream/key/${keyId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ rechargeMultiplier: n }),
+              });
+              if (!res.ok) {
+                addToast({ title: "保存失败", color: "danger" });
+                return;
+              }
+              addToast({ title: "已保存", color: "success" });
+              onSaved(n);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          保存
+        </Button>
+      )}
+    </div>
   );
 }
 
