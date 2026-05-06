@@ -49,7 +49,8 @@ interface BindingItem {
     groupRateMultiplier: number;
     effectiveRateMultiplier: number;
     hasExclusiveRate: boolean;
-    upstreamAccount: { name: string };
+    upstreamAccountId: number;
+    upstreamAccount: { id: number; name: string };
   };
   siteBoundAccount: {
     id: number;
@@ -191,68 +192,113 @@ export default function BindingsPage() {
           </CardBody>
         </Card>
       ) : (() => {
-        // Group by upstream key: each card lists all site accounts bound to that key.
-        type Group = {
-          key: BindingItem["upstreamKey"];
-          rows: BindingItem[];
+        // Two-level grouping:
+        //   Outer card  = 渠道 (upstreamAccount) — many keys per channel
+        //   Inner block = upstream key — many site bindings per key
+        type ChannelGroup = {
+          accountId: number;
+          accountName: string;
+          keys: Map<
+            number,
+            { key: BindingItem["upstreamKey"]; rows: BindingItem[] }
+          >;
+          totalBindings: number;
         };
-        const groups = new Map<number, Group>();
+        const channels = new Map<number, ChannelGroup>();
         for (const b of items) {
-          const g = groups.get(b.upstreamKey.id);
-          if (g) g.rows.push(b);
-          else groups.set(b.upstreamKey.id, { key: b.upstreamKey, rows: [b] });
+          const accId =
+            b.upstreamKey.upstreamAccountId ??
+            b.upstreamKey.upstreamAccount?.id ??
+            0;
+          const accName = b.upstreamKey.upstreamAccount?.name ?? "(unknown)";
+          let ch = channels.get(accId);
+          if (!ch) {
+            ch = {
+              accountId: accId,
+              accountName: accName,
+              keys: new Map(),
+              totalBindings: 0,
+            };
+            channels.set(accId, ch);
+          }
+          ch.totalBindings++;
+          const k = ch.keys.get(b.upstreamKey.id);
+          if (k) k.rows.push(b);
+          else
+            ch.keys.set(b.upstreamKey.id, {
+              key: b.upstreamKey,
+              rows: [b],
+            });
         }
-        const list = [...groups.values()].sort(
-          (a, b) => b.rows.length - a.rows.length,
+        const channelList = [...channels.values()].sort(
+          (a, b) => b.totalBindings - a.totalBindings,
         );
         return (
-          <div className="space-y-3">
-            {list.map((g) => (
-              <Card key={g.key.id} className="bg-content1 border border-divider/50 shadow-none">
-                <CardHeader className="flex justify-between items-start gap-3 flex-wrap">
-                  <div className="flex flex-col leading-tight">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold">
-                        {g.key.upstreamAccount.name} / {g.key.name}
-                      </span>
-                      <Chip size="sm" variant="flat">
-                        {g.key.groupName}
-                      </Chip>
-                      {g.key.hasExclusiveRate ? (
-                        <Chip size="sm" color="primary" variant="flat">
-                          专属 ×{g.key.effectiveRateMultiplier}
-                        </Chip>
-                      ) : (
-                        <span className="text-xs text-default-500">
-                          ×{g.key.groupRateMultiplier}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs text-default-400 mt-0.5 font-mono">
-                      {g.key.keyMasked}
-                    </span>
+          <div className="space-y-4">
+            {channelList.map((ch) => (
+              <Card
+                key={ch.accountId}
+                className="bg-content1 border border-divider/50 shadow-none"
+              >
+                <CardHeader className="flex justify-between items-center gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-semibold text-base">
+                      {ch.accountName}
+                    </h3>
+                    <Chip size="sm" variant="flat">
+                      {ch.keys.size} keys
+                    </Chip>
+                    <Chip size="sm" variant="flat" color="default">
+                      {ch.totalBindings} 个绑定
+                    </Chip>
                   </div>
-                  <Chip size="sm" color="default" variant="flat">
-                    {g.rows.length} 个本站绑定
-                  </Chip>
                 </CardHeader>
-                <CardBody className="pt-0">
-                  <div className="border-t border-divider/40 -mx-4 px-4">
-                    {g.rows.map((b, idx) => (
+                <CardBody className="pt-0 gap-3">
+                  {[...ch.keys.values()]
+                    .sort((a, b) => b.rows.length - a.rows.length)
+                    .map((g) => (
                       <div
-                        key={b.id}
-                        className={`flex items-center justify-between py-2 ${
-                          idx > 0 ? "border-t border-divider/30" : ""
-                        }`}
+                        key={g.key.id}
+                        className="rounded-lg border border-divider/40 overflow-hidden"
                       >
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium">
-                            {b.siteBoundAccount.siteAccount.name}
-                          </span>
-                          <span className="text-default-400">/</span>
-                          <span className="text-sm">
-                            {b.siteBoundAccount.name}
-                          </span>
+                        <div className="flex justify-between items-start gap-2 px-3 py-2 bg-content2/30 flex-wrap">
+                          <div className="flex flex-col leading-tight min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-medium text-sm truncate">
+                                {g.key.name}
+                              </span>
+                              <Chip
+                                size="sm"
+                                variant="flat"
+                                classNames={{
+                                  base: "h-5",
+                                  content: "text-[11px] px-1.5",
+                                }}
+                              >
+                                {g.key.groupName}
+                              </Chip>
+                              {g.key.hasExclusiveRate ? (
+                                <Chip
+                                  size="sm"
+                                  color="primary"
+                                  variant="flat"
+                                  classNames={{
+                                    base: "h-5",
+                                    content: "text-[11px] px-1.5",
+                                  }}
+                                >
+                                  专属 ×{g.key.effectiveRateMultiplier}
+                                </Chip>
+                              ) : (
+                                <span className="text-[11px] text-default-500">
+                                  ×{g.key.groupRateMultiplier}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] text-default-400 font-mono mt-0.5">
+                              {g.key.keyMasked}
+                            </span>
+                          </div>
                           <Chip
                             size="sm"
                             variant="flat"
@@ -261,50 +307,83 @@ export default function BindingsPage() {
                               content: "text-[11px] px-1.5",
                             }}
                           >
-                            ×{b.siteBoundAccount.rateMultiplier}
+                            {g.rows.length} 绑定
                           </Chip>
-                          {b.maxConcurrency != null && (
-                            <Chip
-                              size="sm"
-                              variant="flat"
-                              color="primary"
-                              classNames={{
-                                base: "h-5",
-                                content: "text-[11px] px-1.5",
-                              }}
-                            >
-                              max {b.maxConcurrency}
-                            </Chip>
-                          )}
                         </div>
-                        <div className="flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="light"
-                            onPress={() => {
-                              setEditing(b);
-                              setEditMax(
-                                b.maxConcurrency != null
-                                  ? String(b.maxConcurrency)
-                                  : "",
-                              );
-                              editDlg.onOpen();
-                            }}
-                          >
-                            编辑
-                          </Button>
-                          <Button
-                            size="sm"
-                            color="danger"
-                            variant="light"
-                            onPress={() => remove(b.id)}
-                          >
-                            删除
-                          </Button>
+                        <div>
+                          {g.rows.map((b, idx) => (
+                            <div
+                              key={b.id}
+                              className={`flex items-center justify-between gap-2 px-3 py-2 ${
+                                idx > 0
+                                  ? "border-t border-divider/30"
+                                  : ""
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                <span className="text-sm font-medium truncate">
+                                  {b.siteBoundAccount.siteAccount.name}
+                                </span>
+                                <span className="text-default-400">/</span>
+                                <span className="text-sm truncate">
+                                  {b.siteBoundAccount.name}
+                                </span>
+                                <Chip
+                                  size="sm"
+                                  variant="flat"
+                                  classNames={{
+                                    base: "h-5",
+                                    content: "text-[11px] px-1.5",
+                                  }}
+                                >
+                                  ×{b.siteBoundAccount.rateMultiplier}
+                                </Chip>
+                                {b.maxConcurrency != null && (
+                                  <Chip
+                                    size="sm"
+                                    variant="flat"
+                                    color="primary"
+                                    classNames={{
+                                      base: "h-5",
+                                      content: "text-[11px] px-1.5",
+                                    }}
+                                  >
+                                    max {b.maxConcurrency}
+                                  </Chip>
+                                )}
+                              </div>
+                              <div className="flex gap-1 shrink-0">
+                                <Button
+                                  size="sm"
+                                  variant="light"
+                                  className="h-7 min-w-0 px-2"
+                                  onPress={() => {
+                                    setEditing(b);
+                                    setEditMax(
+                                      b.maxConcurrency != null
+                                        ? String(b.maxConcurrency)
+                                        : "",
+                                    );
+                                    editDlg.onOpen();
+                                  }}
+                                >
+                                  编辑
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  color="danger"
+                                  variant="light"
+                                  className="h-7 min-w-0 px-2"
+                                  onPress={() => remove(b.id)}
+                                >
+                                  删除
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     ))}
-                  </div>
                 </CardBody>
               </Card>
             ))}
