@@ -29,7 +29,7 @@ import {
 } from "@heroui/react";
 
 const MODEL_PRESETS = [
-  { key: "claude-opus-4-7", label: "claude-opus-4-7（默认）" },
+  { key: "claude-opus-4-7", label: "claude-opus-4-7" },
   { key: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
   { key: "claude-haiku-4-5", label: "claude-haiku-4-5" },
 ];
