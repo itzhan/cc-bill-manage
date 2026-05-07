@@ -27,8 +27,10 @@ import {
   Plus,
   RefreshCw,
   Settings as SettingsIcon,
+  Sparkles,
   TestTube2,
 } from "lucide-react";
+import Link from "next/link";
 import Shell from "@/components/Shell";
 import StatCard from "@/components/StatCard";
 import { fmtMoneyShort } from "@/lib/format";
@@ -845,9 +847,7 @@ export default function SchedulingPage() {
                 setEditNotes(a.notes ?? "");
                 editDlg.onOpen();
               }}
-              onAddChannel={() => {
-                newDlg.onOpen();
-              }}
+              siteId={siteId}
             />
           ))}
         </div>
@@ -1165,7 +1165,7 @@ function GroupCard({
   bindings,
   accountStats,
   onEditAccount,
-  onAddChannel,
+  siteId,
 }: {
   group: GroupRow;
   accounts: AccountRow[];
@@ -1180,7 +1180,7 @@ function GroupCard({
     { requests: number; cost: number; user_cost: number }
   >;
   onEditAccount: (a: AccountRow) => void;
-  onAddChannel: () => void;
+  siteId: number | null;
 }) {
   const [mode, setMode] = useState<"scheduled" | "unscheduled">("scheduled");
   const [search, setSearch] = useState("");
@@ -1359,12 +1359,15 @@ function GroupCard({
             </div>
           );
         })}
-        <button
-          className="mt-2 text-xs text-primary hover:underline"
-          onClick={onAddChannel}
-        >
-          + 新增渠道到该分组
-        </button>
+        {siteId != null && (
+          <Link
+            href={`/scheduling/smart?siteId=${siteId}&groupId=${group.id}`}
+            className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+          >
+            <Sparkles size={12} />
+            智能调度
+          </Link>
+        )}
       </CardBody>
     </Card>
   );

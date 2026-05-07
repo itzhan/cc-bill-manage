@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
+  Autocomplete,
+  AutocompleteItem,
   Button,
   Card,
   CardBody,
@@ -25,6 +27,12 @@ import {
   addToast,
   useDisclosure,
 } from "@heroui/react";
+
+const MODEL_PRESETS = [
+  { key: "claude-opus-4-7", label: "claude-opus-4-7（默认）" },
+  { key: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
+  { key: "claude-haiku-4-5", label: "claude-haiku-4-5" },
+];
 import { Plus, Trash2, Gauge } from "lucide-react";
 import Shell from "@/components/Shell";
 import { fmtDate } from "@/lib/format";
@@ -334,13 +342,25 @@ function NewRunModal({
               onValueChange={setApiKey}
               type="password"
             />
-            <Input
+            <Autocomplete
               label="模型 ID"
               placeholder="claude-opus-4-7"
-              value={model}
-              onValueChange={setModel}
-              description="常用：claude-opus-4-7 · claude-sonnet-4-6 · claude-haiku-4-5。官方 n=30 基线仅适用于 opus-4-7"
-            />
+              defaultItems={MODEL_PRESETS}
+              selectedKey={
+                MODEL_PRESETS.some((p) => p.key === model) ? model : null
+              }
+              inputValue={model}
+              onInputChange={setModel}
+              onSelectionChange={(k) => {
+                if (k != null) setModel(String(k));
+              }}
+              allowsCustomValue
+              description="常用：claude-opus-4-7 · claude-sonnet-4-6 · claude-haiku-4-5。可下拉选也可自由输入。官方 n=30 基线仅适用于 opus-4-7"
+            >
+              {(item) => (
+                <AutocompleteItem key={item.key}>{item.label}</AutocompleteItem>
+              )}
+            </Autocomplete>
             <Select
               label="测试规模"
               selectedKeys={mode}
