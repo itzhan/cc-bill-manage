@@ -247,12 +247,47 @@ model Snapshot {
   @@index([takenAt])
 }
 
+// 渠道分组：一个 (name, baseUrl) 下面挂多把 key。同一个中转站常常给同一个
+// 入口分发不同的 key（不同会员/不同试用），把它们聚到一起看更直观，也方便
+// 同时点测多把 key、横比哪一把状态最干净。
+model BenchChannel {
+  id        Int               @id @default(autoincrement())
+  name      String
+  baseUrl   String
+  notes     String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  keys      BenchChannelKey[]
+
+  @@index([createdAt])
+}
+
+model BenchChannelKey {
+  id          Int      @id @default(autoincrement())
+  channelId   Int
+  name        String   // 用户自命名，如 "v4-vip"
+  apiKey      String   // 明文存储；展示时 mask
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  channel BenchChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  runs    BenchRun[]
+
+  @@index([channelId])
+}
+
 // One benchmark run = one (channel, mode, key) combination tested against the
 // SWE-Atlas-QnA dataset. The engine spawns one BenchTask row per sampled
 // question, updates each as it grades, and finalizes summary fields on the
 // run when all tasks complete.
 model BenchRun {
   id                       Int       @id @default(autoincrement())
+  // Optional link to a saved channel-key. When set, the engine still uses
+  // baseUrl / apiKey from the run row (snapshot at start time), but the UI
+  // can group runs under their key. null = legacy ad-hoc run.
+  channelKeyId             Int?
   name                     String
   baseUrl                  String
   apiKeyMasked             String
@@ -308,9 +343,11 @@ model BenchRun {
   finishedAt               DateTime?
   createdAt                DateTime  @default(now())
 
-  tasks BenchTask[]
+  tasks       BenchTask[]
+  channelKey  BenchChannelKey? @relation(fields: [channelKeyId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
+  @@index([channelKeyId])
 }
 
 model BenchTask {

@@ -55,10 +55,35 @@ export async function POST(req: Request) {
     n: number;
     seed: number;
     concurrency: number;
+    channelKeyId: number;
   }>;
-  const name = (body.name ?? "").trim();
-  const baseUrl = (body.baseUrl ?? "").trim().replace(/\/$/, "");
-  const apiKey = (body.apiKey ?? "").trim();
+
+  // Two paths:
+  //   A) channelKeyId provided — pull baseUrl/apiKey from the saved key/channel,
+  //      auto-generate a run name like "<channel>/<key> · n=30 · 04-12 14:32".
+  //   B) legacy ad-hoc — caller provides name/baseUrl/apiKey directly.
+  let name = (body.name ?? "").trim();
+  let baseUrl = (body.baseUrl ?? "").trim().replace(/\/$/, "");
+  let apiKey = (body.apiKey ?? "").trim();
+  let channelKeyId: number | null = null;
+  if (body.channelKeyId) {
+    const ck = await prisma.benchChannelKey.findUnique({
+      where: { id: Number(body.channelKeyId) },
+      include: { channel: true },
+    });
+    if (!ck) {
+      return NextResponse.json({ error: "channelKeyId not found" }, { status: 404 });
+    }
+    channelKeyId = ck.id;
+    baseUrl = ck.channel.baseUrl;
+    apiKey = ck.apiKey;
+    if (!name) {
+      const now = new Date();
+      const stamp = `${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      name = `${ck.channel.name}/${ck.name} · n=${body.n ?? 30} · ${stamp}`;
+    }
+  }
+
   if (!name || !baseUrl || !apiKey) {
     return NextResponse.json({ error: "name, baseUrl, apiKey are required" }, { status: 400 });
   }
@@ -78,6 +103,7 @@ export async function POST(req: Request) {
   const run = await prisma.benchRun.create({
     data: {
       name,
+      channelKeyId,
       baseUrl,
       apiKey,
       apiKeyMasked: mask(apiKey),
