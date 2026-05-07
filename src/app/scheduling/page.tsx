@@ -17,6 +17,12 @@ import {
   Spinner,
   Switch,
   Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableColumn,
+  TableHeader,
+  TableRow,
   Tabs,
   Textarea,
   addToast,
@@ -158,7 +164,7 @@ export default function SchedulingPage() {
       }
     >
   >({});
-  const [view, setView] = useState<"channels" | "users">("channels");
+  const [view, setView] = useState<"channels" | "users" | "errors">("channels");
   const [structureLoading, setStructureLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyAcc, setBusyAcc] = useState<number | null>(null);
@@ -838,16 +844,21 @@ export default function SchedulingPage() {
 
       <Tabs
         selectedKey={view}
-        onSelectionChange={(k) => setView(String(k) as "channels" | "users")}
+        onSelectionChange={(k) =>
+          setView(String(k) as "channels" | "users" | "errors")
+        }
         variant="underlined"
         className="mb-4"
         classNames={{ tabList: "px-0" }}
       >
         <Tab key="channels" title="渠道调度" />
         <Tab key="users" title="分组使用" />
+        <Tab key="errors" title="错误排行" />
       </Tabs>
 
-      {view === "users" ? (
+      {view === "errors" ? (
+        <ErrorRankingView siteId={siteId} />
+      ) : view === "users" ? (
         <GroupUsersView
           rows={groupUsers}
           excludeList={excludeList}
@@ -1122,6 +1133,272 @@ export default function SchedulingPage() {
 // Group-users view: per group → list of users that called it today.
 // Useful for re-balancing accounts ("group X is dominated by user Y").
 // ------------------------------------------------------------------
+// ============================================================
+// Error ranking view — calls /api/scheduling/[siteId]/error-ranking
+// which pages through /admin/ops/request-errors (page_size=500) up to a
+// hard cap and aggregates per account.
+// ============================================================
+interface ErrorRankAccount {
+  accountId: number;
+  accountName: string;
+  count: number;
+  share: number;
+  byStatus: Record<string, number>;
+  byModel: Record<string, number>;
+  groups: { groupId: number; groupName: string; count: number }[];
+  latestAt: string;
+  latestMessage: string;
+  latestStatus: number;
+}
+
+interface ErrorRankPayload {
+  range: string;
+  totalErrors: number;
+  processed: number;
+  truncated: boolean;
+  accounts: ErrorRankAccount[];
+}
+
+const ERROR_RANGES: { key: string; label: string }[] = [
+  { key: "1h", label: "近 1 小时" },
+  { key: "6h", label: "近 6 小时" },
+  { key: "24h", label: "近 24 小时" },
+  { key: "7d", label: "近 7 天" },
+  { key: "30d", label: "近 30 天" },
+];
+
+function ErrorRankingView({ siteId }: { siteId: number | null }) {
+  const [range, setRange] = useState<string>("1h");
+  const [data, setData] = useState<ErrorRankPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+
+  const load = useCallback(async () => {
+    if (siteId == null) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch(
+        `/api/scheduling/${siteId}/error-ranking?range=${range}`,
+        { cache: "no-store" },
+      );
+      const j = await r.json();
+      if (!r.ok) {
+        setError(j.error || `${r.status}`);
+        return;
+      }
+      setData(j);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [siteId, range]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (siteId == null) {
+    return (
+      <Card>
+        <CardBody className="text-default-500 text-sm">先选站点</CardBody>
+      </Card>
+    );
+  }
+
+  const filtered = data
+    ? data.accounts.filter((a) => {
+        const lc = q.trim().toLowerCase();
+        if (!lc) return true;
+        return (
+          a.accountName.toLowerCase().includes(lc) ||
+          a.groups.some((g) =>
+            (g.groupName ?? "").toLowerCase().includes(lc),
+          )
+        );
+      })
+    : [];
+
+  const maxCount = data ? Math.max(1, ...data.accounts.map((a) => a.count)) : 1;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Card className="bg-content1 border border-divider/50 shadow-none">
+        <CardBody className="flex flex-row gap-2 items-center flex-wrap py-3">
+          <span className="text-xs text-default-500">时间范围</span>
+          {ERROR_RANGES.map((r) => (
+            <Chip
+              key={r.key}
+              size="sm"
+              variant={range === r.key ? "solid" : "flat"}
+              color={range === r.key ? "primary" : "default"}
+              className="cursor-pointer"
+              onClick={() => setRange(r.key)}
+            >
+              {r.label}
+            </Chip>
+          ))}
+          <Button
+            size="sm"
+            variant="flat"
+            startContent={<RefreshCw size={14} />}
+            onPress={load}
+            isLoading={loading}
+            className="ml-auto"
+          >
+            刷新
+          </Button>
+          <div className="w-full sm:w-64">
+            <Input
+              size="sm"
+              placeholder="搜索账号/分组名…"
+              value={q}
+              onValueChange={setQ}
+            />
+          </div>
+        </CardBody>
+      </Card>
+
+      {error && (
+        <Card>
+          <CardBody className="text-danger text-sm">{error}</CardBody>
+        </Card>
+      )}
+
+      {data && (
+        <Card className="bg-content1 border border-divider/50 shadow-none">
+          <CardHeader className="flex justify-between items-center pb-2 flex-wrap gap-2">
+            <div>
+              <h2 className="font-semibold">账号错误排行</h2>
+              <p className="text-xs text-default-500 mt-0.5">
+                {data.range} · 共 {data.totalErrors.toLocaleString()} 条错误 · 涉及{" "}
+                {data.accounts.length} 个账号 · 已处理{" "}
+                {data.processed.toLocaleString()} 条
+                {data.truncated && (
+                  <span className="text-warning ml-1">
+                    （达到 {data.processed.toLocaleString()} 上限，更早数据未统计）
+                  </span>
+                )}
+              </p>
+            </div>
+          </CardHeader>
+          <CardBody className="pt-0">
+            {filtered.length === 0 ? (
+              <p className="text-default-500 text-sm">
+                {data.accounts.length === 0
+                  ? "该时间窗内没有错误。"
+                  : "当前筛选下没有匹配的账号。"}
+              </p>
+            ) : (
+              <Table removeWrapper aria-label="error ranking">
+                <TableHeader>
+                  <TableColumn>排名</TableColumn>
+                  <TableColumn>账号</TableColumn>
+                  <TableColumn>分组</TableColumn>
+                  <TableColumn className="text-right">错误数</TableColumn>
+                  <TableColumn>占比</TableColumn>
+                  <TableColumn>状态码</TableColumn>
+                  <TableColumn>最近错误</TableColumn>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((a, i) => {
+                    const pct = (a.count / maxCount) * 100;
+                    const groupLine = a.groups
+                      .map((g) => `${g.groupName} (${g.count})`)
+                      .join("、");
+                    const statusBreakdown = Object.entries(a.byStatus)
+                      .sort((x, y) => y[1] - x[1])
+                      .map(([k, v]) => `${k}×${v}`)
+                      .join(" / ");
+                    return (
+                      <TableRow key={a.accountId}>
+                        <TableCell className="font-mono text-xs text-default-500">
+                          #{i + 1}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col leading-tight max-w-[260px]">
+                            <span className="font-medium text-sm truncate">
+                              {a.accountName}
+                            </span>
+                            <span className="text-[11px] text-default-400">
+                              id={a.accountId}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className="text-xs text-default-500 break-all"
+                            title={groupLine}
+                          >
+                            {a.groups[0]?.groupName ?? "—"}
+                            {a.groups.length > 1 && (
+                              <span className="text-default-400 ml-1">
+                                +{a.groups.length - 1}
+                              </span>
+                            )}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums">
+                          {a.count.toLocaleString()}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 min-w-[120px]">
+                            <div className="flex-1 h-2 rounded-full bg-content2 overflow-hidden">
+                              <div
+                                className="h-full bg-danger/70"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-default-500 tabular-nums w-10 text-right">
+                              {(a.share * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className="text-xs font-mono text-default-500"
+                            title={statusBreakdown}
+                          >
+                            {statusBreakdown || "—"}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col leading-tight max-w-[260px]">
+                            <span className="text-[11px] text-default-400">
+                              {fmtTimeShort(a.latestAt)}
+                            </span>
+                            <span
+                              className="text-xs text-danger truncate"
+                              title={a.latestMessage}
+                            >
+                              {a.latestStatus} · {a.latestMessage || "—"}
+                            </span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardBody>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function fmtTimeShort(ts: string): string {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleString("zh-CN", { hour12: false });
+  } catch {
+    return ts;
+  }
+}
+
 function GroupUsersView({
   rows,
   excludeList,

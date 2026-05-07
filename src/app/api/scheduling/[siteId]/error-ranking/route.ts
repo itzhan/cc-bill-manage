@@ -1,0 +1,125 @@
+import { NextResponse } from "next/server";
+import { makeSiteClient } from "@/lib/az-server";
+
+export const runtime = "nodejs";
+// Pulling errors over multiple pages can take a while when the time range
+// is wide; lift the default 10s budget.
+export const maxDuration = 120;
+
+const ALLOWED_RANGES = new Set(["1h", "6h", "24h", "7d", "30d"]);
+// Hard cap so a runaway query (e.g. millions of errors in 30d) doesn't blow
+// up memory or wedge a request for minutes. With 500/page that's 50k events.
+const MAX_PAGES = 100;
+const PAGE_SIZE = 500;
+
+interface AggregatedAccount {
+  accountId: number;
+  accountName: string;
+  count: number;
+  byStatus: Record<string, number>;
+  byModel: Record<string, number>;
+  byGroup: Record<string, { groupId: number; groupName: string; count: number }>;
+  latestAt: string;
+  latestMessage: string;
+  latestStatus: number;
+}
+
+export async function GET(
+  req: Request,
+  ctx: { params: Promise<{ siteId: string }> },
+) {
+  const { siteId } = await ctx.params;
+  const url = new URL(req.url);
+  const rangeRaw = url.searchParams.get("range") ?? "1h";
+  const range = ALLOWED_RANGES.has(rangeRaw) ? rangeRaw : "1h";
+  try {
+    const client = await makeSiteClient(Number(siteId));
+    const accs = new Map<number, AggregatedAccount>();
+    let page = 1;
+    let pages = 1;
+    let total = 0;
+    let truncated = false;
+    let processed = 0;
+    while (page <= pages) {
+      if (page > MAX_PAGES) {
+        truncated = true;
+        break;
+      }
+      const r = await client.listRequestErrors({
+        page,
+        pageSize: PAGE_SIZE,
+        timeRange: range,
+        view: "errors",
+      });
+      total = r.total;
+      pages = r.pages;
+      for (const e of r.items) {
+        if (!e.account_id) continue; // skip platform/inbound errors with no account
+        let agg = accs.get(e.account_id);
+        if (!agg) {
+          agg = {
+            accountId: e.account_id,
+            accountName: e.account_name || `account#${e.account_id}`,
+            count: 0,
+            byStatus: {},
+            byModel: {},
+            byGroup: {},
+            latestAt: e.created_at,
+            latestMessage: e.message || "",
+            latestStatus: e.status_code || 0,
+          };
+          accs.set(e.account_id, agg);
+        }
+        agg.count++;
+        const sc = String(e.status_code || 0);
+        agg.byStatus[sc] = (agg.byStatus[sc] ?? 0) + 1;
+        const mdl = e.model || e.requested_model || "(unknown)";
+        agg.byModel[mdl] = (agg.byModel[mdl] ?? 0) + 1;
+        if (e.group_id) {
+          const gk = String(e.group_id);
+          const g = agg.byGroup[gk];
+          if (g) g.count++;
+          else
+            agg.byGroup[gk] = {
+              groupId: e.group_id,
+              groupName: e.group_name || `group#${e.group_id}`,
+              count: 1,
+            };
+        }
+        // listRequestErrors returns items DESC by created_at — so the FIRST
+        // entry we see for this account is the latest. Skip overwrite.
+        // (No-op here because we initialised latestAt at first sight.)
+      }
+      processed += r.items.length;
+      if (r.items.length === 0) break;
+      page++;
+    }
+    const ranking = [...accs.values()].sort((a, b) => b.count - a.count);
+    return NextResponse.json({
+      range,
+      totalErrors: total,
+      processed,
+      truncated,
+      pages,
+      maxPages: MAX_PAGES,
+      pageSize: PAGE_SIZE,
+      accounts: ranking.map((a) => ({
+        accountId: a.accountId,
+        accountName: a.accountName,
+        count: a.count,
+        share: total > 0 ? a.count / total : 0,
+        byStatus: a.byStatus,
+        byModel: a.byModel,
+        groups: Object.values(a.byGroup).sort((x, y) => y.count - x.count),
+        latestAt: a.latestAt,
+        latestMessage: a.latestMessage.slice(0, 300),
+        latestStatus: a.latestStatus,
+      })),
+    });
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
+  }
+}

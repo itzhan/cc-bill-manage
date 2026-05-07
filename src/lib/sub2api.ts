@@ -655,6 +655,47 @@ export class Sub2ApiClient {
     );
   }
 
+  // List request-error events. The sub2api admin page paginates this (max
+  // page_size = 500). For ranking aggregation, callers page until total is
+  // covered; we don't fold paging here so the caller can stream + cap.
+  async listRequestErrors(params: {
+    page?: number;
+    pageSize?: number;
+    timeRange?: string;
+    view?: string;
+  } = {}): Promise<{
+    items: Array<{
+      id: number;
+      created_at: string;
+      status_code: number;
+      platform?: string;
+      model?: string;
+      account_id?: number;
+      account_name?: string;
+      group_id?: number;
+      group_name?: string;
+      requested_model?: string;
+      message?: string;
+      user_id?: number;
+      user_email?: string;
+      severity?: string;
+      type?: string;
+    }>;
+    total: number;
+    page: number;
+    page_size: number;
+    pages: number;
+  }> {
+    const qs = new URLSearchParams({
+      page: String(params.page ?? 1),
+      page_size: String(params.pageSize ?? 500),
+      time_range: params.timeRange ?? "1h",
+      view: params.view ?? "errors",
+      timezone: "Asia/Shanghai",
+    });
+    return this.request("GET", `/api/v1/admin/ops/request-errors?${qs.toString()}`);
+  }
+
   // Bulk fetch usage stats per group (per day). Used to sort groups by today
   // consumption. Fall back to per-account aggregation if this 404s on older
   // sub2api builds.
