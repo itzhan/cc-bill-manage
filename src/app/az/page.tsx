@@ -235,8 +235,8 @@ export default function AzPage() {
 
   return (
     <Shell>
-      <div className="flex items-center justify-between mb-4">
-        <div>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Wand2 size={22} className="text-primary" /> az 管理
           </h1>

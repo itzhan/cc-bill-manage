@@ -262,7 +262,7 @@ export default function DashboardPage() {
           <Tab key="expense" title="支出" />
         </Tabs>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             isIconOnly
             variant="flat"
@@ -281,7 +281,10 @@ export default function DashboardPage() {
                 startContent={<Calendar size={14} />}
                 endContent={<ChevronDown size={14} />}
               >
-                {RANGE_LABELS[range] ?? range}
+                <span className="hidden sm:inline">
+                  {RANGE_LABELS[range] ?? range}
+                </span>
+                <span className="sm:hidden">{range}</span>
               </Button>
             </DropdownTrigger>
             <DropdownMenu
@@ -302,11 +305,13 @@ export default function DashboardPage() {
           <Button
             variant="flat"
             radius="full"
-            startContent={<RefreshCw size={14} />}
+            isIconOnly={false}
             onPress={refreshNow}
             isLoading={refreshing}
+            startContent={<RefreshCw size={14} />}
           >
-            完整刷新
+            <span className="hidden sm:inline">完整刷新</span>
+            <span className="sm:hidden">刷新</span>
           </Button>
           <Button
             color="primary"
@@ -315,7 +320,8 @@ export default function DashboardPage() {
             onPress={syncNow}
             isLoading={syncing}
           >
-            立即同步
+            <span className="hidden sm:inline">立即同步</span>
+            <span className="sm:hidden">同步</span>
           </Button>
         </div>
       </div>

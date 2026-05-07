@@ -17,14 +17,14 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
-interface NavItem {
+export interface NavItem {
   href: string;
   label: string;
   icon: React.ReactNode;
   badge?: string;
 }
 
-const items: NavItem[] = [
+export const navItems: NavItem[] = [
   { href: "/", label: "仪表盘", icon: <LayoutDashboard size={18} /> },
   { href: "/upstream", label: "渠道管理", icon: <Server size={18} /> },
   { href: "/site", label: "本站账号", icon: <Building2 size={18} /> },
@@ -57,7 +57,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="px-3 mt-2 flex flex-col gap-1">
-        {items.map((it) => {
+        {navItems.map((it) => {
           const active = pathname === it.href;
           return (
             <Link

@@ -678,11 +678,11 @@ export default function SchedulingPage() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
           <Select
             size="sm"
             label="站点"
-            className="w-[200px]"
+            className="w-full sm:w-[200px]"
             selectedKeys={siteId != null ? new Set([String(siteId)]) : new Set()}
             onSelectionChange={(k) => {
               const v = Array.from(k as Set<string>)[0];

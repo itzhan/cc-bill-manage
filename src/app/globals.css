@@ -6,3 +6,21 @@ html,
 body {
   height: 100%;
 }
+
+/* Mobile fallback: any direct parent of a HeroUI Table (<table>) gets a
+   horizontal scrollbar so the dense column layouts don't blow out the
+   viewport. Cheaper than wrapping every Table site-wide. */
+@media (max-width: 767px) {
+  *:has(> table) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Modals never wider than the viewport on small screens. HeroUI defaults
+   are mostly fine but `size="2xl"`/`"4xl"` can clip on narrow phones. */
+@media (max-width: 640px) {
+  [data-slot="base"][role="dialog"] {
+    max-width: calc(100vw - 1rem);
+  }
+}

@@ -280,8 +280,8 @@ export default function SitePage() {
 
   return (
     <Shell>
-      <div className="flex items-center justify-between mb-4">
-        <div>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold">本站账号（管理员）</h1>
           <p className="text-sm text-default-500">
             收入侧：拉取 admin/accounts 和 today-stats
@@ -351,7 +351,7 @@ export default function SitePage() {
                     )}
                   </div>
                 </div>
-                <div className="flex gap-2" data-stop-toggle>
+                <div className="flex gap-2 flex-wrap" data-stop-toggle>
                   <Button
                     size="sm"
                     variant="flat"

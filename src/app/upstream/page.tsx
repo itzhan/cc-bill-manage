@@ -349,8 +349,8 @@ export default function UpstreamPage() {
 
   return (
     <Shell>
-      <div className="flex items-center justify-between mb-5">
-        <div>
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold">渠道管理</h1>
           <p className="text-xs text-default-500 mt-0.5">
             凭据 · 余额 · 货源情况 · 点卡片底部按钮查看消费明细

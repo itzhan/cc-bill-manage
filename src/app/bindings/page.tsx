@@ -194,8 +194,8 @@ export default function BindingsPage() {
 
   return (
     <Shell>
-      <div className="flex items-center justify-between mb-4">
-        <div>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold">绑定</h1>
           <p className="text-sm text-default-500">
             本站账号 ↔ 上游 Key（多对多），用于成本对账与差异检测

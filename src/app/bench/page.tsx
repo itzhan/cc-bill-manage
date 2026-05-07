@@ -94,8 +94,8 @@ export default function BenchPage() {
 
   return (
     <Shell>
-      <div className="flex items-center justify-between mb-4">
-        <div>
+      <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold flex items-center gap-2">
             <Gauge size={20} /> 基准测试
           </h1>
