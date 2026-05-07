@@ -1138,6 +1138,22 @@ export default function SchedulingPage() {
 // which pages through /admin/ops/request-errors (page_size=500) up to a
 // hard cap and aggregates per account.
 // ============================================================
+interface ErrorRankRecentEvent {
+  id: number;
+  createdAt: string;
+  statusCode: number;
+  model: string;
+  requestedModel: string;
+  message: string;
+  groupId: number | null;
+  groupName: string;
+  userId: number | null;
+  userEmail: string;
+  requestId: string;
+  requestPath: string;
+  isRetryable: boolean;
+}
+
 interface ErrorRankAccount {
   accountId: number;
   accountName: string;
@@ -1149,6 +1165,7 @@ interface ErrorRankAccount {
   latestAt: string;
   latestMessage: string;
   latestStatus: number;
+  recentEvents: ErrorRankRecentEvent[];
 }
 
 interface ErrorRankPayload {
@@ -1156,6 +1173,7 @@ interface ErrorRankPayload {
   totalErrors: number;
   processed: number;
   truncated: boolean;
+  recentPerAccount: number;
   accounts: ErrorRankAccount[];
 }
 
@@ -1173,6 +1191,7 @@ function ErrorRankingView({ siteId }: { siteId: number | null }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [picked, setPicked] = useState<ErrorRankAccount | null>(null);
 
   const load = useCallback(async () => {
     if (siteId == null) return;
@@ -1313,7 +1332,11 @@ function ErrorRankingView({ siteId }: { siteId: number | null }) {
                       .map(([k, v]) => `${k}×${v}`)
                       .join(" / ");
                     return (
-                      <TableRow key={a.accountId}>
+                      <TableRow
+                        key={a.accountId}
+                        className="cursor-pointer hover:bg-default-100"
+                        onClick={() => setPicked(a)}
+                      >
                         <TableCell className="font-mono text-xs text-default-500">
                           #{i + 1}
                         </TableCell>
@@ -1386,7 +1409,206 @@ function ErrorRankingView({ siteId }: { siteId: number | null }) {
           </CardBody>
         </Card>
       )}
+
+      <ErrorAccountModal
+        account={picked}
+        recentCap={data?.recentPerAccount ?? 0}
+        onClose={() => setPicked(null)}
+      />
     </div>
+  );
+}
+
+function ErrorAccountModal({
+  account,
+  recentCap,
+  onClose,
+}: {
+  account: ErrorRankAccount | null;
+  recentCap: number;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [statusF, setStatusF] = useState<string>("all");
+  useEffect(() => {
+    if (!account) return;
+    setQ("");
+    setStatusF("all");
+  }, [account]);
+
+  const events = account?.recentEvents ?? [];
+  const lc = q.trim().toLowerCase();
+  const filtered = events.filter((e) => {
+    if (statusF !== "all" && String(e.statusCode) !== statusF) return false;
+    if (!lc) return true;
+    return (
+      (e.message ?? "").toLowerCase().includes(lc) ||
+      (e.userEmail ?? "").toLowerCase().includes(lc) ||
+      (e.model ?? "").toLowerCase().includes(lc) ||
+      (e.requestId ?? "").toLowerCase().includes(lc)
+    );
+  });
+  const statusCodes = account
+    ? Object.keys(account.byStatus).sort(
+        (a, b) => account.byStatus[b] - account.byStatus[a],
+      )
+    : [];
+
+  return (
+    <Modal
+      isOpen={account != null}
+      onClose={onClose}
+      size="5xl"
+      scrollBehavior="inside"
+    >
+      <ModalContent>
+        {account && (
+          <>
+            <ModalHeader className="flex flex-col gap-1 pb-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold">{account.accountName}</span>
+                <Chip size="sm" variant="flat">
+                  id={account.accountId}
+                </Chip>
+                <Chip size="sm" color="danger" variant="flat">
+                  共 {account.count.toLocaleString()} 错
+                </Chip>
+                <Chip size="sm" variant="flat">
+                  占比 {(account.share * 100).toFixed(2)}%
+                </Chip>
+              </div>
+              <div className="flex flex-wrap gap-3 text-xs text-default-500">
+                <span>
+                  分组：
+                  {account.groups.map((g) => `${g.groupName}(${g.count})`).join("、") || "—"}
+                </span>
+                <span>
+                  状态码：
+                  {Object.entries(account.byStatus)
+                    .sort((x, y) => y[1] - x[1])
+                    .map(([k, v]) => `${k}×${v}`)
+                    .join(" / ") || "—"}
+                </span>
+                <span>
+                  模型：
+                  {Object.entries(account.byModel)
+                    .sort((x, y) => y[1] - x[1])
+                    .slice(0, 4)
+                    .map(([k, v]) => `${k}×${v}`)
+                    .join(" / ") || "—"}
+                </span>
+              </div>
+            </ModalHeader>
+            <ModalBody className="gap-3 pt-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Chip
+                  size="sm"
+                  variant={statusF === "all" ? "solid" : "flat"}
+                  color={statusF === "all" ? "primary" : "default"}
+                  className="cursor-pointer"
+                  onClick={() => setStatusF("all")}
+                >
+                  全部
+                </Chip>
+                {statusCodes.map((sc) => (
+                  <Chip
+                    key={sc}
+                    size="sm"
+                    variant={statusF === sc ? "solid" : "flat"}
+                    color={statusF === sc ? "primary" : "default"}
+                    className="cursor-pointer"
+                    onClick={() => setStatusF(sc)}
+                  >
+                    {sc} · {account.byStatus[sc]}
+                  </Chip>
+                ))}
+                <div className="ml-auto w-full sm:w-72">
+                  <Input
+                    size="sm"
+                    placeholder="搜索消息 / user / 模型 / request_id…"
+                    value={q}
+                    onValueChange={setQ}
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-default-400">
+                展示最近 {Math.min(events.length, recentCap)} 条原始错误
+                {account.count > recentCap &&
+                  `（该账号共 ${account.count.toLocaleString()} 条，更早的未保留）`}
+                。
+              </p>
+              {filtered.length === 0 ? (
+                <p className="text-default-500 text-sm py-4 text-center">
+                  没有匹配的错误。
+                </p>
+              ) : (
+                <Table removeWrapper aria-label="account errors">
+                  <TableHeader>
+                    <TableColumn>时间</TableColumn>
+                    <TableColumn>状态</TableColumn>
+                    <TableColumn>模型</TableColumn>
+                    <TableColumn>用户</TableColumn>
+                    <TableColumn>消息</TableColumn>
+                    <TableColumn>request_id</TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((e) => (
+                      <TableRow key={e.id}>
+                        <TableCell className="text-xs text-default-500 whitespace-nowrap">
+                          {fmtTimeShort(e.createdAt)}
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            size="sm"
+                            color={
+                              e.statusCode >= 500
+                                ? "danger"
+                                : e.statusCode >= 400
+                                  ? "warning"
+                                  : "default"
+                            }
+                            variant="flat"
+                          >
+                            {e.statusCode || "?"}
+                          </Chip>
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          <div className="flex flex-col leading-tight">
+                            <span>{e.model || "—"}</span>
+                            {e.requestedModel && e.requestedModel !== e.model && (
+                              <span className="text-[10px] text-default-400">
+                                req: {e.requestedModel}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs text-default-500 max-w-[160px] truncate">
+                          {e.userEmail || "—"}
+                        </TableCell>
+                        <TableCell
+                          className="text-xs text-danger max-w-[360px] truncate"
+                          title={e.message}
+                        >
+                          {e.message || "—"}
+                        </TableCell>
+                        <TableCell className="font-mono text-[10px] text-default-400 max-w-[140px] truncate">
+                          {e.requestId || "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="flat" onPress={onClose}>
+                关闭
+              </Button>
+            </ModalFooter>
+          </>
+        )}
+      </ModalContent>
+    </Modal>
   );
 }
 

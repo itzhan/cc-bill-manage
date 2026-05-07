@@ -11,6 +11,26 @@ const ALLOWED_RANGES = new Set(["1h", "6h", "24h", "7d", "30d"]);
 // up memory or wedge a request for minutes. With 500/page that's 50k events.
 const MAX_PAGES = 100;
 const PAGE_SIZE = 500;
+// Per-account recent events kept on the response so the UI can drill in
+// without a second roundtrip. Cap so the JSON doesn't balloon when one
+// account has thousands of errors — top is usually enough for triage.
+const RECENT_PER_ACCOUNT = 200;
+
+interface RecentEvent {
+  id: number;
+  createdAt: string;
+  statusCode: number;
+  model: string;
+  requestedModel: string;
+  message: string;
+  groupId: number | null;
+  groupName: string;
+  userId: number | null;
+  userEmail: string;
+  requestId: string;
+  requestPath: string;
+  isRetryable: boolean;
+}
 
 interface AggregatedAccount {
   accountId: number;
@@ -22,6 +42,7 @@ interface AggregatedAccount {
   latestAt: string;
   latestMessage: string;
   latestStatus: number;
+  recentEvents: RecentEvent[];
 }
 
 export async function GET(
@@ -67,6 +88,7 @@ export async function GET(
             latestAt: e.created_at,
             latestMessage: e.message || "",
             latestStatus: e.status_code || 0,
+            recentEvents: [],
           };
           accs.set(e.account_id, agg);
         }
@@ -86,9 +108,24 @@ export async function GET(
               count: 1,
             };
         }
-        // listRequestErrors returns items DESC by created_at — so the FIRST
-        // entry we see for this account is the latest. Skip overwrite.
-        // (No-op here because we initialised latestAt at first sight.)
+        if (agg.recentEvents.length < RECENT_PER_ACCOUNT) {
+          // Items arrive DESC by created_at, so first 200 captured = latest 200.
+          agg.recentEvents.push({
+            id: e.id,
+            createdAt: e.created_at,
+            statusCode: e.status_code || 0,
+            model: e.model || "",
+            requestedModel: e.requested_model || "",
+            message: (e.message || "").slice(0, 600),
+            groupId: e.group_id ?? null,
+            groupName: e.group_name || "",
+            userId: e.user_id ?? null,
+            userEmail: e.user_email || "",
+            requestId: e.request_id || "",
+            requestPath: e.request_path || "",
+            isRetryable: e.is_retryable ?? false,
+          });
+        }
       }
       processed += r.items.length;
       if (r.items.length === 0) break;
@@ -103,6 +140,7 @@ export async function GET(
       pages,
       maxPages: MAX_PAGES,
       pageSize: PAGE_SIZE,
+      recentPerAccount: RECENT_PER_ACCOUNT,
       accounts: ranking.map((a) => ({
         accountId: a.accountId,
         accountName: a.accountName,
@@ -114,6 +152,7 @@ export async function GET(
         latestAt: a.latestAt,
         latestMessage: a.latestMessage.slice(0, 300),
         latestStatus: a.latestStatus,
+        recentEvents: a.recentEvents,
       })),
     });
   } catch (e) {

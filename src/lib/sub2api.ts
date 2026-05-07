@@ -680,6 +680,11 @@ export class Sub2ApiClient {
       user_email?: string;
       severity?: string;
       type?: string;
+      request_id?: string;
+      request_path?: string;
+      is_retryable?: boolean;
+      retry_count?: number;
+      resolved?: boolean;
     }>;
     total: number;
     page: number;
