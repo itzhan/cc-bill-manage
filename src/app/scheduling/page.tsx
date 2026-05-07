@@ -24,11 +24,14 @@ import {
 } from "@heroui/react";
 import {
   Activity,
+  Layers,
+  Pencil,
   Plus,
   RefreshCw,
   Settings as SettingsIcon,
   Sparkles,
   TestTube2,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import Shell from "@/components/Shell";
@@ -108,6 +111,13 @@ interface GroupUsersRow {
     cost: number;
     actual_cost: number;
   }>;
+}
+
+interface CustomGroupRow {
+  id: number;
+  siteAccountId: number;
+  name: string;
+  groupIds: number[];
 }
 
 interface TemplateRow {
@@ -202,6 +212,8 @@ export default function SchedulingPage() {
   const tplDlg = useDisclosure();
   const editDlg = useDisclosure();
   const filterDlg = useDisclosure();
+  const cgrpDlg = useDisclosure();
+  const [customGroups, setCustomGroups] = useState<CustomGroupRow[]>([]);
 
   // Load sub2api sites once
   useEffect(() => {
@@ -274,6 +286,20 @@ export default function SchedulingPage() {
       setStructureLoading(false);
     }
   }, [siteId, cacheSet]);
+
+  const loadCustomGroups = useCallback(async () => {
+    if (siteId == null) return;
+    try {
+      const r = await fetch(
+        `/api/scheduling/custom-groups?siteId=${siteId}`,
+        { cache: "no-store" },
+      );
+      const j = await r.json();
+      if (r.ok) setCustomGroups(j.items || []);
+    } catch {
+      // keep prior list on transient failure
+    }
+  }, [siteId]);
 
   const loadConcurrency = useCallback(async () => {
     if (siteId == null) return;
@@ -365,6 +391,7 @@ export default function SchedulingPage() {
       loadConcurrency(),
       loadGroupUsage(),
       loadAccountStats(),
+      loadCustomGroups(),
       ...(view === "users" ? [loadGroupUsers()] : []),
     ]);
     const now = new Date().toISOString();
@@ -379,6 +406,7 @@ export default function SchedulingPage() {
     loadGroupUsage,
     loadAccountStats,
     loadGroupUsers,
+    loadCustomGroups,
     cacheSet,
   ]);
 
@@ -714,6 +742,15 @@ export default function SchedulingPage() {
           </Button>
           <Button
             size="sm"
+            variant="flat"
+            startContent={<Layers size={14} />}
+            onPress={cgrpDlg.onOpen}
+            isDisabled={siteId == null}
+          >
+            自定义分组
+          </Button>
+          <Button
+            size="sm"
             color="primary"
             startContent={<Plus size={14} />}
             onPress={newDlg.onOpen}
@@ -822,6 +859,31 @@ export default function SchedulingPage() {
           </CardBody>
         </Card>
       ) : (
+        <>
+          {customGroups.length > 0 && (
+            <div className="mb-5">
+              <div className="flex items-center gap-2 text-sm font-semibold text-default-700 mb-2">
+                <Layers size={14} className="text-primary" />
+                自定义分组
+                <span className="text-xs text-default-400 font-normal">
+                  ({customGroups.length})
+                </span>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {customGroups.map((cg) => (
+                  <CustomGroupCard
+                    key={cg.id}
+                    customGroup={cg}
+                    siteId={siteId}
+                    groups={groups}
+                    accounts={accounts}
+                    concurrency={concurrency}
+                    accountStats={accountStats}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {grouped.map((g) => (
             <GroupCard
@@ -851,7 +913,17 @@ export default function SchedulingPage() {
             />
           ))}
         </div>
+        </>
       )}
+
+      <CustomGroupsModal
+        isOpen={cgrpDlg.isOpen}
+        onClose={cgrpDlg.onClose}
+        siteId={siteId}
+        groups={groups}
+        items={customGroups}
+        onChanged={loadCustomGroups}
+      />
 
       <Modal
         isOpen={filterDlg.isOpen}
@@ -1370,6 +1442,343 @@ function GroupCard({
         )}
       </CardBody>
     </Card>
+  );
+}
+
+// ------------------------------------------------------------------
+// Custom group: aggregated card + management modal
+// ------------------------------------------------------------------
+function CustomGroupCard({
+  customGroup,
+  siteId,
+  groups,
+  accounts,
+  concurrency,
+  accountStats,
+}: {
+  customGroup: CustomGroupRow;
+  siteId: number | null;
+  groups: GroupRow[];
+  accounts: AccountRow[];
+  concurrency: ConcurrencyState;
+  accountStats: Record<
+    string,
+    { requests: number; cost: number; user_cost: number }
+  >;
+}) {
+  const memberSet = new Set(customGroup.groupIds);
+  const memberGroups = groups.filter((g) => memberSet.has(g.id));
+  // Union of accounts that belong to ANY member group, deduped by id.
+  const seen = new Set<number>();
+  const memberAccounts: AccountRow[] = [];
+  for (const a of accounts) {
+    const inAny = (a.group_ids ?? []).some((id) => memberSet.has(id));
+    if (!inAny) continue;
+    if (seen.has(a.id)) continue;
+    seen.add(a.id);
+    memberAccounts.push(a);
+  }
+  // Stats roll-up.
+  let inFlight = 0;
+  let capacity = 0;
+  let todayCost = 0;
+  let activeCount = 0;
+  let errCount = 0;
+  for (const a of memberAccounts) {
+    const conc = concurrency.account?.[String(a.id)];
+    if (conc) {
+      inFlight += conc.current_in_use ?? 0;
+      capacity += conc.max_capacity ?? 0;
+    } else {
+      capacity += a.concurrency ?? 0;
+    }
+    todayCost += accountStats[String(a.id)]?.user_cost ?? 0;
+    if (a.status === "active" && a.schedulable !== false) activeCount++;
+    if (
+      a.status === "error" ||
+      (typeof a.error_message === "string" && a.error_message.trim().length > 0)
+    )
+      errCount++;
+  }
+  const pct =
+    capacity > 0 ? Math.min(100, Math.round((inFlight / capacity) * 100)) : 0;
+  const barColor =
+    pct >= 90 ? "bg-danger" : pct >= 70 ? "bg-warning" : "bg-primary";
+
+  const smartHref =
+    siteId != null
+      ? `/scheduling/smart?siteId=${siteId}&groupIds=${customGroup.groupIds.join(",")}`
+      : "#";
+
+  return (
+    <Card className="bg-content1 border border-primary/30 shadow-none">
+      <CardHeader className="flex flex-col items-stretch gap-2 pb-2">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Layers size={14} className="text-primary" />
+            <h3 className="font-semibold">{customGroup.name}</h3>
+            <Chip size="sm" variant="flat" color="primary">
+              {memberGroups.length} 个分组
+            </Chip>
+          </div>
+          <span className="text-xs text-default-500 flex items-center gap-2">
+            {todayCost > 0 && (
+              <span className="text-foreground font-medium">
+                ${fmtMoneyShort(todayCost)}
+              </span>
+            )}
+            {memberAccounts.length} 渠道
+            {errCount > 0 && (
+              <Chip size="sm" color="danger" variant="flat">
+                {errCount} 异常
+              </Chip>
+            )}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {memberGroups.map((g) => (
+            <Chip
+              key={g.id}
+              size="sm"
+              variant="flat"
+              classNames={{ base: "h-5", content: "text-[11px] px-1.5" }}
+            >
+              {g.name} ×{g.rate_multiplier}
+            </Chip>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-2 rounded-full bg-content2 overflow-hidden">
+            <div
+              className={`h-full ${barColor} transition-all`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <span className="text-xs font-mono text-default-600">
+            {inFlight} / {capacity || "∞"}
+          </span>
+        </div>
+      </CardHeader>
+      <CardBody className="pt-0 gap-1">
+        <div className="text-xs text-default-500">
+          已启用 {activeCount} / {memberAccounts.length}（合并去重，跨分组同账号只算一次）
+        </div>
+        {siteId != null && (
+          <Link
+            href={smartHref}
+            className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+          >
+            <Sparkles size={12} />
+            智能调度
+          </Link>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function CustomGroupsModal({
+  isOpen,
+  onClose,
+  siteId,
+  groups,
+  items,
+  onChanged,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  siteId: number | null;
+  groups: GroupRow[];
+  items: CustomGroupRow[];
+  onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState<CustomGroupRow | null>(null);
+  const [name, setName] = useState("");
+  const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  const [submitting, setSubmitting] = useState(false);
+
+  function startNew() {
+    setEditing(null);
+    setName("");
+    setPickedIds(new Set());
+  }
+
+  function startEdit(cg: CustomGroupRow) {
+    setEditing(cg);
+    setName(cg.name);
+    setPickedIds(new Set(cg.groupIds.map(String)));
+  }
+
+  async function submit() {
+    if (siteId == null) return;
+    const ids = [...pickedIds].map((s) => Number(s)).filter((n) => Number.isFinite(n));
+    if (!name.trim() || ids.length === 0) {
+      addToast({ title: "请填写名称并至少选 1 个分组", color: "warning" });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      if (editing) {
+        const r = await fetch(`/api/scheduling/custom-groups/${editing.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim(), groupIds: ids }),
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          addToast({ title: "保存失败", description: j.error, color: "danger" });
+          return;
+        }
+        addToast({ title: "已保存", color: "success" });
+      } else {
+        const r = await fetch(`/api/scheduling/custom-groups`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            siteAccountId: siteId,
+            name: name.trim(),
+            groupIds: ids,
+          }),
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          addToast({ title: "创建失败", description: j.error, color: "danger" });
+          return;
+        }
+        addToast({ title: "已创建", color: "success" });
+      }
+      startNew();
+      await onChanged();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function remove(cg: CustomGroupRow) {
+    if (!confirm(`删除自定义分组「${cg.name}」？（不影响原始分组）`)) return;
+    const r = await fetch(`/api/scheduling/custom-groups/${cg.id}`, {
+      method: "DELETE",
+    });
+    if (!r.ok) {
+      addToast({ title: "删除失败", color: "danger" });
+      return;
+    }
+    addToast({ title: "已删除", color: "success" });
+    if (editing?.id === cg.id) startNew();
+    await onChanged();
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
+      <ModalContent>
+        <ModalHeader className="flex items-center gap-2">
+          <Layers size={16} /> 自定义分组
+        </ModalHeader>
+        <ModalBody className="gap-4">
+          {/* Existing list */}
+          <div>
+            <div className="text-xs text-default-500 mb-2">
+              已有自定义分组（{items.length}）
+            </div>
+            {items.length === 0 ? (
+              <p className="text-xs text-default-400 italic">
+                还没有自定义分组。下方填写名称 + 选原始分组创建。
+              </p>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {items.map((cg) => {
+                  const memberNames = groups
+                    .filter((g) => cg.groupIds.includes(g.id))
+                    .map((g) => g.name)
+                    .join("、");
+                  return (
+                    <div
+                      key={cg.id}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-content2"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm">{cg.name}</div>
+                        <div className="text-[11px] text-default-400 truncate">
+                          {memberNames || "(无成员)"}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        isIconOnly
+                        variant="light"
+                        onPress={() => startEdit(cg)}
+                      >
+                        <Pencil size={14} />
+                      </Button>
+                      <Button
+                        size="sm"
+                        isIconOnly
+                        variant="light"
+                        color="danger"
+                        onPress={() => remove(cg)}
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Form */}
+          <div className="border-t border-divider/40 pt-3">
+            <div className="text-xs text-default-500 mb-2">
+              {editing ? `编辑「${editing.name}」` : "新建自定义分组"}
+            </div>
+            <div className="flex flex-col gap-3">
+              <Input
+                label="名称"
+                size="sm"
+                value={name}
+                onValueChange={setName}
+              />
+              <Select
+                label="包含的原始分组（多选）"
+                size="sm"
+                selectionMode="multiple"
+                selectedKeys={pickedIds}
+                onSelectionChange={(k) =>
+                  setPickedIds(new Set(Array.from(k as Set<React.Key>).map(String)))
+                }
+              >
+                {groups.map((g) => (
+                  <SelectItem key={String(g.id)}>
+                    {`${g.name} (×${g.rate_multiplier})`}
+                  </SelectItem>
+                ))}
+              </Select>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  color="primary"
+                  onPress={submit}
+                  isLoading={submitting}
+                  startContent={editing ? <Pencil size={14} /> : <Plus size={14} />}
+                >
+                  {editing ? "保存修改" : "创建"}
+                </Button>
+                {editing && (
+                  <Button size="sm" variant="flat" onPress={startNew}>
+                    取消编辑
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="flat" onPress={onClose}>
+            关闭
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
   );
 }
 

@@ -66,6 +66,7 @@ interface Run {
 
 const OFFICIAL_PASS_RATE = 0.527; // n=30 baseline
 const MODE_OPTIONS = [
+  { key: "3", label: "🪶 烟测 (n=3, ~1 min) — 只验证探针 + 跑几道题" },
   { key: "30", label: "🚀 快速 (n=30, ~12 min)" },
   { key: "60", label: "⚖️ 标准 (n=60, ~25 min)" },
   { key: "124", label: "🎯 完整 (n=124, ~50 min)" },

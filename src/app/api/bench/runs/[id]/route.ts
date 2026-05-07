@@ -41,8 +41,9 @@ export async function GET(
   });
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  // Strip sensitive fields from the response.
-  const { apiKey: _apiKey, ...safe } = run;
+  // Strip sensitive fields from the response. probeRawResponse can be 30 KB;
+  // surface it via a dedicated endpoint if we ever build a forensic viewer.
+  const { apiKey: _apiKey, probeRawResponse: _raw, ...safe } = run;
   return NextResponse.json({ run: safe });
 }
 

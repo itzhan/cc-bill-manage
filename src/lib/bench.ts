@@ -1,9 +1,14 @@
 // Benchmark engine — TypeScript port of run_bench.py.
 //
-// Flow per task: callRelay(answer prompt) → callRelay(judge prompt) →
-// extract JSON from judge → count must_have/all satisfied → persist BenchTask.
-// Concurrency is a simple promise pool. Cancellation is a poll on
-// BenchRun.cancelRequested between tasks.
+// Flow per run:
+//   1. runProbe(): single 思考探针 to capture protocol fingerprint (thinking
+//      encryption, signature, usage fields, input_tokens) and compute
+//      authenticity score per BENCHMARK.md §7. Fast (~30s) — gives the user
+//      immediate "real / suspicious / fake" verdict before the long QnA.
+//   2. QnA loop: callRelay(answer) → callRelay(judge) → grade → persist.
+//
+// Concurrency on the QnA loop is a simple promise pool. Cancellation is a
+// poll on BenchRun.cancelRequested between tasks.
 import { prisma } from "./db";
 import { sampleByConfig, parseRubric, type SweAtlasRow } from "./bench-dataset";
 
@@ -51,6 +56,10 @@ interface CallResult {
   };
   thinkingChars: number;
   hasSignature: boolean;
+  // Raw JSON response from /v1/messages, kept around for forensic inspection
+  // by the probe step. Only populated when CallOptions.keepRaw is true so the
+  // hot QnA loop doesn't cart 30 KB strings around per task.
+  rawJson?: string;
 }
 
 export class CallError extends Error {
@@ -70,6 +79,7 @@ interface CallOptions {
   effort: string;
   retries?: number;
   timeoutMs?: number;
+  keepRaw?: boolean;
 }
 
 async function callRelay(
@@ -130,6 +140,7 @@ async function callRelay(
           usage: data.usage ?? {},
           thinkingChars,
           hasSignature,
+          rawJson: opts.keepRaw ? bodyText : undefined,
         };
       }
       // 4xx (except 408/429) is permanent — don't waste retries.
@@ -249,6 +260,129 @@ async function gradeOne(
   };
 }
 
+// ============================================================
+// Fingerprint probe — single 思考探针 (BENCHMARK.md §3, §7)
+// ============================================================
+
+// Roughly the prompt from BENCHMARK.md §3 — chosen because it forces a real
+// think-and-prove rather than a pattern match, surfacing reasoning encoding.
+const PROBE_PROMPT =
+  "In Python, prove or disprove: for any non-empty list L of integers, " +
+  "sorted(L)[len(L)//2] equals statistics.median(L). Reason carefully through " +
+  "edge cases (even length, duplicates, negatives).";
+
+// Reference 官方 input_tokens for the probe prompt at our exact effort/format.
+// Pulled from one official run; used as the "expected" value when checking
+// for tokenizer drift in §7's authenticity scoring.
+const PROBE_OFFICIAL_INPUT_TOKENS = 70;
+
+export interface ProbeResult {
+  ok: boolean;
+  error?: string;
+  latencyS?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  thinkingChars?: number;
+  hasSignature?: boolean;
+  serviceTierPresent?: boolean;
+  cacheCreationPresent?: boolean;
+  authenticityScore?: number;
+  verdict?: "real" | "suspicious" | "fake";
+  answerPreview?: string;
+  rawResponse?: string;
+}
+
+function clampStr(s: string | undefined, max: number): string | undefined {
+  if (s == null) return undefined;
+  return s.length > max ? s.slice(0, max) : s;
+}
+
+function scoreAuthenticity(p: {
+  thinkingChars: number;
+  hasSignature: boolean;
+  serviceTierPresent: boolean;
+  cacheCreationPresent: boolean;
+  inputTokens: number;
+}): { score: number; verdict: "real" | "suspicious" | "fake" } {
+  // Weights per BENCHMARK.md §7 红线告警逻辑.
+  let score = 0;
+  if (p.thinkingChars > 1000) score -= 50;
+  if (!p.hasSignature) score -= 50;
+  if (!p.serviceTierPresent) score -= 20;
+  if (!p.cacheCreationPresent) score -= 20;
+  if (PROBE_OFFICIAL_INPUT_TOKENS > 0) {
+    const drift =
+      Math.abs(p.inputTokens - PROBE_OFFICIAL_INPUT_TOKENS) /
+      PROBE_OFFICIAL_INPUT_TOKENS;
+    if (drift > 0.5) score -= 30;
+  }
+  let verdict: "real" | "suspicious" | "fake" = "real";
+  if (score < -100) verdict = "fake";
+  else if (score < -50) verdict = "suspicious";
+  return { score, verdict };
+}
+
+export async function runProbe(opts: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  effort: string;
+}): Promise<ProbeResult> {
+  const t0 = Date.now();
+  try {
+    const r = await callRelay(
+      [{ role: "user", content: PROBE_PROMPT }],
+      // No system here — we want to mirror the doc's bare-prompt probe so
+      // the input-token count is comparable to the official baseline.
+      "",
+      {
+        baseUrl: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+        effort: opts.effort || "high",
+        // Probes are time-sensitive: don't burn 12 retries with 60s waits if
+        // the relay is dead — we want a fast verdict.
+        retries: 3,
+        timeoutMs: 180_000,
+        keepRaw: true,
+      },
+    );
+    const latencyS = (Date.now() - t0) / 1000;
+    const inputTokens = r.usage.input_tokens ?? 0;
+    const outputTokens = r.usage.output_tokens ?? 0;
+    const serviceTierPresent =
+      typeof r.usage.service_tier === "string" && !!r.usage.service_tier;
+    const cacheCreationPresent = r.usage.cache_creation != null;
+    const { score, verdict } = scoreAuthenticity({
+      thinkingChars: r.thinkingChars,
+      hasSignature: r.hasSignature,
+      serviceTierPresent,
+      cacheCreationPresent,
+      inputTokens,
+    });
+    return {
+      ok: true,
+      latencyS: Math.round(latencyS * 100) / 100,
+      inputTokens,
+      outputTokens,
+      thinkingChars: r.thinkingChars,
+      hasSignature: r.hasSignature,
+      serviceTierPresent,
+      cacheCreationPresent,
+      authenticityScore: score,
+      verdict,
+      answerPreview: clampStr(r.text, 10_000),
+      rawResponse: clampStr(r.rawJson, 30_000),
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      latencyS: Math.round((Date.now() - t0) / 100) / 10,
+    };
+  }
+}
+
 // Run a benchmark to completion. Caller has already created BenchRun (status=queued)
 // and pre-seeded BenchTask rows for each sampled question.
 export async function executeRun(runId: number) {
@@ -266,6 +400,57 @@ export async function executeRun(runId: number) {
     data: { status: "running", startedAt: run.startedAt ?? new Date() },
   });
 
+  // 1) Fingerprint probe runs FIRST so the user gets a verdict in ~30s
+  //    even if the QnA loop will take 12+ minutes. We don't gate the QnA on
+  //    probe success — even if the probe errors, the QnA may still produce
+  //    useful bench scores. But we surface the probe error prominently.
+  if (run.probeStatus === "pending" || run.probeStatus === "running") {
+    await prisma.benchRun.update({
+      where: { id: runId },
+      data: { probeStatus: "running" },
+    });
+    const probe = await runProbe({
+      baseUrl: run.baseUrl,
+      apiKey: run.apiKey,
+      model: run.model,
+      effort: run.effort,
+    });
+    if (probe.ok) {
+      await prisma.benchRun.update({
+        where: { id: runId },
+        data: {
+          probeStatus: "done",
+          probeLatencyS: probe.latencyS,
+          probeInputTokens: probe.inputTokens,
+          probeOutputTokens: probe.outputTokens,
+          probeThinkingChars: probe.thinkingChars,
+          probeHasSignature: probe.hasSignature,
+          probeServiceTierPresent: probe.serviceTierPresent,
+          probeCacheCreationPresent: probe.cacheCreationPresent,
+          probeAuthenticityScore: probe.authenticityScore,
+          probeVerdict: probe.verdict,
+          probeAnswerPreview: probe.answerPreview,
+          probeRawResponse: probe.rawResponse,
+          // Promote probe forensic flags onto the legacy fields too so the
+          // existing list page rendering still works.
+          hasSignature: probe.hasSignature,
+          serviceTierPresent: probe.serviceTierPresent,
+          cacheCreationPresent: probe.cacheCreationPresent,
+        },
+      });
+    } else {
+      await prisma.benchRun.update({
+        where: { id: runId },
+        data: {
+          probeStatus: "error",
+          probeError: probe.error?.slice(0, 2000),
+          probeLatencyS: probe.latencyS,
+        },
+      });
+    }
+  }
+
+  // Re-read in case probe just landed and we want fresh values.
   const samples = await sampleByConfig(run.n, run.seed);
   const samplesById = new Map(samples.map((s) => [s.task_id, s]));
 

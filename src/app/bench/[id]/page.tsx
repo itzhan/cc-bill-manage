@@ -20,7 +20,16 @@ import {
   TableRow,
   addToast,
 } from "@heroui/react";
-import { ArrowLeft, RefreshCw, StopCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  Fingerprint,
+  RefreshCw,
+  ShieldAlert,
+  StopCircle,
+  XCircle,
+} from "lucide-react";
 import Shell from "@/components/Shell";
 import { fmtDate } from "@/lib/format";
 import Link from "next/link";
@@ -77,6 +86,19 @@ interface RunDetail {
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
+  // Probe (法医探针) — runs first, ~30s.
+  probeStatus: string;
+  probeError: string | null;
+  probeLatencyS: number | null;
+  probeInputTokens: number | null;
+  probeOutputTokens: number | null;
+  probeThinkingChars: number | null;
+  probeHasSignature: boolean | null;
+  probeServiceTierPresent: boolean | null;
+  probeCacheCreationPresent: boolean | null;
+  probeAuthenticityScore: number | null;
+  probeVerdict: string | null;
+  probeAnswerPreview: string | null;
   tasks: TaskRow[];
 }
 
@@ -105,11 +127,18 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
   }, [id]);
 
   useEffect(() => {
-    if (!run || run.status === "done" || run.status === "error" || run.status === "canceled") return;
-    const t = setInterval(load, 3000);
+    if (!run) return;
+    const terminal =
+      (run.status === "done" || run.status === "error" || run.status === "canceled") &&
+      run.probeStatus !== "running" &&
+      run.probeStatus !== "pending";
+    if (terminal) return;
+    // Faster polling while probe phase is in flight (typically ≤ 30s).
+    const interval = run.probeStatus === "done" ? 3000 : 1500;
+    const t = setInterval(load, interval);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run?.status]);
+  }, [run?.status, run?.probeStatus]);
 
   async function cancel() {
     if (!confirm("取消该测试？已在跑的题会跑完")) return;
@@ -153,6 +182,8 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
           </Button>
         )}
       </div>
+
+      <ProbePanel run={run} />
 
       {/* Top status row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -320,6 +351,147 @@ function StatTile({ label, value, sub }: { label: string; value: string; sub?: s
         {sub && <div className="text-[11px] text-default-400 mt-1">{sub}</div>}
       </CardBody>
     </Card>
+  );
+}
+
+function ProbePanel({ run }: { run: RunDetail }) {
+  // Pending / running — show a "正在做协议指纹检测…" placeholder so the user
+  // sees something is happening even before the QnA loop starts.
+  if (run.probeStatus === "pending" || run.probeStatus === "running") {
+    return (
+      <Card className="mb-4 border border-primary/30 bg-primary-50/30 dark:bg-primary-950/20 shadow-none">
+        <CardBody className="flex flex-row items-center gap-3">
+          <Spinner size="sm" />
+          <div className="flex-1">
+            <div className="font-semibold text-sm flex items-center gap-1.5">
+              <Fingerprint size={14} /> 正在做协议指纹检测…
+            </div>
+            <div className="text-xs text-default-500 mt-0.5">
+              发送一道思考探针题，检查 thinking 是否加密、signature 是否存在、usage 是否完整。约 30 秒。
+            </div>
+          </div>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  if (run.probeStatus === "error") {
+    return (
+      <Card className="mb-4 border border-danger/40 bg-danger-50/40 dark:bg-danger-950/20 shadow-none">
+        <CardBody className="gap-1">
+          <div className="font-semibold text-sm flex items-center gap-1.5 text-danger">
+            <XCircle size={14} /> 协议指纹检测失败
+          </div>
+          <div className="text-xs text-default-600 break-all">
+            {run.probeError ?? "(no detail)"}
+          </div>
+          <div className="text-[11px] text-default-400 mt-1">
+            后续 QnA 评测会继续进行，但协议指纹这一栏数据缺失。
+          </div>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  // probeStatus === "done"
+  const verdict = run.probeVerdict ?? "real";
+  const score = run.probeAuthenticityScore ?? 0;
+  const verdictMeta: Record<
+    string,
+    { color: "success" | "warning" | "danger"; label: string; icon: React.ReactNode }
+  > = {
+    real: {
+      color: "success",
+      label: "真直连",
+      icon: <CheckCircle2 size={16} />,
+    },
+    suspicious: {
+      color: "warning",
+      label: "疑似伪装",
+      icon: <AlertTriangle size={16} />,
+    },
+    fake: {
+      color: "danger",
+      label: "明确伪装",
+      icon: <ShieldAlert size={16} />,
+    },
+  };
+  const v = verdictMeta[verdict] ?? verdictMeta.real;
+
+  return (
+    <Card className="mb-4 border border-divider/50 bg-content1 shadow-none">
+      <CardHeader className="flex justify-between items-center pb-2">
+        <div className="flex items-center gap-2">
+          <Fingerprint size={16} className="text-default-500" />
+          <span className="font-semibold text-sm">协议指纹</span>
+          <Chip size="sm" color={v.color} variant="flat">
+            <span className="inline-flex items-center gap-1 px-0.5">
+              {v.icon}
+              {v.label}
+            </span>
+          </Chip>
+          <span className="text-xs text-default-500">
+            真伪指数 <b className={score >= 0 ? "text-success" : score < -100 ? "text-danger" : "text-warning"}>{score}</b>
+          </span>
+        </div>
+        <span className="text-xs text-default-400">
+          探针耗时 {run.probeLatencyS != null ? `${run.probeLatencyS.toFixed(1)}s` : "—"}
+        </span>
+      </CardHeader>
+      <CardBody className="grid grid-cols-2 md:grid-cols-5 gap-2 pt-0 text-xs">
+        <ProbeCell
+          label="Thinking 加密"
+          ok={(run.probeThinkingChars ?? 0) === 0}
+          detail={
+            (run.probeThinkingChars ?? 0) === 0
+              ? "0 字符（加密）"
+              : `${run.probeThinkingChars} 字符（明文）`
+          }
+        />
+        <ProbeCell
+          label="Signature"
+          ok={run.probeHasSignature === true}
+          detail={run.probeHasSignature ? "存在" : "缺失"}
+        />
+        <ProbeCell
+          label="service_tier"
+          ok={run.probeServiceTierPresent === true}
+          detail={run.probeServiceTierPresent ? "存在" : "缺失"}
+        />
+        <ProbeCell
+          label="cache_creation"
+          ok={run.probeCacheCreationPresent === true}
+          detail={run.probeCacheCreationPresent ? "存在" : "缺失"}
+        />
+        <ProbeCell
+          label="input_tokens"
+          ok={
+            run.probeInputTokens != null &&
+            Math.abs(run.probeInputTokens - 70) / 70 <= 0.5
+          }
+          detail={`${run.probeInputTokens ?? "?"}（基线 ≈70）`}
+        />
+      </CardBody>
+    </Card>
+  );
+}
+
+function ProbeCell({
+  label,
+  ok,
+  detail,
+}: {
+  label: string;
+  ok: boolean;
+  detail: string;
+}) {
+  return (
+    <div className="flex flex-col leading-tight gap-0.5">
+      <span className="text-default-400 text-[11px]">{label}</span>
+      <span className={ok ? "text-success font-medium" : "text-warning font-medium"}>
+        {detail}
+      </span>
+    </div>
   );
 }
 

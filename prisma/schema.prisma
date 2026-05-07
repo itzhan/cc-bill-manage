@@ -285,6 +285,25 @@ model BenchRun {
   errorSummary             String?
   // Cancellation flag — engine polls this between tasks.
   cancelRequested          Boolean   @default(false)
+  // ── Fingerprint probe (一发探针，先于 QnA 跑) ──
+  // status flow: pending → running → done | error
+  probeStatus              String    @default("pending")
+  probeError               String?
+  probeLatencyS            Float?
+  probeInputTokens         Int?
+  probeOutputTokens        Int?
+  probeThinkingChars       Int?
+  probeHasSignature        Boolean?
+  probeServiceTierPresent  Boolean?
+  probeCacheCreationPresent Boolean?
+  // 真伪指数（per BENCHMARK.md §7） — 越正越像真，越负越像伪。
+  probeAuthenticityScore   Int?
+  // verdict: real | suspicious | fake
+  probeVerdict             String?
+  // 探针的原始模型回答（截断到 ~10K 字符，用于法医回看）
+  probeAnswerPreview       String?
+  // 完整 raw response JSON（截断到 ~30K，便于复盘）
+  probeRawResponse         String?
   startedAt                DateTime?
   finishedAt               DateTime?
   createdAt                DateTime  @default(now())
@@ -344,4 +363,19 @@ model DailyProfit {
   diff                  Float
   capturedAt            DateTime @default(now())
   updatedAt             DateTime @updatedAt
+}
+
+// 自定义分组：把 sub2api 上的多个原生分组聚合到一个虚拟分组里，
+// 在「资源调度」页统一查看 + 一键智能调度。原生分组本身不变，
+// 这只是一层 UI 层面的聚合视图。
+//   groupIdsJson — JSON list of native sub2api group ids (number[])
+model CustomGroup {
+  id              Int      @id @default(autoincrement())
+  siteAccountId   Int
+  name            String
+  groupIdsJson    String   // JSON: number[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([siteAccountId])
 }

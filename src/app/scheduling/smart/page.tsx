@@ -69,10 +69,23 @@ function SmartDispatchInner() {
   const search = useSearchParams();
   const siteId = Number(search.get("siteId") || "");
   const groupId = Number(search.get("groupId") || "");
+  const groupIdsCsv = search.get("groupIds");
+  const groupIdSet = useMemo(() => {
+    const set = new Set<number>();
+    if (groupId) set.add(groupId);
+    if (groupIdsCsv) {
+      for (const s of groupIdsCsv.split(",")) {
+        const n = Number(s.trim());
+        if (Number.isFinite(n) && n > 0) set.add(n);
+      }
+    }
+    return set;
+  }, [groupId, groupIdsCsv]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [group, setGroup] = useState<Group | null>(null);
+  const [memberGroupNames, setMemberGroupNames] = useState<string[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [tests, setTests] = useState<Record<number, TestState>>({});
   const [view, setView] = useState<ViewFilter>("passed");
@@ -81,7 +94,7 @@ function SmartDispatchInner() {
   const [q, setQ] = useState("");
 
   async function load() {
-    if (!siteId || !groupId) return;
+    if (!siteId || groupIdSet.size === 0) return;
     setLoading(true);
     setError(null);
     try {
@@ -93,13 +106,26 @@ function SmartDispatchInner() {
       if (!r.ok) {
         throw new Error(j.error || `${r.status}`);
       }
-      const g = (j.groups || []).find((x: Group) => x.id === groupId) ?? null;
-      setGroup(g);
+      const allGroups = (j.groups || []) as Group[];
+      const memberGroups = allGroups.filter((x) => groupIdSet.has(x.id));
+      // Show the first member group's metadata as "the" group for the page
+      // header. When there are multiple (custom group), the names line below
+      // tells the user which ones are aggregated.
+      setGroup(memberGroups[0] ?? null);
+      setMemberGroupNames(memberGroups.map((g) => g.name));
+
       const all = (j.accounts || []) as Account[];
-      const inGroup = all.filter((a) =>
-        (a.group_ids || []).includes(groupId),
-      );
-      const problematic = inGroup.filter(
+      // Account is in scope iff it belongs to ANY of the selected groups,
+      // deduped by id.
+      const seen = new Set<number>();
+      const inScope: Account[] = [];
+      for (const a of all) {
+        const matches = (a.group_ids || []).some((id) => groupIdSet.has(id));
+        if (!matches || seen.has(a.id)) continue;
+        seen.add(a.id);
+        inScope.push(a);
+      }
+      const problematic = inScope.filter(
         (a) => classifyProblem(a).length > 0,
       );
       setAccounts(problematic);
@@ -113,7 +139,7 @@ function SmartDispatchInner() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteId, groupId]);
+  }, [siteId, groupIdsCsv, groupId]);
 
   async function testOne(id: number): Promise<TestState> {
     try {
@@ -241,12 +267,12 @@ function SmartDispatchInner() {
     });
   }, [accounts, tests, view, q]);
 
-  if (!siteId || !groupId) {
+  if (!siteId || groupIdSet.size === 0) {
     return (
       <Shell>
         <Card>
           <CardBody className="text-danger text-sm">
-            缺少 siteId 或 groupId 参数
+            缺少 siteId 或 groupId / groupIds 参数
           </CardBody>
         </Card>
       </Shell>
@@ -266,12 +292,19 @@ function SmartDispatchInner() {
           返回
         </Button>
         <h1 className="text-xl font-semibold">
-          智能调度 · {group?.name ?? "…"}
+          智能调度 · {memberGroupNames.length > 1
+            ? `${memberGroupNames.length} 个分组`
+            : group?.name ?? "…"}
         </h1>
-        {group && (
+        {group && memberGroupNames.length === 1 && (
           <Chip size="sm" variant="flat">
             ×{group.rate_multiplier}
           </Chip>
+        )}
+        {memberGroupNames.length > 1 && (
+          <span className="text-xs text-default-500 break-all">
+            {memberGroupNames.join("、")}
+          </span>
         )}
       </div>
 
