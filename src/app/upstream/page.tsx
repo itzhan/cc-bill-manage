@@ -118,6 +118,7 @@ export default function UpstreamPage() {
     baseUrl: "",
     email: "",
     password: "",
+    accessToken: "",
     notes: "",
     inventory: [] as InventoryItem[],
   });
@@ -200,6 +201,7 @@ export default function UpstreamPage() {
       baseUrl: "",
       email: "",
       password: "",
+      accessToken: "",
       notes: "",
       inventory: [],
     });
@@ -215,6 +217,7 @@ export default function UpstreamPage() {
       baseUrl: a.baseUrl,
       email: a.email,
       password: "",
+      accessToken: "",
       notes: a.notes ?? "",
       inventory: parseInventory(a.inventory),
     });
@@ -251,8 +254,15 @@ export default function UpstreamPage() {
   }
 
   async function submitNew() {
-    if (!form.name || !form.baseUrl || !form.email || !form.password) {
-      addToast({ title: "请填写完整凭据", color: "warning" });
+    if (!form.name || !form.baseUrl) {
+      addToast({ title: "请填写名称和 Base URL", color: "warning" });
+      return;
+    }
+    if (!form.accessToken && (!form.email || !form.password)) {
+      addToast({
+        title: "请填写 Access Token，或同时填写 Email + 密码",
+        color: "warning",
+      });
       return;
     }
     const inv = flushedInventory();
@@ -262,6 +272,7 @@ export default function UpstreamPage() {
       baseUrl: form.baseUrl,
       email: form.email,
       password: form.password,
+      accessToken: form.accessToken || undefined,
     };
     const res = await fetch("/api/upstream", {
       method: "POST",
@@ -300,6 +311,7 @@ export default function UpstreamPage() {
       inventory: inv.length ? JSON.stringify(inv) : null,
     };
     if (form.password) payload.password = form.password;
+    if (form.accessToken) payload.accessToken = form.accessToken;
     const res = await fetch(`/api/upstream/${editing.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -920,6 +932,7 @@ function AccountFormTabs({
     baseUrl: string;
     email: string;
     password: string;
+    accessToken: string;
     notes: string;
     inventory: InventoryItem[];
   };
@@ -930,6 +943,7 @@ function AccountFormTabs({
       baseUrl: string;
       email: string;
       password: string;
+      accessToken: string;
       notes: string;
       inventory: InventoryItem[];
     }) => {
@@ -938,6 +952,7 @@ function AccountFormTabs({
       baseUrl: string;
       email: string;
       password: string;
+      accessToken: string;
       notes: string;
       inventory: InventoryItem[];
     },
@@ -1092,6 +1107,19 @@ function AccountFormTabs({
             type="password"
             value={form.password}
             onValueChange={(v) => setForm((f) => ({ ...f, password: v }))}
+          />
+          <Input
+            label={
+              isNew
+                ? "Access Token（可选，跳过登录）"
+                : "Access Token（留空则不修改）"
+            }
+            description="粘贴手动登录获取的 token，sub2api 渠道有 cf 盾时可绕过登录。token 过期后会自动尝试用上面的账号密码 relogin；只填 token 没填账号密码则会报错，需手动更新。"
+            type="password"
+            value={form.accessToken}
+            onValueChange={(v) =>
+              setForm((f) => ({ ...f, accessToken: v }))
+            }
           />
         </div>
       </Tab>

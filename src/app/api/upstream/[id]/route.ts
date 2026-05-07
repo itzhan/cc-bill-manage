@@ -28,6 +28,7 @@ export async function PATCH(
     baseUrl: string;
     email: string;
     password: string;
+    accessToken: string | null;
     notes: string | null;
     inventory: string | null;
   }>;
@@ -39,6 +40,11 @@ export async function PATCH(
     data.password = body.password;
     // password changed -> invalidate token
     data.accessToken = null;
+    data.tokenExpiresAt = null;
+  }
+  if (body.accessToken !== undefined) {
+    // 手动粘贴的 token：清掉过期时间，让 401 触发自然重试。
+    data.accessToken = body.accessToken || null;
     data.tokenExpiresAt = null;
   }
   if (body.notes !== undefined) data.notes = body.notes;

@@ -35,16 +35,38 @@ export async function POST(req: Request) {
     baseUrl: string;
     email: string;
     password: string;
+    accessToken: string;
   }>;
-  const { name, type = "sub2api", baseUrl, email, password } = body;
-  if (!name || !baseUrl || !email || !password) {
+  const {
+    name,
+    type = "sub2api",
+    baseUrl,
+    email = "",
+    password = "",
+    accessToken,
+  } = body;
+  if (!name || !baseUrl) {
     return NextResponse.json(
-      { error: "name, baseUrl, email, password required" },
+      { error: "name 和 baseUrl 必填" },
+      { status: 400 },
+    );
+  }
+  // 需要 accessToken（手动粘贴）或 email+password（登录换取）任一组合。
+  if (!accessToken && (!email || !password)) {
+    return NextResponse.json(
+      { error: "需要 accessToken，或同时提供 email + password" },
       { status: 400 },
     );
   }
   const created = await prisma.upstreamAccount.create({
-    data: { name, type, baseUrl, email, password },
+    data: {
+      name,
+      type,
+      baseUrl,
+      email,
+      password,
+      accessToken: accessToken || null,
+    },
   });
   // fire-and-forget: pull structure once so the user can bind right away
   refreshUpstreamAccount(created.id).catch((e) => {
