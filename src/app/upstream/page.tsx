@@ -107,6 +107,7 @@ export default function UpstreamPage() {
     useState<UpstreamAccount | null>(null);
   const [showZero, setShowZero] = useState(false);
   const [revealed, setRevealed] = useState<Set<number>>(new Set());
+  const [copyingKeyId, setCopyingKeyId] = useState<number | null>(null);
 
   const newDlg = useDisclosure();
   const editDlg = useDisclosure();
@@ -344,6 +345,49 @@ export default function UpstreamPage() {
         color: ok ? "success" : "danger",
       });
     });
+  }
+
+  // Reveal-then-copy: GET /api/upstream/key/[id] re-fetches the full key
+  // from the upstream live, then we drop it on the clipboard. We never
+  // hold the plaintext in component state to keep the surface area small.
+  async function copyFullKey(keyId: number, name: string) {
+    setCopyingKeyId(keyId);
+    try {
+      const res = await fetch(`/api/upstream/key/${keyId}`, {
+        cache: "no-store",
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        addToast({
+          title: "获取 key 失败",
+          description: j.error,
+          color: "danger",
+        });
+        return;
+      }
+      const fullKey: string | null = j.item?.apiKey ?? null;
+      if (!fullKey) {
+        addToast({
+          title: "未拿到完整 key",
+          description: j.item?.revealError || "上游可能也只返回了 mask",
+          color: "warning",
+        });
+        return;
+      }
+      const ok = await copyToClipboard(fullKey);
+      addToast({
+        title: ok ? `${name} 的 key 已复制` : "复制失败",
+        color: ok ? "success" : "danger",
+      });
+    } catch (e) {
+      addToast({
+        title: "复制失败",
+        description: e instanceof Error ? e.message : String(e),
+        color: "danger",
+      });
+    } finally {
+      setCopyingKeyId(null);
+    }
   }
 
   useEffect(() => {
@@ -679,6 +723,23 @@ export default function UpstreamPage() {
                 const hidden = all.length - filtered.length;
                 return (
                   <>
+                    <div className="rounded-lg border border-divider/50 p-2.5 mb-3 flex items-center gap-2 bg-content2/30">
+                      <KeyRound size={12} className="text-default-400 shrink-0" />
+                      <span className="text-xs text-default-500 shrink-0">站点 URL</span>
+                      <code className="font-mono text-xs flex-1 truncate" title={keysModalAccount.baseUrl}>
+                        {keysModalAccount.baseUrl}
+                      </code>
+                      <Button
+                        size="sm"
+                        isIconOnly
+                        variant="flat"
+                        className="h-7 min-w-7"
+                        onPress={() => copy(keysModalAccount.baseUrl)}
+                        title="复制 URL"
+                      >
+                        <Copy size={13} />
+                      </Button>
+                    </div>
                     <div className="flex items-center justify-between mb-2 text-xs text-default-500">
                       <Checkbox
                         size="sm"
@@ -710,11 +771,24 @@ export default function UpstreamPage() {
                             return (
                             <TableRow key={k.id}>
                               <TableCell>
-                                <div className="flex flex-col leading-tight">
-                                  <span className="text-sm">{k.name}</span>
-                                  <span className="font-mono text-xs text-default-400">
-                                    {k.keyMasked}
-                                  </span>
+                                <div className="flex items-center gap-2">
+                                  <div className="flex flex-col leading-tight min-w-0">
+                                    <span className="text-sm">{k.name}</span>
+                                    <span className="font-mono text-xs text-default-400 truncate">
+                                      {k.keyMasked}
+                                    </span>
+                                  </div>
+                                  <Button
+                                    size="sm"
+                                    isIconOnly
+                                    variant="light"
+                                    className="h-6 min-w-6"
+                                    onPress={() => copyFullKey(k.id, k.name)}
+                                    title="复制完整 key"
+                                    isLoading={copyingKeyId === k.id}
+                                  >
+                                    <Copy size={12} />
+                                  </Button>
                                 </div>
                               </TableCell>
                               <TableCell>
