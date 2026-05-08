@@ -25,6 +25,13 @@ model Settings {
   emailCooldownMinutes Int    @default(30)
   emailLastSentAt     DateTime?
   emailLastSentDigest String? // hash-ish key to dedupe identical alerts
+  // ── Error-rate alert (sub2api site request_error_rate) ──
+  // Reuses the same email config (endpoint/sender/receivers) as the diff
+  // alert above; just a separate trigger + cooldown.
+  errorRateAlertEnabled    Boolean   @default(false)
+  errorRateThreshold       Float     @default(0.04)   // 0.04 = 4%
+  errorRateCooldownMinutes Int       @default(30)
+  errorRateLastSentAt      DateTime?
   // Preferred site account for the az batch tool. Quick-pick on page load.
   defaultAzSiteAccountId Int?
 }

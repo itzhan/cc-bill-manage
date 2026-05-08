@@ -27,6 +27,10 @@ interface Settings {
   emailSubject: string;
   emailCooldownMinutes: number;
   emailLastSentAt: string | null;
+  errorRateAlertEnabled: boolean;
+  errorRateThreshold: number;
+  errorRateCooldownMinutes: number;
+  errorRateLastSentAt: string | null;
 }
 
 export default function SettingsPage() {
@@ -292,6 +296,72 @@ export default function SettingsPage() {
                     : "—"}
                 </span>
               </div>
+            </CardBody>
+          </Card>
+
+          <Card className="bg-content1 border border-divider/50 shadow-none md:col-span-2">
+            <CardHeader className="flex justify-between items-center flex-wrap gap-2">
+              <div>
+                <h2 className="font-semibold">请求错误率告警</h2>
+                <p className="text-xs text-default-500 mt-0.5">
+                  各 sub2api 站点最近 1h 请求错误率超过阈值时发邮件（与差异告警用同一组邮件配置）
+                </p>
+              </div>
+              <Switch
+                isSelected={s.errorRateAlertEnabled}
+                onValueChange={(v) =>
+                  setS({ ...s, errorRateAlertEnabled: v })
+                }
+              >
+                启用
+              </Switch>
+            </CardHeader>
+            <CardBody className="gap-4">
+              <div className="grid md:grid-cols-3 gap-4">
+                <Input
+                  type="number"
+                  label="阈值（%）"
+                  description="超过则触发；如 4 表示 4%"
+                  value={(s.errorRateThreshold * 100).toFixed(2)}
+                  onValueChange={(v) => {
+                    const n = Number(v);
+                    if (!Number.isFinite(n)) return;
+                    setS({
+                      ...s,
+                      errorRateThreshold: Math.max(0, Math.min(100, n)) / 100,
+                    });
+                  }}
+                  min={0}
+                  max={100}
+                  step={0.1}
+                />
+                <Input
+                  type="number"
+                  label="冷却（分钟）"
+                  description="同一告警重发的最短间隔"
+                  value={String(s.errorRateCooldownMinutes)}
+                  onValueChange={(v) =>
+                    setS({
+                      ...s,
+                      errorRateCooldownMinutes: Math.max(
+                        0,
+                        Math.floor(Number(v) || 0),
+                      ),
+                    })
+                  }
+                />
+                <div className="flex items-end">
+                  <span className="text-xs text-default-500">
+                    上次发送：
+                    {s.errorRateLastSentAt
+                      ? new Date(s.errorRateLastSentAt).toLocaleString("zh-CN")
+                      : "—"}
+                  </span>
+                </div>
+              </div>
+              <Button color="primary" onPress={save} isLoading={saving}>
+                保存
+              </Button>
             </CardBody>
           </Card>
         </div>

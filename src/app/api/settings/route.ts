@@ -25,6 +25,9 @@ export async function PATCH(req: Request) {
     emailReceivers: string | null;
     emailSubject: string;
     emailCooldownMinutes: number;
+    errorRateAlertEnabled: boolean;
+    errorRateThreshold: number;
+    errorRateCooldownMinutes: number;
     defaultAzSiteAccountId: number | null;
   }>;
   const data: Record<string, unknown> = {};
@@ -47,6 +50,18 @@ export async function PATCH(req: Request) {
   if (body.emailSubject != null) data.emailSubject = body.emailSubject;
   if (body.emailCooldownMinutes != null)
     data.emailCooldownMinutes = Math.max(0, Math.floor(body.emailCooldownMinutes));
+  if (body.errorRateAlertEnabled != null)
+    data.errorRateAlertEnabled = body.errorRateAlertEnabled;
+  if (body.errorRateThreshold != null) {
+    // Clamp 0–1; UI sends fraction (e.g. 0.04 for 4%).
+    const t = Number(body.errorRateThreshold);
+    data.errorRateThreshold = Math.max(0, Math.min(1, Number.isFinite(t) ? t : 0.04));
+  }
+  if (body.errorRateCooldownMinutes != null)
+    data.errorRateCooldownMinutes = Math.max(
+      0,
+      Math.floor(body.errorRateCooldownMinutes),
+    );
   if ("defaultAzSiteAccountId" in body)
     data.defaultAzSiteAccountId = body.defaultAzSiteAccountId;
   await ensureSettings();

@@ -226,6 +226,127 @@ export async function sendTestEmail(): Promise<void> {
   );
 }
 
+/** Per-site snapshot row used by the error-rate check below. */
+export interface SiteErrorSnapshot {
+  siteId: number;
+  siteName: string;
+  errorRate: number;
+  upstreamErrorRate: number;
+  requestCountTotal: number;
+  errorCountTotal: number;
+  successCount: number;
+  sla: number;
+  generatedAt: string;
+}
+
+function buildErrorRateAlertHtml(
+  threshold: number,
+  rows: SiteErrorSnapshot[],
+): string {
+  const tbody = rows
+    .map(
+      (r) => `
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid #eee">${escapeHtml(r.siteName)}</td>
+          <td style="padding:8px;border-bottom:1px solid #eee;text-align:right;color:#dc2626;font-weight:600">${(r.errorRate * 100).toFixed(2)}%</td>
+          <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">${(r.upstreamErrorRate * 100).toFixed(2)}%</td>
+          <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">${r.errorCountTotal.toLocaleString()} / ${r.requestCountTotal.toLocaleString()}</td>
+          <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">${(r.sla * 100).toFixed(2)}%</td>
+        </tr>
+      `,
+    )
+    .join("");
+  return `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937;max-width:760px">
+  <h2 style="margin:0 0 8px;color:#dc2626">请求错误率超过阈值</h2>
+  <p style="color:#6b7280;margin:0 0 16px">阈值 ${(threshold * 100).toFixed(2)}% · 时间窗口 1h（sub2api snapshot-v2）</p>
+  <table style="border-collapse:collapse;width:100%;font-size:13px">
+    <thead>
+      <tr style="background:#f9fafb">
+        <th style="padding:8px;text-align:left;border-bottom:2px solid #e5e7eb">站点</th>
+        <th style="padding:8px;text-align:right;border-bottom:2px solid #e5e7eb">请求错误率</th>
+        <th style="padding:8px;text-align:right;border-bottom:2px solid #e5e7eb">上游错误率</th>
+        <th style="padding:8px;text-align:right;border-bottom:2px solid #e5e7eb">错误 / 总请求</th>
+        <th style="padding:8px;text-align:right;border-bottom:2px solid #e5e7eb">SLA</th>
+      </tr>
+    </thead>
+    <tbody>${tbody}</tbody>
+  </table>
+  <p style="margin-top:16px;color:#9ca3af;font-size:12px">由 Bill Manage 自动发出 · ${new Date().toLocaleString("zh-CN")}</p>
+</div>
+  `.trim();
+}
+
+function buildErrorRateAlertText(
+  threshold: number,
+  rows: SiteErrorSnapshot[],
+): string {
+  const lines: string[] = [
+    `请求错误率告警（阈值 ${(threshold * 100).toFixed(2)}%）`,
+    "",
+  ];
+  for (const r of rows) {
+    lines.push(
+      `${r.siteName}: 请求错误率 ${(r.errorRate * 100).toFixed(2)}% · 上游错误率 ${(r.upstreamErrorRate * 100).toFixed(2)}% · ${r.errorCountTotal}/${r.requestCountTotal} · SLA ${(r.sla * 100).toFixed(2)}%`,
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * If any site's request error_rate exceeds the configured threshold within
+ * the last hour, send one combined email listing all offenders. Cooldown
+ * prevents repeated emails while the issue persists. Safe to call from
+ * scheduled jobs — never throws.
+ */
+export async function maybeSendErrorRateAlert(
+  rows: SiteErrorSnapshot[],
+): Promise<{ sent: boolean; reason?: string }> {
+  try {
+    const s = await prisma.settings.findUnique({ where: { id: 1 } });
+    if (!s) return { sent: false, reason: "no settings" };
+    if (!s.errorRateAlertEnabled) return { sent: false, reason: "disabled" };
+    const threshold = s.errorRateThreshold ?? 0.04;
+    const offenders = rows.filter((r) => r.errorRate > threshold);
+    if (offenders.length === 0) {
+      return { sent: false, reason: "all under threshold" };
+    }
+    if (s.errorRateLastSentAt) {
+      const elapsedMin =
+        (Date.now() - s.errorRateLastSentAt.getTime()) / 60_000;
+      if (elapsedMin < (s.errorRateCooldownMinutes ?? 30)) {
+        return {
+          sent: false,
+          reason: `cooldown ${Math.round(elapsedMin)}/${s.errorRateCooldownMinutes}min`,
+        };
+      }
+    }
+    const cfg = await loadMailConfig();
+    if (!cfg) return { sent: false, reason: "config incomplete" };
+
+    // Pick the worst rate for the subject so the receiver sees severity at a glance.
+    const worst = offenders.reduce(
+      (m, r) => (r.errorRate > m ? r.errorRate : m),
+      0,
+    );
+    const subject = `${cfg.subject}（请求错误率 ${(worst * 100).toFixed(2)}%）`;
+    await postEmail(
+      cfg,
+      subject,
+      buildErrorRateAlertHtml(threshold, offenders),
+      buildErrorRateAlertText(threshold, offenders),
+    );
+    await prisma.settings.update({
+      where: { id: 1 },
+      data: { errorRateLastSentAt: new Date() },
+    });
+    return { sent: true };
+  } catch (e) {
+    console.error("[mailer] error-rate send failed:", e);
+    return { sent: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Check current diff against threshold and send an alert email if needed.
  * Respects per-Settings cooldown to avoid spamming during persistent

@@ -3,7 +3,12 @@ import { Sub2ApiClient } from "./sub2api";
 import type { AdminUser } from "./sub2api";
 import { makeUpstreamApiClient } from "./upstream-client";
 import { getDashboardSummary } from "./dashboard";
-import { maybeSendDiffAlert } from "./mailer";
+import {
+  maybeSendDiffAlert,
+  maybeSendErrorRateAlert,
+  type SiteErrorSnapshot,
+} from "./mailer";
+import { makeSiteClient as makeSiteClientById } from "./az-server";
 
 // Sync admin users + their total_recharged for one site account.
 // Optimized to **2 calls total** (was 2N+1):
@@ -656,6 +661,43 @@ async function runAll(
   );
 }
 
+// Poll the sub2api `snapshot-v2` per sub2api site for the last 1h, then
+// hand it to the mailer to decide whether the configured threshold is
+// breached. Best-effort: per-site failures don't block the others, and
+// the whole step never throws.
+async function pollAndAlertErrorRates() {
+  const settings = await prisma.settings.findUnique({ where: { id: 1 } });
+  if (!settings || !settings.errorRateAlertEnabled) return;
+  const sites = await prisma.siteAccount.findMany({
+    where: { type: "sub2api" },
+    select: { id: true, name: true },
+  });
+  const rows: SiteErrorSnapshot[] = [];
+  for (const s of sites) {
+    try {
+      const client = await makeSiteClientById(s.id);
+      const snap = await client.getOpsSnapshot({ timeRange: "1h" });
+      rows.push({
+        siteId: s.id,
+        siteName: s.name,
+        errorRate: snap.overview.error_rate ?? 0,
+        upstreamErrorRate: snap.overview.upstream_error_rate ?? 0,
+        requestCountTotal: snap.overview.request_count_total ?? 0,
+        errorCountTotal: snap.overview.error_count_total ?? 0,
+        successCount: snap.overview.success_count ?? 0,
+        sla: snap.overview.sla ?? 0,
+        generatedAt: snap.generated_at,
+      });
+    } catch (e) {
+      console.warn(
+        `[errorRateAlert] snapshot fetch failed for site ${s.id}:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+  if (rows.length > 0) await maybeSendErrorRateAlert(rows);
+}
+
 export async function syncAll(): Promise<SyncAllResult> {
   const t0 = Date.now();
   const [ups, sites] = await Promise.all([
@@ -671,6 +713,11 @@ export async function syncAll(): Promise<SyncAllResult> {
   const tSnap = Date.now();
   await recordSnapshot();
   const snapMs = Date.now() - tSnap;
+  // Error-rate alert lives outside recordSnapshot because it queries a
+  // different sub2api endpoint and a separate threshold/cooldown.
+  pollAndAlertErrorRates().catch((e) =>
+    console.error("[errorRateAlert] poll failed:", e),
+  );
   console.log(
     `[syncAll] up=${ups.length} site=${sites.length} batch=${batchMs}ms snapshot=${snapMs}ms total=${
       Date.now() - t0

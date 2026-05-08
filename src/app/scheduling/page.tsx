@@ -1,6 +1,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Autocomplete,
+  AutocompleteItem,
   Button,
   Card,
   CardBody,
@@ -181,6 +183,8 @@ export default function SchedulingPage() {
   const [editModelsInitial, setEditModelsInitial] = useState<string[]>([]);
   const [editModelsLoading, setEditModelsLoading] = useState(false);
   const [editModelInput, setEditModelInput] = useState<string>("");
+  // Which model to send through "测试此渠道". Defaults to opus-4-6.
+  const [editTestModel, setEditTestModel] = useState<string>("claude-opus-4-6");
   // Filters (persisted to localStorage)
   const [statusFilter, setStatusFilter] = useState<
     "all" | "active" | "inactive"
@@ -936,6 +940,7 @@ export default function SchedulingPage() {
                 setEditModels([]);
                 setEditModelsInitial([]);
                 setEditModelInput("");
+                setEditTestModel("claude-opus-4-6");
                 setEditModelsLoading(true);
                 if (siteId != null) {
                   fetch(
@@ -1183,14 +1188,56 @@ export default function SchedulingPage() {
                     </Button>
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  startContent={<TestTube2 size={14} />}
-                  onPress={() => testAccount(editAcc.id)}
-                >
-                  测试此渠道
-                </Button>
+                <div className="flex gap-2 items-end">
+                  <Autocomplete
+                    size="sm"
+                    label="测试用模型"
+                    className="flex-1"
+                    defaultItems={(() => {
+                      // Built-in suggestions + the channel's whitelisted
+                      // models, deduped. Default selection lives in state.
+                      const seen = new Set<string>();
+                      const list: { key: string; label: string }[] = [];
+                      for (const m of [
+                        "claude-opus-4-6",
+                        "claude-opus-4-7",
+                        "claude-sonnet-4-6",
+                        "claude-haiku-4-5",
+                        ...editModels,
+                      ]) {
+                        if (!m || seen.has(m)) continue;
+                        seen.add(m);
+                        list.push({ key: m, label: m });
+                      }
+                      return list;
+                    })()}
+                    selectedKey={editTestModel}
+                    inputValue={editTestModel}
+                    onInputChange={setEditTestModel}
+                    onSelectionChange={(k) => {
+                      if (k != null) setEditTestModel(String(k));
+                    }}
+                    allowsCustomValue
+                    description="默认 claude-opus-4-6；下拉里前 3 项是常用模型，再后面是该渠道的可用模型"
+                  >
+                    {(item) => (
+                      <AutocompleteItem key={item.key}>
+                        {item.label}
+                      </AutocompleteItem>
+                    )}
+                  </Autocomplete>
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    startContent={<TestTube2 size={14} />}
+                    onPress={() =>
+                      testAccount(editAcc.id, editTestModel.trim() || undefined)
+                    }
+                    className="mb-0.5"
+                  >
+                    测试此渠道
+                  </Button>
+                </div>
               </div>
             )}
           </ModalBody>
