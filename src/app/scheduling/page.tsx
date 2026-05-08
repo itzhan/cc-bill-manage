@@ -1319,12 +1319,29 @@ interface ErrorRankAccount {
   recentEvents: ErrorRankRecentEvent[];
 }
 
+interface ErrorRankSummary {
+  errorRate: number;
+  upstreamErrorRate: number;
+  sla: number;
+  requestCountTotal: number;
+  successCount: number;
+  errorCountTotal: number;
+  businessLimitedCount: number;
+  errorCountSla: number;
+  upstreamErrorCount429: number;
+  upstreamErrorCount529: number;
+  upstreamErrorCountOther: number;
+  healthScore: number | null;
+  generatedAt: string;
+}
+
 interface ErrorRankPayload {
   range: string;
   totalErrors: number;
   processed: number;
   truncated: boolean;
   recentPerAccount: number;
+  summary: ErrorRankSummary | null;
   accounts: ErrorRankAccount[];
 }
 
@@ -1430,6 +1447,74 @@ function ErrorRankingView({ siteId }: { siteId: number | null }) {
           </div>
         </CardBody>
       </Card>
+
+      {data?.summary && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <RateTile
+            label="请求错误率"
+            value={`${(data.summary.errorRate * 100).toFixed(2)}%`}
+            sub={`${data.summary.errorCountTotal.toLocaleString()} / ${data.summary.requestCountTotal.toLocaleString()}`}
+            severity={
+              data.summary.errorRate >= 0.05
+                ? "danger"
+                : data.summary.errorRate >= 0.02
+                  ? "warning"
+                  : "ok"
+            }
+          />
+          <RateTile
+            label="上游错误率"
+            value={`${(data.summary.upstreamErrorRate * 100).toFixed(2)}%`}
+            sub={(() => {
+              const o = data.summary.upstreamErrorCountOther;
+              const r429 = data.summary.upstreamErrorCount429;
+              const r529 = data.summary.upstreamErrorCount529;
+              const parts: string[] = [];
+              if (o > 0) parts.push(`其他 ${o.toLocaleString()}`);
+              if (r429 > 0) parts.push(`429×${r429}`);
+              if (r529 > 0) parts.push(`529×${r529}`);
+              return parts.join(" / ") || "—";
+            })()}
+            severity={
+              data.summary.upstreamErrorRate >= 0.1
+                ? "danger"
+                : data.summary.upstreamErrorRate >= 0.05
+                  ? "warning"
+                  : "ok"
+            }
+          />
+          <RateTile
+            label="SLA"
+            value={`${(data.summary.sla * 100).toFixed(2)}%`}
+            sub={`成功 ${data.summary.successCount.toLocaleString()}`}
+            severity={
+              data.summary.sla >= 0.99
+                ? "ok"
+                : data.summary.sla >= 0.95
+                  ? "warning"
+                  : "danger"
+            }
+          />
+          <RateTile
+            label="健康分"
+            value={
+              data.summary.healthScore != null
+                ? String(data.summary.healthScore)
+                : "—"
+            }
+            sub={`时间窗 ${data.range} · ${fmtTimeShort(data.summary.generatedAt)}`}
+            severity={
+              data.summary.healthScore == null
+                ? "ok"
+                : data.summary.healthScore >= 80
+                  ? "ok"
+                  : data.summary.healthScore >= 50
+                    ? "warning"
+                    : "danger"
+            }
+          />
+        </div>
+      )}
 
       {error && (
         <Card>
@@ -1770,6 +1855,44 @@ function fmtTimeShort(ts: string): string {
   } catch {
     return ts;
   }
+}
+
+function RateTile({
+  label,
+  value,
+  sub,
+  severity,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  severity: "ok" | "warning" | "danger";
+}) {
+  const colorClass =
+    severity === "danger"
+      ? "text-danger"
+      : severity === "warning"
+        ? "text-warning"
+        : "text-foreground";
+  const borderClass =
+    severity === "danger"
+      ? "border-danger/40"
+      : severity === "warning"
+        ? "border-warning/40"
+        : "border-divider/50";
+  return (
+    <Card className={`bg-content1 border ${borderClass} shadow-none`}>
+      <CardBody className="py-3">
+        <div className="text-xs text-default-500">{label}</div>
+        <div className={`text-2xl font-semibold tabular-nums ${colorClass}`}>
+          {value}
+        </div>
+        <div className="text-[11px] text-default-400 mt-0.5 truncate" title={sub}>
+          {sub}
+        </div>
+      </CardBody>
+    </Card>
+  );
 }
 
 function GroupUsersView({

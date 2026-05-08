@@ -701,6 +701,37 @@ export class Sub2ApiClient {
     return this.request("GET", `/api/v1/admin/ops/request-errors?${qs.toString()}`);
   }
 
+  // Ops dashboard snapshot. Returns aggregate health/error/throughput
+  // counters for the chosen `time_range` (1h / 6h / 24h / 7d / 30d).
+  // We only consume `overview` for the error-rate tiles, but expose the
+  // shape liberally so future panels can grow into it.
+  async getOpsSnapshot(params: { timeRange: string }): Promise<{
+    generated_at: string;
+    overview: {
+      success_count: number;
+      error_count_total: number;
+      business_limited_count: number;
+      error_count_sla: number;
+      request_count_total: number;
+      request_count_sla: number;
+      token_consumed: number;
+      sla: number;
+      error_rate: number;
+      upstream_error_rate: number;
+      upstream_error_count_excl_429_529: number;
+      upstream_429_count: number;
+      upstream_529_count: number;
+      health_score?: number;
+    };
+  }> {
+    const qs = new URLSearchParams({
+      mode: "auto",
+      time_range: params.timeRange,
+      timezone: "Asia/Shanghai",
+    });
+    return this.request("GET", `/api/v1/admin/ops/dashboard/snapshot-v2?${qs.toString()}`);
+  }
+
   // Bulk fetch usage stats per group (per day). Used to sort groups by today
   // consumption. Fall back to per-account aggregation if this 404s on older
   // sub2api builds.

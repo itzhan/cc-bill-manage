@@ -55,6 +55,12 @@ export async function GET(
   const range = ALLOWED_RANGES.has(rangeRaw) ? rangeRaw : "1h";
   try {
     const client = await makeSiteClient(Number(siteId));
+    // Fire snapshot in parallel with the first page — it returns SLA /
+    // error_rate / upstream_error_rate for the same time window so the UI
+    // can show "请求错误率 X%, 上游错误率 Y%" alongside the per-account ranking.
+    const snapshotPromise = client
+      .getOpsSnapshot({ timeRange: range })
+      .catch(() => null);
     const accs = new Map<number, AggregatedAccount>();
     let page = 1;
     let pages = 1;
@@ -132,6 +138,25 @@ export async function GET(
       page++;
     }
     const ranking = [...accs.values()].sort((a, b) => b.count - a.count);
+    const snap = await snapshotPromise;
+    const summary = snap
+      ? {
+          errorRate: snap.overview.error_rate ?? 0,
+          upstreamErrorRate: snap.overview.upstream_error_rate ?? 0,
+          sla: snap.overview.sla ?? 0,
+          requestCountTotal: snap.overview.request_count_total ?? 0,
+          successCount: snap.overview.success_count ?? 0,
+          errorCountTotal: snap.overview.error_count_total ?? 0,
+          businessLimitedCount: snap.overview.business_limited_count ?? 0,
+          errorCountSla: snap.overview.error_count_sla ?? 0,
+          upstreamErrorCount429: snap.overview.upstream_429_count ?? 0,
+          upstreamErrorCount529: snap.overview.upstream_529_count ?? 0,
+          upstreamErrorCountOther:
+            snap.overview.upstream_error_count_excl_429_529 ?? 0,
+          healthScore: snap.overview.health_score ?? null,
+          generatedAt: snap.generated_at,
+        }
+      : null;
     return NextResponse.json({
       range,
       totalErrors: total,
@@ -141,6 +166,7 @@ export async function GET(
       maxPages: MAX_PAGES,
       pageSize: PAGE_SIZE,
       recentPerAccount: RECENT_PER_ACCOUNT,
+      summary,
       accounts: ranking.map((a) => ({
         accountId: a.accountId,
         accountName: a.accountName,
