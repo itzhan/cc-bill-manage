@@ -1040,6 +1040,7 @@ export default function SchedulingPage() {
                 setSmartScope({ groupIds: ids, label });
                 smartDlg.onOpen();
               }}
+              onChanged={loadStructure}
               siteId={siteId}
             />
           ))}
@@ -2323,6 +2324,7 @@ function GroupCard({
   accountStats,
   onEditAccount,
   onSmartDispatch,
+  onChanged,
   siteId,
 }: {
   group: GroupRow;
@@ -2339,6 +2341,7 @@ function GroupCard({
   >;
   onEditAccount: (a: AccountRow) => void;
   onSmartDispatch: (groupIds: number[], label: string) => void;
+  onChanged: () => Promise<void> | void;
   siteId: number | null;
 }) {
   const [mode, setMode] = useState<"scheduled" | "unscheduled">("scheduled");
@@ -2358,6 +2361,12 @@ function GroupCard({
       | { kind: "fail"; latencyMs: number; output: string }
     >
   >({});
+  // Bulk concurrency adjust based on the most recent test results.
+  // Threshold: <10s = "fast" (+5), ≥10s = "slow" (-10), per user spec.
+  const SLOW_MS = 10_000;
+  const FAST_DELTA = 5;
+  const SLOW_DELTA = -10;
+  const [groupAdjusting, setGroupAdjusting] = useState(false);
 
   const baseList = mode === "scheduled" ? accounts : unscheduled;
   const q = search.trim().toLowerCase();
@@ -2435,6 +2444,102 @@ function GroupCard({
       Array.from({ length: Math.min(5, sortedAccounts.length) }, () => worker()),
     );
     setGroupTesting(false);
+  }
+
+  // Apply concurrency deltas based on latest test results:
+  //   ok && latency<10s  → current + 5
+  //   ok && latency≥10s  → max(0, current - 10)
+  // failed / pending / no-result → skip.
+  async function applyConcurrencyAdjust() {
+    if (groupAdjusting || siteId == null) return;
+    const targets: Array<{
+      a: AccountRow;
+      from: number;
+      to: number;
+      reason: "fast" | "slow";
+    }> = [];
+    for (const a of sortedAccounts) {
+      const r = groupTestResults[a.id];
+      if (!r || r.kind !== "ok") continue;
+      const cur = a.concurrency ?? 0;
+      const delta = r.latencyMs < SLOW_MS ? FAST_DELTA : SLOW_DELTA;
+      const next = Math.max(0, cur + delta);
+      if (next === cur) continue;
+      targets.push({
+        a,
+        from: cur,
+        to: next,
+        reason: delta > 0 ? "fast" : "slow",
+      });
+    }
+    if (targets.length === 0) {
+      addToast({
+        title: "没有可调整的渠道",
+        description: "需要先一键测试，且至少一条通过；失败/未测的不动",
+        color: "warning",
+      });
+      return;
+    }
+    if (
+      !confirm(
+        `将调整 ${targets.length} 个渠道的并发：` +
+          `${targets.filter((x) => x.reason === "fast").length} 个 +${FAST_DELTA}（<10s），` +
+          `${targets.filter((x) => x.reason === "slow").length} 个 ${SLOW_DELTA}（≥10s）。继续？`,
+      )
+    ) {
+      return;
+    }
+    setGroupAdjusting(true);
+    let ok = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    // Tight concurrency = 5 to avoid hammering sub2api with PUTs.
+    const queue = [...targets];
+    async function worker() {
+      while (queue.length > 0) {
+        const item = queue.shift();
+        if (!item) break;
+        try {
+          const r = await fetch(
+            `/api/scheduling/${siteId}/channels/${item.a.id}`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ concurrency: item.to }),
+            },
+          );
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            errors.push(`${item.a.name}: ${j.error || r.status}`);
+            failed++;
+          } else {
+            ok++;
+          }
+        } catch (e) {
+          errors.push(
+            `${item.a.name}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+          failed++;
+        }
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(5, targets.length) }, () => worker()),
+    );
+    setGroupAdjusting(false);
+    if (failed === 0) {
+      addToast({
+        title: `已调整 ${ok} 个渠道的并发`,
+        color: "success",
+      });
+    } else {
+      addToast({
+        title: `${ok} 成功 · ${failed} 失败`,
+        description: errors.slice(0, 3).join(" · "),
+        color: "warning",
+      });
+    }
+    await onChanged();
   }
 
   const testStats = (() => {
@@ -2567,6 +2672,36 @@ function GroupCard({
           >
             一键测试（{sortedAccounts.length}）
           </Button>
+          {(() => {
+            // Count actionable rows so the button text shows what'll happen.
+            let fast = 0;
+            let slow = 0;
+            for (const a of sortedAccounts) {
+              const r = groupTestResults[a.id];
+              if (r?.kind !== "ok") continue;
+              if (r.latencyMs < SLOW_MS) fast++;
+              else slow++;
+            }
+            const total = fast + slow;
+            return (
+              <Button
+                size="sm"
+                color="warning"
+                variant="flat"
+                onPress={applyConcurrencyAdjust}
+                isLoading={groupAdjusting}
+                isDisabled={total === 0 || groupTesting}
+                className="mb-0.5"
+                title={
+                  total === 0
+                    ? "先一键测试；通过的会被纳入"
+                    : `${fast} 个快速 +5 / ${slow} 个慢速 -10`
+                }
+              >
+                调整并发（+{fast} / −{slow}）
+              </Button>
+            );
+          })()}
           {(testStats.ok > 0 || testStats.fail > 0) && (
             <span className="text-[11px] text-default-500 self-center">
               {testStats.ok} 通过
