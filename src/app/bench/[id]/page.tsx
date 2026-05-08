@@ -11,6 +11,8 @@ import {
   ModalContent,
   ModalHeader,
   Progress,
+  Select,
+  SelectItem,
   Spinner,
   Table,
   TableBody,
@@ -107,13 +109,48 @@ interface Baseline {
   tasks: Record<string, { must_have: [number, number]; resolved: boolean; category: string; answer_latency_s: number }>;
 }
 
+// Lite shape for the comparison-source picker (one of every other completed
+// BenchRun the user could compare this run against). Pulled from
+// /api/bench/runs which already returns this shape minus tasks.
+interface RunSummary {
+  id: number;
+  name: string;
+  n: number;
+  model: string;
+  status: string;
+  mustHavePassRate: number | null;
+  finishedAt: string | null;
+  createdAt: string;
+}
+
+// Per-task must-have counters for the chosen comparison. Both the official
+// baseline JSON and a sibling BenchRun get folded into this shape so the
+// table can render without caring which source it is.
+interface CompareEntry {
+  got: number;
+  total: number;
+}
+interface CompareData {
+  label: string;          // e.g. "官方 (n=30)" or "v4 新 key · 03-12 14:00"
+  totalRate: number | null;
+  perTask: Record<string, CompareEntry>;
+}
+
 const OFFICIAL_PASS = 0.527;
+const COMPARE_OFFICIAL = "official";
 
 export default function BenchDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [run, setRun] = useState<RunDetail | null>(null);
   const [baseline, setBaseline] = useState<Baseline | null>(null);
   const [pickedTask, setPickedTask] = useState<string | null>(null);
+  // Sibling completed runs the user could compare against. Excludes self.
+  const [otherRuns, setOtherRuns] = useState<RunSummary[]>([]);
+  // "official" = the vendored 30-题 baseline JSON. Otherwise stringified
+  // BenchRun.id of a previously-completed run.
+  const [compareKey, setCompareKey] = useState<string>(COMPARE_OFFICIAL);
+  const [compareRun, setCompareRun] = useState<RunDetail | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
 
   async function load() {
     const r = await fetch(`/api/bench/runs/${id}`);
@@ -124,7 +161,65 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
   useEffect(() => {
     load();
     fetch("/api/bench/baseline").then((r) => r.json()).then(setBaseline).catch(() => {});
+    // Pull every previously-completed run so the user can pick one as the
+    // comparison source. Filter "done" only — partial / running runs would
+    // confuse a per-task delta.
+    fetch("/api/bench/runs")
+      .then((r) => r.json())
+      .then((j) => {
+        const list = (j.items ?? []) as RunSummary[];
+        setOtherRuns(
+          list.filter((r) => r.id !== Number(id) && r.status === "done"),
+        );
+      })
+      .catch(() => {});
   }, [id]);
+
+  // Fetch the picked sibling run's tasks when the user changes the source.
+  // Reset any cached run when switching back to "official".
+  useEffect(() => {
+    if (compareKey === COMPARE_OFFICIAL) {
+      setCompareRun(null);
+      return;
+    }
+    const numId = Number(compareKey);
+    if (!Number.isFinite(numId)) return;
+    setCompareLoading(true);
+    fetch(`/api/bench/runs/${numId}`)
+      .then((r) => r.json())
+      .then((j) => setCompareRun(j.run))
+      .catch(() => setCompareRun(null))
+      .finally(() => setCompareLoading(false));
+  }, [compareKey]);
+
+  // Materialise the comparison source into a single shape the table can
+  // consume regardless of where the data came from.
+  const compareData: CompareData | null = (() => {
+    if (compareKey === COMPARE_OFFICIAL) {
+      if (!baseline) return null;
+      const perTask: Record<string, CompareEntry> = {};
+      for (const [tid, b] of Object.entries(baseline.tasks)) {
+        perTask[tid] = { got: b.must_have[0], total: b.must_have[1] };
+      }
+      return {
+        label: "官方 (n=30, opus-4-7)",
+        totalRate: baseline.summary?.must_have_pass_rate ?? OFFICIAL_PASS,
+        perTask,
+      };
+    }
+    if (!compareRun) return null;
+    const perTask: Record<string, CompareEntry> = {};
+    for (const t of compareRun.tasks) {
+      if (t.mustGot != null && t.mustTotal != null) {
+        perTask[t.taskId] = { got: t.mustGot, total: t.mustTotal };
+      }
+    }
+    return {
+      label: `${compareRun.name}（n=${compareRun.n}, ${compareRun.model}）`,
+      totalRate: compareRun.mustHavePassRate,
+      perTask,
+    };
+  })();
 
   useEffect(() => {
     if (!run) return;
@@ -185,16 +280,68 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
 
       <ProbePanel run={run} />
 
+      {/* Comparison source picker — affects the StatTile delta + table column */}
+      <Card className="mb-4 bg-content1 border border-divider/50 shadow-none">
+        <CardBody className="py-2.5 flex flex-row items-center gap-3 flex-wrap">
+          <span className="text-xs text-default-500 shrink-0">对比</span>
+          <Select
+            size="sm"
+            aria-label="comparison source"
+            selectedKeys={new Set([compareKey])}
+            onSelectionChange={(k) => {
+              const v = Array.from(k as Set<string>)[0];
+              if (v) setCompareKey(v);
+            }}
+            className="max-w-md"
+          >
+            <SelectItem key={COMPARE_OFFICIAL}>
+              官方基线（n=30, opus-4-7, 52.70%）
+            </SelectItem>
+            <>
+              {otherRuns.map((r) => (
+                <SelectItem
+                  key={String(r.id)}
+                  textValue={r.name}
+                >
+                  {`${r.name} · n=${r.n} · ${r.model} · ${
+                    r.mustHavePassRate != null
+                      ? `${(r.mustHavePassRate * 100).toFixed(2)}%`
+                      : "?"
+                  }`}
+                </SelectItem>
+              ))}
+            </>
+          </Select>
+          {compareLoading && <Spinner size="sm" />}
+          {compareKey !== COMPARE_OFFICIAL && compareData && (
+            <span className="text-xs text-default-500">
+              对照 {compareData.label}
+            </span>
+          )}
+          {compareKey === COMPARE_OFFICIAL &&
+            !(run.n === 30 && run.model === "claude-opus-4-7") && (
+              <span className="text-xs text-warning">
+                ⚠ 当前 run 是 n={run.n}/{run.model}，与官方基线 (n=30,
+                opus-4-7) 不直接可比；建议改选历史 run
+              </span>
+            )}
+        </CardBody>
+      </Card>
+
       {/* Top status row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <StatTile
           label="智商分（must_have）"
           value={run.mustHavePassRate != null ? `${(run.mustHavePassRate * 100).toFixed(2)}%` : "—"}
-          sub={
-            run.n === 30 && run.model === "claude-opus-4-7" && run.mustHavePassRate != null
-              ? `vs 官方 52.70% · Δ ${((run.mustHavePassRate - OFFICIAL_PASS) * 100 >= 0 ? "+" : "")}${((run.mustHavePassRate - OFFICIAL_PASS) * 100).toFixed(2)} pp`
-              : null
-          }
+          sub={(() => {
+            if (run.mustHavePassRate == null || compareData?.totalRate == null) {
+              return null;
+            }
+            const delta =
+              (run.mustHavePassRate - compareData.totalRate) * 100;
+            const sign = delta >= 0 ? "+" : "";
+            return `vs ${compareData.label} ${(compareData.totalRate * 100).toFixed(2)}% · Δ ${sign}${delta.toFixed(2)} pp`;
+          })()}
         />
         <StatTile
           label="完整通过题数"
@@ -284,13 +431,15 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
               <TableColumn>类别 / 语言</TableColumn>
               <TableColumn>状态</TableColumn>
               <TableColumn className="text-right">must_have</TableColumn>
-              <TableColumn className="text-right">官方</TableColumn>
+              <TableColumn className="text-right">
+                {compareKey === COMPARE_OFFICIAL ? "官方" : "对比"}
+              </TableColumn>
               <TableColumn className="text-right">延迟 (ans+judge)</TableColumn>
               <TableColumn className="text-right">tokens</TableColumn>
             </TableHeader>
             <TableBody>
               {run.tasks.map((t) => {
-                const base = baseline?.tasks[t.taskId];
+                const cmp = compareData?.perTask[t.taskId];
                 return (
                   <TableRow
                     key={t.id}
@@ -315,7 +464,7 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
                         : "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-xs text-default-500">
-                      {run.n === 30 && run.model === "claude-opus-4-7" && base ? `${base.must_have[0]}/${base.must_have[1]}` : "—"}
+                      {cmp ? `${cmp.got}/${cmp.total}` : "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-xs">
                       {t.answerLatencyS != null
