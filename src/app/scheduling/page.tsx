@@ -199,26 +199,38 @@ export default function SchedulingPage() {
   } | null>(null);
   const [editCredsLoading, setEditCredsLoading] = useState(false);
   const [editKeyRevealed, setEditKeyRevealed] = useState(false);
-  // Filters (persisted to localStorage)
+  // statusFilter stays per-browser (it's a quick toggle, not a shared
+  // policy). excludePrefixes is now persisted server-side via Settings so
+  // every operator sees the same exclusion list.
   const [statusFilter, setStatusFilter] = useState<
     "all" | "active" | "inactive"
   >("all");
   const [excludePrefixes, setExcludePrefixes] = useState<string>("");
   const [prefixDraft, setPrefixDraft] = useState<string>("");
+  const [savingPrefixes, setSavingPrefixes] = useState(false);
 
   useEffect(() => {
+    // statusFilter still cached locally
     try {
       const sf = localStorage.getItem("scheduling.statusFilter");
-      const ep = localStorage.getItem("scheduling.excludePrefixes");
       if (sf === "all" || sf === "active" || sf === "inactive")
         setStatusFilter(sf);
-      if (ep != null) {
-        setExcludePrefixes(ep);
-        setPrefixDraft(ep);
-      }
     } catch {
       // ignore
     }
+    // excludePrefixes is sourced from /api/settings
+    fetch("/api/settings", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => {
+        const ep =
+          (j.settings?.schedulingExcludePrefixes as string | null | undefined) ??
+          "";
+        setExcludePrefixes(ep);
+        setPrefixDraft(ep);
+      })
+      .catch(() => {
+        // network failure: keep defaults (empty)
+      });
   }, []);
 
   function persistStatus(v: "all" | "active" | "inactive") {
@@ -229,12 +241,38 @@ export default function SchedulingPage() {
       // ignore
     }
   }
-  function persistPrefixes(v: string) {
-    setExcludePrefixes(v);
+  async function persistPrefixes(v: string): Promise<boolean> {
+    setSavingPrefixes(true);
     try {
-      localStorage.setItem("scheduling.excludePrefixes", v);
-    } catch {
-      // ignore
+      const r = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          schedulingExcludePrefixes: v || null,
+        }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        addToast({
+          title: "保存失败",
+          description: j.error,
+          color: "danger",
+        });
+        return false;
+      }
+      // Optimistic: trust the value we just sent.
+      setExcludePrefixes(v);
+      addToast({ title: "已保存（对所有人生效）", color: "success" });
+      return true;
+    } catch (e) {
+      addToast({
+        title: "保存失败",
+        description: e instanceof Error ? e.message : String(e),
+        color: "danger",
+      });
+      return false;
+    } finally {
+      setSavingPrefixes(false);
     }
   }
 
@@ -1036,11 +1074,15 @@ export default function SchedulingPage() {
         size="md"
       >
         <ModalContent>
-          <ModalHeader>排除前缀</ModalHeader>
+          <ModalHeader>排除前缀（全局）</ModalHeader>
           <ModalBody className="gap-3">
             <p className="text-xs text-default-500">
               名字以下面任一前缀开头的账号将不显示在这里。每行一个；
               空行和以 # 开头的注释行会被忽略。大小写不敏感。
+              <br />
+              <span className="text-warning">
+                ⚠ 服务器端保存，对所有访问者都生效。
+              </span>
             </p>
             <Textarea
               label="前缀列表"
@@ -1056,9 +1098,10 @@ export default function SchedulingPage() {
             </Button>
             <Button
               color="primary"
-              onPress={() => {
-                persistPrefixes(prefixDraft);
-                filterDlg.onClose();
+              isLoading={savingPrefixes}
+              onPress={async () => {
+                const ok = await persistPrefixes(prefixDraft);
+                if (ok) filterDlg.onClose();
               }}
             >
               保存

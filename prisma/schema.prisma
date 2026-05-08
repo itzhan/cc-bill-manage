@@ -32,6 +32,10 @@ model Settings {
   errorRateThreshold       Float     @default(0.04)   // 0.04 = 4%
   errorRateCooldownMinutes Int       @default(30)
   errorRateLastSentAt      DateTime?
+  // Shared scheduling-page filter — newline-separated name prefixes.
+  // Persisted server-side (was localStorage) so the same exclusion
+  // applies for every operator.
+  schedulingExcludePrefixes String?
   // Preferred site account for the az batch tool. Quick-pick on page load.
   defaultAzSiteAccountId Int?
 }
