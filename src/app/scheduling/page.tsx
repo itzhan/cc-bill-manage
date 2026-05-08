@@ -2033,6 +2033,47 @@ function BindingRateChip({ bind }: { bind: BindingInfo[] }) {
   );
 }
 
+function TestResultChip({
+  result,
+}: {
+  result?:
+    | { kind: "pending" }
+    | { kind: "ok"; latencyMs: number }
+    | { kind: "fail"; latencyMs: number; output: string };
+}) {
+  if (!result) return null;
+  if (result.kind === "pending") {
+    return (
+      <span className="text-[10px] text-primary inline-flex items-center gap-0.5">
+        <Spinner size="sm" classNames={{ wrapper: "w-3 h-3" }} /> 测试中
+      </span>
+    );
+  }
+  const sec = (result.latencyMs / 1000).toFixed(2) + "s";
+  if (result.kind === "ok") {
+    // colour-code by latency: <5s 绿，<15s 默认，≥15s 橙
+    const colorClass =
+      result.latencyMs < 5000
+        ? "text-success"
+        : result.latencyMs < 15000
+          ? "text-default-600"
+          : "text-warning";
+    return (
+      <span className={`text-[10px] font-medium ${colorClass}`}>
+        ✓ {sec}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-[10px] text-danger font-medium"
+      title={result.output}
+    >
+      ✗ {sec}
+    </span>
+  );
+}
+
 function ChannelCredsBlock({
   creds,
   loading,
@@ -2302,6 +2343,21 @@ function GroupCard({
 }) {
   const [mode, setMode] = useState<"scheduled" | "unscheduled">("scheduled");
   const [search, setSearch] = useState("");
+  // Per-group bulk test: model picker + in-flight latency map.
+  // result keyed by account id; latencyMs is wall-clock from request start
+  // to response (includes upstream latency, which is what users care about).
+  const [groupTestModel, setGroupTestModel] = useState<string>(
+    "claude-opus-4-6",
+  );
+  const [groupTesting, setGroupTesting] = useState(false);
+  const [groupTestResults, setGroupTestResults] = useState<
+    Record<
+      number,
+      | { kind: "pending" }
+      | { kind: "ok"; latencyMs: number }
+      | { kind: "fail"; latencyMs: number; output: string }
+    >
+  >({});
 
   const baseList = mode === "scheduled" ? accounts : unscheduled;
   const q = search.trim().toLowerCase();
@@ -2322,6 +2378,86 @@ function GroupCard({
     const bi = concurrency.account?.[String(b.id)]?.current_in_use ?? 0;
     return bi - ai;
   });
+
+  async function testGroup() {
+    if (groupTesting || siteId == null) return;
+    setGroupTesting(true);
+    // Mark every visible account "pending" so the row shows a spinner badge
+    // even before its individual fetch starts.
+    setGroupTestResults(() => {
+      const next: typeof groupTestResults = {};
+      for (const a of sortedAccounts) next[a.id] = { kind: "pending" };
+      return next;
+    });
+    const queue = [...sortedAccounts];
+    const m = groupTestModel.trim();
+    async function worker() {
+      while (queue.length > 0) {
+        const a = queue.shift();
+        if (!a) break;
+        const t0 = Date.now();
+        try {
+          const r = await fetch(
+            `/api/scheduling/${siteId}/channels/${a.id}/test`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(m ? { model_id: m } : {}),
+            },
+          );
+          const j = await r.json();
+          const latencyMs = Date.now() - t0;
+          setGroupTestResults((prev) => ({
+            ...prev,
+            [a.id]: j.ok
+              ? { kind: "ok", latencyMs }
+              : {
+                  kind: "fail",
+                  latencyMs,
+                  output: String(j.output || "").slice(0, 600),
+                },
+          }));
+        } catch (e) {
+          setGroupTestResults((prev) => ({
+            ...prev,
+            [a.id]: {
+              kind: "fail",
+              latencyMs: Date.now() - t0,
+              output: e instanceof Error ? e.message : String(e),
+            },
+          }));
+        }
+      }
+    }
+    // Concurrency 5 — same as smart-dispatch one-click. Higher upsets some
+    // sub2api builds with 502/429.
+    await Promise.all(
+      Array.from({ length: Math.min(5, sortedAccounts.length) }, () => worker()),
+    );
+    setGroupTesting(false);
+  }
+
+  const testStats = (() => {
+    let ok = 0;
+    let fail = 0;
+    let totalLatency = 0;
+    let okCount = 0;
+    for (const r of Object.values(groupTestResults)) {
+      if (r.kind === "ok") {
+        ok++;
+        totalLatency += r.latencyMs;
+        okCount++;
+      } else if (r.kind === "fail") {
+        fail++;
+      }
+    }
+    return {
+      ok,
+      fail,
+      avgMs: okCount > 0 ? Math.round(totalLatency / okCount) : null,
+    };
+  })();
+
   return (
     <Card className="bg-content1 border border-divider/50 shadow-none">
       <CardHeader className="flex flex-col items-stretch gap-2 pb-2">
@@ -2387,6 +2523,64 @@ function GroupCard({
           onValueChange={setSearch}
           classNames={{ inputWrapper: "h-7 min-h-7" }}
         />
+        <div className="flex items-end gap-2 flex-wrap">
+          <Autocomplete
+            size="sm"
+            label="测试模型"
+            className="flex-1 min-w-[180px]"
+            defaultItems={[
+              { key: "claude-opus-4-6", label: "claude-opus-4-6" },
+              { key: "claude-opus-4-7", label: "claude-opus-4-7" },
+              { key: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
+              { key: "claude-haiku-4-5", label: "claude-haiku-4-5" },
+            ]}
+            selectedKey={
+              [
+                "claude-opus-4-6",
+                "claude-opus-4-7",
+                "claude-sonnet-4-6",
+                "claude-haiku-4-5",
+              ].includes(groupTestModel)
+                ? groupTestModel
+                : null
+            }
+            inputValue={groupTestModel}
+            onInputChange={setGroupTestModel}
+            onSelectionChange={(k) => {
+              if (k != null) setGroupTestModel(String(k));
+            }}
+            allowsCustomValue
+          >
+            {(item) => (
+              <AutocompleteItem key={item.key}>{item.label}</AutocompleteItem>
+            )}
+          </Autocomplete>
+          <Button
+            size="sm"
+            color="primary"
+            variant="flat"
+            startContent={<TestTube2 size={14} />}
+            onPress={testGroup}
+            isLoading={groupTesting}
+            isDisabled={sortedAccounts.length === 0}
+            className="mb-0.5"
+          >
+            一键测试（{sortedAccounts.length}）
+          </Button>
+          {(testStats.ok > 0 || testStats.fail > 0) && (
+            <span className="text-[11px] text-default-500 self-center">
+              {testStats.ok} 通过
+              {testStats.fail > 0 && (
+                <span className="text-danger"> · {testStats.fail} 失败</span>
+              )}
+              {testStats.avgMs != null && (
+                <span className="ml-1">
+                  · 平均 {(testStats.avgMs / 1000).toFixed(2)}s
+                </span>
+              )}
+            </span>
+          )}
+        </div>
       </CardHeader>
       <CardBody className="pt-0 gap-1">
         {sortedAccounts.map((a) => {
@@ -2423,6 +2617,7 @@ function GroupCard({
                     <span className="text-[10px] text-warning">未调度</span>
                   )}
                   <BindingRateChip bind={bind} />
+                  <TestResultChip result={groupTestResults[a.id]} />
                   {bind.length > 0 && bind[0].maxConcurrency != null && (
                     <span className="text-[10px] text-primary">
                       绑 max {bind[0].maxConcurrency}
