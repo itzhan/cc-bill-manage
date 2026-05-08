@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import Shell from "@/components/Shell";
+import SmartDispatchPanel from "@/components/SmartDispatchPanel";
 import StatCard from "@/components/StatCard";
 import { fmtMoneyShort } from "@/lib/format";
 
@@ -219,7 +220,12 @@ export default function SchedulingPage() {
   const editDlg = useDisclosure();
   const filterDlg = useDisclosure();
   const cgrpDlg = useDisclosure();
+  const smartDlg = useDisclosure();
   const [customGroups, setCustomGroups] = useState<CustomGroupRow[]>([]);
+  const [smartScope, setSmartScope] = useState<{
+    groupIds: number[];
+    label: string;
+  } | null>(null);
 
   // Load sub2api sites once
   useEffect(() => {
@@ -890,6 +896,10 @@ export default function SchedulingPage() {
                     accounts={accounts}
                     concurrency={concurrency}
                     accountStats={accountStats}
+                    onSmartDispatch={(ids, label) => {
+                      setSmartScope({ groupIds: ids, label });
+                      smartDlg.onOpen();
+                    }}
                   />
                 ))}
               </div>
@@ -920,12 +930,32 @@ export default function SchedulingPage() {
                 setEditNotes(a.notes ?? "");
                 editDlg.onOpen();
               }}
+              onSmartDispatch={(ids, label) => {
+                setSmartScope({ groupIds: ids, label });
+                smartDlg.onOpen();
+              }}
               siteId={siteId}
             />
           ))}
         </div>
         </>
       )}
+
+      <SmartDispatchModal
+        isOpen={smartDlg.isOpen}
+        onClose={() => {
+          smartDlg.onClose();
+          setSmartScope(null);
+        }}
+        siteId={siteId}
+        scope={smartScope}
+        excludeList={excludeList}
+        onChanged={() => {
+          // refresh structure so the just-enabled accounts disappear
+          // from the problem list on next open
+          void loadStructure();
+        }}
+      />
 
       <CustomGroupsModal
         isOpen={cgrpDlg.isOpen}
@@ -1736,6 +1766,7 @@ function GroupCard({
   bindings,
   accountStats,
   onEditAccount,
+  onSmartDispatch,
   siteId,
 }: {
   group: GroupRow;
@@ -1751,6 +1782,7 @@ function GroupCard({
     { requests: number; cost: number; user_cost: number }
   >;
   onEditAccount: (a: AccountRow) => void;
+  onSmartDispatch: (groupIds: number[], label: string) => void;
   siteId: number | null;
 }) {
   const [mode, setMode] = useState<"scheduled" | "unscheduled">("scheduled");
@@ -1931,13 +1963,14 @@ function GroupCard({
           );
         })}
         {siteId != null && (
-          <Link
-            href={`/scheduling/smart?siteId=${siteId}&groupId=${group.id}`}
-            className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+          <button
+            type="button"
+            onClick={() => onSmartDispatch([group.id], group.name)}
+            className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline self-start"
           >
             <Sparkles size={12} />
             智能调度
-          </Link>
+          </button>
         )}
       </CardBody>
     </Card>
@@ -1954,6 +1987,7 @@ function CustomGroupCard({
   accounts,
   concurrency,
   accountStats,
+  onSmartDispatch,
 }: {
   customGroup: CustomGroupRow;
   siteId: number | null;
@@ -1964,6 +1998,7 @@ function CustomGroupCard({
     string,
     { requests: number; cost: number; user_cost: number }
   >;
+  onSmartDispatch: (groupIds: number[], label: string) => void;
 }) {
   const memberSet = new Set(customGroup.groupIds);
   const memberGroups = groups.filter((g) => memberSet.has(g.id));
@@ -2003,11 +2038,6 @@ function CustomGroupCard({
     capacity > 0 ? Math.min(100, Math.round((inFlight / capacity) * 100)) : 0;
   const barColor =
     pct >= 90 ? "bg-danger" : pct >= 70 ? "bg-warning" : "bg-primary";
-
-  const smartHref =
-    siteId != null
-      ? `/scheduling/smart?siteId=${siteId}&groupIds=${customGroup.groupIds.join(",")}`
-      : "#";
 
   return (
     <Card className="bg-content1 border border-primary/30 shadow-none">
@@ -2063,16 +2093,78 @@ function CustomGroupCard({
           已启用 {activeCount} / {memberAccounts.length}（合并去重，跨分组同账号只算一次）
         </div>
         {siteId != null && (
-          <Link
-            href={smartHref}
-            className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+          <button
+            type="button"
+            onClick={() =>
+              onSmartDispatch(customGroup.groupIds, customGroup.name)
+            }
+            className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline self-start"
           >
             <Sparkles size={12} />
             智能调度
-          </Link>
+          </button>
         )}
       </CardBody>
     </Card>
+  );
+}
+
+function SmartDispatchModal({
+  isOpen,
+  onClose,
+  siteId,
+  scope,
+  excludeList,
+  onChanged,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  siteId: number | null;
+  scope: { groupIds: number[]; label: string } | null;
+  excludeList: string[];
+  onChanged: () => void;
+}) {
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="5xl" scrollBehavior="inside">
+      <ModalContent>
+        <ModalHeader className="flex items-center gap-2">
+          <Sparkles size={16} className="text-primary" />
+          <span>智能调度</span>
+          {scope && (
+            <Chip size="sm" variant="flat" color="primary">
+              {scope.label}
+            </Chip>
+          )}
+          {scope && scope.groupIds.length > 1 && (
+            <Chip size="sm" variant="flat">
+              {scope.groupIds.length} 个分组
+            </Chip>
+          )}
+          {excludeList.length > 0 && (
+            <Chip size="sm" variant="flat" color="default">
+              已套用 {excludeList.length} 条排除前缀
+            </Chip>
+          )}
+        </ModalHeader>
+        <ModalBody className="pt-0">
+          {scope && siteId != null ? (
+            <SmartDispatchPanel
+              siteId={siteId}
+              groupIds={scope.groupIds}
+              excludeList={excludeList}
+              onChanged={onChanged}
+            />
+          ) : (
+            <p className="text-default-500 text-sm py-4">未选择分组</p>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="flat" onPress={onClose}>
+            关闭
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
   );
 }
 
