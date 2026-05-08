@@ -44,6 +44,7 @@ import {
   X,
 } from "lucide-react";
 import Shell from "@/components/Shell";
+import { copyToClipboard } from "@/lib/clipboard";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
 
 interface InventoryItem {
@@ -337,10 +338,12 @@ export default function UpstreamPage() {
   }
 
   function copy(text: string) {
-    navigator.clipboard.writeText(text).then(
-      () => addToast({ title: "已复制", color: "success" }),
-      () => addToast({ title: "复制失败", color: "danger" }),
-    );
+    void copyToClipboard(text).then((ok) => {
+      addToast({
+        title: ok ? "已复制" : "复制失败",
+        color: ok ? "success" : "danger",
+      });
+    });
   }
 
   useEffect(() => {

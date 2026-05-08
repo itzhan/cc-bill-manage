@@ -25,8 +25,12 @@ import {
 import {
   ChevronDown,
   ChevronRight,
+  Copy,
   Eye,
+  EyeOff,
   Gauge,
+  KeyRound,
+  Link2,
   Pencil,
   PlayCircle,
   Plus,
@@ -35,6 +39,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Shell from "@/components/Shell";
+import { copyToClipboard } from "@/lib/clipboard";
 import { fmtDate } from "@/lib/format";
 
 const MODEL_PRESETS = [
@@ -98,6 +103,8 @@ export default function BenchPage() {
   const testDlg = useDisclosure();
   const editChannelDlg = useDisclosure();
   const editKeyDlg = useDisclosure();
+  const infoDlg = useDisclosure();
+  const [infoKeyId, setInfoKeyId] = useState<number | null>(null);
 
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
   const [activeKey, setActiveKey] = useState<ChannelKey | null>(null);
@@ -305,6 +312,10 @@ export default function BenchPage() {
                                 router.push(`/bench/${k.latestRun.id}`);
                               }
                             }}
+                            onInfo={() => {
+                              setInfoKeyId(k.id);
+                              infoDlg.onOpen();
+                            }}
                           />
                         ))}
                       </div>
@@ -373,6 +384,14 @@ export default function BenchPage() {
           void runId;
         }}
       />
+      <KeyInfoModal
+        isOpen={infoDlg.isOpen}
+        onClose={() => {
+          infoDlg.onClose();
+          setInfoKeyId(null);
+        }}
+        keyId={infoKeyId}
+      />
     </Shell>
   );
 }
@@ -383,6 +402,7 @@ function KeyRow({
   onEdit,
   onDelete,
   onOpen,
+  onInfo,
 }: {
   channelId: number;
   data: ChannelKey;
@@ -390,6 +410,7 @@ function KeyRow({
   onEdit: () => void;
   onDelete: () => void;
   onOpen: () => void;
+  onInfo: () => void;
 }) {
   const lr = data.latestRun;
   const running =
@@ -400,9 +421,23 @@ function KeyRow({
       : 0;
   return (
     <div className="flex items-center gap-3 py-2 flex-wrap">
-      <div className="min-w-0 flex-1">
+      <div
+        className="min-w-0 flex-1 cursor-pointer"
+        role="button"
+        tabIndex={0}
+        onClick={onInfo}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onInfo();
+          }
+        }}
+        title="点击查看 URL / Key 并复制"
+      >
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-sm">{data.name}</span>
+          <span className="font-medium text-sm hover:text-primary transition-colors">
+            {data.name}
+          </span>
           <span className="font-mono text-[11px] text-default-400">
             {data.apiKeyMasked}
           </span>
@@ -457,6 +492,15 @@ function KeyRow({
             详情
           </Button>
         )}
+        <Button
+          size="sm"
+          isIconOnly
+          variant="light"
+          onPress={onInfo}
+          title="查看 URL / Key"
+        >
+          <KeyRound size={14} />
+        </Button>
         <Button size="sm" isIconOnly variant="light" onPress={onEdit} title="编辑">
           <Pencil size={14} />
         </Button>
@@ -975,6 +1019,181 @@ function TestRunModal({
           </Button>
           <Button color="primary" isLoading={submitting} onPress={submit}>
             开始测试
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  );
+}
+
+// =================================================================
+// Key info modal — full URL + apiKey with one-click copy. Used by
+// the per-key click target on the channel list. Reads the unmasked
+// key from /api/bench/keys/[id] (auth-protected by middleware).
+// =================================================================
+interface FullKeyInfo {
+  id: number;
+  name: string;
+  apiKey: string;
+  notes: string | null;
+  channel: { id: number; name: string; baseUrl: string };
+}
+
+function KeyInfoModal({
+  isOpen,
+  onClose,
+  keyId,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  keyId: number | null;
+}) {
+  const [data, setData] = useState<FullKeyInfo | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [revealKey, setRevealKey] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || keyId == null) return;
+    setData(null);
+    setRevealKey(false);
+    setLoading(true);
+    fetch(`/api/bench/keys/${keyId}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.item) setData(j.item as FullKeyInfo);
+      })
+      .finally(() => setLoading(false));
+  }, [isOpen, keyId]);
+
+  async function copy(text: string, label: string) {
+    const ok = await copyToClipboard(text);
+    addToast({
+      title: ok ? `${label} 已复制` : `${label} 复制失败`,
+      color: ok ? "success" : "danger",
+    });
+  }
+
+  const masked = data
+    ? data.apiKey.length > 8
+      ? `${data.apiKey.slice(0, 4)}…${data.apiKey.slice(-4)}`
+      : "*".repeat(data.apiKey.length)
+    : "";
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="lg">
+      <ModalContent>
+        <ModalHeader className="flex items-center gap-2">
+          <KeyRound size={16} />
+          <span>渠道信息</span>
+          {data && (
+            <Chip size="sm" variant="flat">
+              {data.channel.name} / {data.name}
+            </Chip>
+          )}
+        </ModalHeader>
+        <ModalBody className="gap-3">
+          {loading || !data ? (
+            <div className="flex justify-center py-6">
+              <Spinner />
+            </div>
+          ) : (
+            <>
+              <div className="rounded-lg border border-divider/50 p-3 flex flex-col gap-1.5">
+                <div className="flex items-center gap-2 text-xs text-default-500">
+                  <Link2 size={12} />
+                  <span>站点 URL</span>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <code className="font-mono text-sm flex-1 break-all">
+                    {data.channel.baseUrl}
+                  </code>
+                  <Button
+                    size="sm"
+                    isIconOnly
+                    variant="flat"
+                    onPress={() =>
+                      copy(data.channel.baseUrl, "URL")
+                    }
+                    title="复制"
+                  >
+                    <Copy size={14} />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-divider/50 p-3 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs text-default-500">
+                    <KeyRound size={12} />
+                    <span>API Key</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="light"
+                    startContent={
+                      revealKey ? <EyeOff size={12} /> : <Eye size={12} />
+                    }
+                    onPress={() => setRevealKey((v) => !v)}
+                    className="h-6 min-w-0 px-2"
+                  >
+                    {revealKey ? "隐藏" : "显示"}
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <code className="font-mono text-sm flex-1 break-all">
+                    {revealKey ? data.apiKey : masked}
+                  </code>
+                  <Button
+                    size="sm"
+                    isIconOnly
+                    variant="flat"
+                    onPress={() => copy(data.apiKey, "API Key")}
+                    title="复制完整 key"
+                  >
+                    <Copy size={14} />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="flat"
+                  startContent={<Copy size={14} />}
+                  onPress={() =>
+                    copy(
+                      `${data.channel.baseUrl}\n${data.apiKey}`,
+                      "URL + Key",
+                    )
+                  }
+                >
+                  一起复制（两行）
+                </Button>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  onPress={() =>
+                    copy(
+                      `RELAY_BASE=${data.channel.baseUrl}\nRELAY_KEY=${data.apiKey}`,
+                      "环境变量",
+                    )
+                  }
+                >
+                  复制为环境变量
+                </Button>
+              </div>
+
+              {data.notes && (
+                <div className="text-xs text-default-500 break-all border-l-2 border-default-200 pl-2">
+                  备注：{data.notes}
+                </div>
+              )}
+            </>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="flat" onPress={onClose}>
+            关闭
           </Button>
         </ModalFooter>
       </ModalContent>
