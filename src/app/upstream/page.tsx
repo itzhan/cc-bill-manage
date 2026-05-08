@@ -102,6 +102,7 @@ export default function UpstreamPage() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const [busyRefresh, setBusyRefresh] = useState<number | null>(null);
+  const [busyAll, setBusyAll] = useState(false);
   const [keys, setKeys] = useState<Record<number, UpstreamKey[]>>({});
   const [keysModalAccount, setKeysModalAccount] =
     useState<UpstreamAccount | null>(null);
@@ -181,6 +182,60 @@ export default function UpstreamPage() {
       }
     } finally {
       setBusyRefresh(null);
+    }
+  }
+
+  // Refresh (structure) + sync (today's usage) every upstream account in
+  // one shot — the 一键刷新同步 button on the page header.
+  async function refreshAndSyncAll() {
+    setBusyAll(true);
+    try {
+      const res = await fetch("/api/upstream/refresh-sync", { method: "POST" });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        addToast({
+          title: "批量刷新失败",
+          description: j.error,
+          color: "danger",
+        });
+        return;
+      }
+      const j = (await res.json()) as {
+        refresh: { name: string; ok: boolean; error?: string }[];
+        sync: { name: string; ok: boolean; error?: string }[];
+      };
+      const failedRefresh = j.refresh.filter((x) => !x.ok);
+      const failedSync = j.sync.filter((x) => !x.ok);
+      const total = j.refresh.length;
+      const failedCount = failedRefresh.length + failedSync.length;
+      if (failedCount === 0) {
+        addToast({
+          title: `已完成 ${total} 个渠道的刷新 + 同步`,
+          color: "success",
+        });
+      } else {
+        const desc = [
+          ...failedRefresh.map((x) => `刷新 ${x.name}: ${x.error}`),
+          ...failedSync.map((x) => `同步 ${x.name}: ${x.error}`),
+        ]
+          .slice(0, 4)
+          .join(" · ");
+        addToast({
+          title: `${total} 个中 ${failedCount} 项失败`,
+          description: desc,
+          color: "warning",
+        });
+      }
+      await load();
+      if (keysModalAccount) await loadKeys(keysModalAccount.id);
+    } catch (e) {
+      addToast({
+        title: "批量刷新失败",
+        description: e instanceof Error ? e.message : String(e),
+        color: "danger",
+      });
+    } finally {
+      setBusyAll(false);
     }
   }
 
@@ -403,9 +458,19 @@ export default function UpstreamPage() {
             凭据 · 余额 · 货源情况 · 点卡片底部按钮查看消费明细
           </p>
         </div>
-        <Button color="primary" startContent={<Plus size={14} />} onPress={openNew}>
-          新建
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="flat"
+            startContent={<RefreshCw size={14} />}
+            onPress={refreshAndSyncAll}
+            isLoading={busyAll}
+          >
+            一键刷新同步
+          </Button>
+          <Button color="primary" startContent={<Plus size={14} />} onPress={openNew}>
+            新建
+          </Button>
+        </div>
       </div>
 
       {loading && !accounts.length ? (

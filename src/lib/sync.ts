@@ -738,3 +738,19 @@ export async function refreshAll(): Promise<SyncAllResult> {
   await recordSnapshot();
   return { upstream: upRes, site: siteRes };
 }
+
+// Upstream-only refresh + sync. Used by the 渠道管理 page's
+// "一键刷新同步" header button. We do refresh first (pull structure /
+// keys list) then sync (today's usage) so the synced cost lines up with
+// the freshly imported keys, with no race vs an in-flight scheduler tick.
+export async function refreshAndSyncAllUpstream(): Promise<{
+  refresh: { id: number; name: string; ok: boolean; error?: string }[];
+  sync: { id: number; name: string; ok: boolean; error?: string }[];
+}> {
+  const ups = await prisma.upstreamAccount.findMany({
+    select: { id: true, name: true },
+  });
+  const refreshRes = await runAll(refreshUpstreamAccount, ups);
+  const syncRes = await runAll(syncUpstreamAccount, ups);
+  return { refresh: refreshRes, sync: syncRes };
+}
