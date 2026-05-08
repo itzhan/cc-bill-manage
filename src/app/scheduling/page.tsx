@@ -32,7 +32,12 @@ import {
 } from "@heroui/react";
 import {
   Activity,
+  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
   Layers,
+  Link2,
   Pencil,
   Plus,
   RefreshCw,
@@ -45,6 +50,7 @@ import Link from "next/link";
 import Shell from "@/components/Shell";
 import SmartDispatchPanel from "@/components/SmartDispatchPanel";
 import StatCard from "@/components/StatCard";
+import { copyToClipboard } from "@/lib/clipboard";
 import { fmtMoneyShort } from "@/lib/format";
 
 const POLL_MS = 2000;
@@ -185,6 +191,14 @@ export default function SchedulingPage() {
   const [editModelInput, setEditModelInput] = useState<string>("");
   // Which model to send through "测试此渠道". Defaults to opus-4-6.
   const [editTestModel, setEditTestModel] = useState<string>("claude-opus-4-6");
+  // Credentials block displayed at the top of the edit modal — fetched on
+  // open via GET /channels/[id], not bundled into the list payload.
+  const [editCreds, setEditCreds] = useState<{
+    baseUrl: string;
+    apiKey: string;
+  } | null>(null);
+  const [editCredsLoading, setEditCredsLoading] = useState(false);
+  const [editKeyRevealed, setEditKeyRevealed] = useState(false);
   // Filters (persisted to localStorage)
   const [statusFilter, setStatusFilter] = useState<
     "all" | "active" | "inactive"
@@ -942,6 +956,9 @@ export default function SchedulingPage() {
                 setEditModelInput("");
                 setEditTestModel("claude-opus-4-6");
                 setEditModelsLoading(true);
+                setEditCreds(null);
+                setEditCredsLoading(true);
+                setEditKeyRevealed(false);
                 if (siteId != null) {
                   fetch(
                     `/api/scheduling/${siteId}/channels/${a.id}/models`,
@@ -959,6 +976,21 @@ export default function SchedulingPage() {
                       // leave empty — user can still add manually
                     })
                     .finally(() => setEditModelsLoading(false));
+                  // Fetch full account so we can show url + api_key with copy.
+                  fetch(`/api/scheduling/${siteId}/channels/${a.id}`, {
+                    cache: "no-store",
+                  })
+                    .then((r) => r.json())
+                    .then((j) => {
+                      if (j.item) {
+                        setEditCreds({
+                          baseUrl: String(j.item.baseUrl ?? ""),
+                          apiKey: String(j.item.apiKey ?? ""),
+                        });
+                      }
+                    })
+                    .catch(() => {})
+                    .finally(() => setEditCredsLoading(false));
                 }
                 editDlg.onOpen();
               }}
@@ -1048,6 +1080,12 @@ export default function SchedulingPage() {
           <ModalBody>
             {editAcc && (
               <div className="flex flex-col gap-3">
+                <ChannelCredsBlock
+                  creds={editCreds}
+                  loading={editCredsLoading}
+                  reveal={editKeyRevealed}
+                  setReveal={setEditKeyRevealed}
+                />
                 <div className="flex items-center justify-between">
                   <span className="text-sm">启用 (status)</span>
                   <Switch
@@ -1892,6 +1930,92 @@ function ErrorAccountModal({
         )}
       </ModalContent>
     </Modal>
+  );
+}
+
+function ChannelCredsBlock({
+  creds,
+  loading,
+  reveal,
+  setReveal,
+}: {
+  creds: { baseUrl: string; apiKey: string } | null;
+  loading: boolean;
+  reveal: boolean;
+  setReveal: (v: boolean) => void;
+}) {
+  async function copy(text: string, label: string) {
+    if (!text) return;
+    const ok = await copyToClipboard(text);
+    addToast({
+      title: ok ? `${label} 已复制` : `${label} 复制失败`,
+      color: ok ? "success" : "danger",
+    });
+  }
+  const masked = creds?.apiKey
+    ? creds.apiKey.length > 8
+      ? `${creds.apiKey.slice(0, 4)}…${creds.apiKey.slice(-4)}`
+      : "*".repeat(creds.apiKey.length)
+    : "";
+  return (
+    <div className="rounded-lg border border-divider/50 p-2.5 bg-content2/30 flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <Link2 size={12} className="text-default-400 shrink-0" />
+        <span className="text-[11px] text-default-500 shrink-0 w-10">URL</span>
+        <code
+          className="font-mono text-xs flex-1 truncate"
+          title={creds?.baseUrl ?? ""}
+        >
+          {loading ? "加载中…" : creds?.baseUrl || "—"}
+        </code>
+        <Button
+          size="sm"
+          isIconOnly
+          variant="flat"
+          className="h-6 min-w-6"
+          isDisabled={!creds?.baseUrl}
+          onPress={() => creds && copy(creds.baseUrl, "URL")}
+          title="复制 URL"
+        >
+          <Copy size={12} />
+        </Button>
+      </div>
+      <div className="flex items-center gap-2">
+        <KeyRound size={12} className="text-default-400 shrink-0" />
+        <span className="text-[11px] text-default-500 shrink-0 w-10">Key</span>
+        <code className="font-mono text-xs flex-1 truncate">
+          {loading
+            ? "加载中…"
+            : !creds?.apiKey
+              ? "—"
+              : reveal
+                ? creds.apiKey
+                : masked}
+        </code>
+        <Button
+          size="sm"
+          isIconOnly
+          variant="light"
+          className="h-6 min-w-6"
+          isDisabled={!creds?.apiKey}
+          onPress={() => setReveal(!reveal)}
+          title={reveal ? "隐藏" : "显示完整 key"}
+        >
+          {reveal ? <EyeOff size={12} /> : <Eye size={12} />}
+        </Button>
+        <Button
+          size="sm"
+          isIconOnly
+          variant="flat"
+          className="h-6 min-w-6"
+          isDisabled={!creds?.apiKey}
+          onPress={() => creds && copy(creds.apiKey, "API Key")}
+          title="复制完整 key"
+        >
+          <Copy size={12} />
+        </Button>
+      </div>
+    </div>
   );
 }
 
