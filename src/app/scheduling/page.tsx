@@ -176,6 +176,11 @@ export default function SchedulingPage() {
   const [editSchedulable, setEditSchedulable] = useState(true);
   const [editGroupIds, setEditGroupIds] = useState<Set<string>>(new Set());
   const [editNotes, setEditNotes] = useState<string>("");
+  // Model whitelist editing — loaded when the edit modal opens.
+  const [editModels, setEditModels] = useState<string[]>([]);
+  const [editModelsInitial, setEditModelsInitial] = useState<string[]>([]);
+  const [editModelsLoading, setEditModelsLoading] = useState(false);
+  const [editModelInput, setEditModelInput] = useState<string>("");
   // Filters (persisted to localStorage)
   const [statusFilter, setStatusFilter] = useState<
     "all" | "active" | "inactive"
@@ -928,6 +933,28 @@ export default function SchedulingPage() {
                   new Set((a.group_ids ?? []).map(String)),
                 );
                 setEditNotes(a.notes ?? "");
+                setEditModels([]);
+                setEditModelsInitial([]);
+                setEditModelInput("");
+                setEditModelsLoading(true);
+                if (siteId != null) {
+                  fetch(
+                    `/api/scheduling/${siteId}/channels/${a.id}/models`,
+                    { cache: "no-store" },
+                  )
+                    .then((r) => r.json())
+                    .then((j) => {
+                      const ids = (
+                        (j.items ?? []) as { id: string }[]
+                      ).map((m) => m.id);
+                      setEditModels(ids);
+                      setEditModelsInitial(ids);
+                    })
+                    .catch(() => {
+                      // leave empty — user can still add manually
+                    })
+                    .finally(() => setEditModelsLoading(false));
+                }
                 editDlg.onOpen();
               }}
               onSmartDispatch={(ids, label) => {
@@ -1087,6 +1114,75 @@ export default function SchedulingPage() {
                   value={editNotes}
                   onValueChange={setEditNotes}
                 />
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs text-default-500">
+                      可用模型
+                      {editModelsLoading && (
+                        <span className="ml-1 text-default-400">
+                          · 加载中…
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[11px] text-default-400">
+                      {editModels.length === 0
+                        ? "空 = 未限制（不传 model_mapping）"
+                        : `${editModels.length} 个`}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mb-2 min-h-[28px]">
+                    {editModels.length === 0 ? (
+                      <span className="text-xs text-default-400 italic">
+                        {editModelsLoading ? "—" : "暂无（保存后该渠道允许全部模型）"}
+                      </span>
+                    ) : (
+                      editModels.map((m) => (
+                        <Chip
+                          key={m}
+                          size="sm"
+                          variant="flat"
+                          onClose={() =>
+                            setEditModels(editModels.filter((x) => x !== m))
+                          }
+                        >
+                          {m}
+                        </Chip>
+                      ))
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      size="sm"
+                      placeholder="claude-opus-4-7"
+                      value={editModelInput}
+                      onValueChange={setEditModelInput}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          const v = editModelInput.trim();
+                          if (v && !editModels.includes(v)) {
+                            setEditModels([...editModels, v]);
+                          }
+                          setEditModelInput("");
+                        }
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      onPress={() => {
+                        const v = editModelInput.trim();
+                        if (v && !editModels.includes(v)) {
+                          setEditModels([...editModels, v]);
+                        }
+                        setEditModelInput("");
+                      }}
+                      isDisabled={!editModelInput.trim()}
+                    >
+                      添加
+                    </Button>
+                  </div>
+                </div>
                 <Button
                   size="sm"
                   variant="flat"
@@ -1134,6 +1230,31 @@ export default function SchedulingPage() {
                   group_ids: Array.from(editGroupIds).map(Number),
                   notes: editNotes || null,
                 });
+                // Models are stored under credentials.model_mapping; the
+                // dedicated route fetches the existing credentials, mutates
+                // model_mapping, and PUTs the full credentials block.
+                const modelsChanged =
+                  editModels.length !== editModelsInitial.length ||
+                  editModels.some((m, i) => m !== editModelsInitial[i]);
+                if (modelsChanged) {
+                  const r = await fetch(
+                    `/api/scheduling/${siteId}/channels/${editAcc.id}/models`,
+                    {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ models: editModels }),
+                    },
+                  );
+                  if (!r.ok) {
+                    const j = await r.json().catch(() => ({}));
+                    addToast({
+                      title: "模型保存失败",
+                      description: j.error,
+                      color: "danger",
+                    });
+                    return;
+                  }
+                }
                 editDlg.onClose();
               }}
             >
