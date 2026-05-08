@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
+  Autocomplete,
+  AutocompleteItem,
   Button,
   Card,
   CardBody,
@@ -16,6 +18,13 @@ import {
   Search,
   XCircle,
 } from "lucide-react";
+
+const MODEL_PRESETS = [
+  { key: "claude-opus-4-6", label: "claude-opus-4-6" },
+  { key: "claude-opus-4-7", label: "claude-opus-4-7" },
+  { key: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
+  { key: "claude-haiku-4-5", label: "claude-haiku-4-5" },
+];
 
 interface Group {
   id: number;
@@ -82,6 +91,9 @@ export default function SmartDispatchPanel({
   const [enabling, setEnabling] = useState<Set<number>>(new Set());
   const [running, setRunning] = useState(false);
   const [q, setQ] = useState("");
+  // Model used by 一键检测 / 单条测试. Defaults to opus-4-6; falls back to
+  // sub2api default when blank.
+  const [testModel, setTestModel] = useState<string>("claude-opus-4-6");
 
   async function load() {
     if (!siteId || groupIdSet.size === 0) return;
@@ -134,12 +146,13 @@ export default function SmartDispatchPanel({
 
   async function testOne(id: number): Promise<TestState> {
     try {
+      const m = testModel.trim();
       const r = await fetch(
         `/api/scheduling/${siteId}/channels/${id}/test`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: "{}",
+          body: JSON.stringify(m ? { model_id: m } : {}),
         },
       );
       const j = await r.json();
@@ -290,16 +303,43 @@ export default function SmartDispatchPanel({
                 未启用 / 未调度 / 有错误的渠道。一键检测后通过的可一键启用。
               </div>
             </div>
-            <Button
-              color="primary"
-              size="sm"
-              startContent={<PlayCircle size={14} />}
-              onPress={testAll}
-              isLoading={running}
-              isDisabled={accounts.length === 0}
-            >
-              一键检测（{accounts.length}）
-            </Button>
+            <div className="flex items-end gap-2 flex-wrap">
+              <Autocomplete
+                size="sm"
+                label="测试模型"
+                className="w-56"
+                defaultItems={MODEL_PRESETS}
+                selectedKey={
+                  MODEL_PRESETS.some((p) => p.key === testModel)
+                    ? testModel
+                    : null
+                }
+                inputValue={testModel}
+                onInputChange={setTestModel}
+                onSelectionChange={(k) => {
+                  if (k != null) setTestModel(String(k));
+                }}
+                allowsCustomValue
+                description="留空则用 sub2api 默认"
+              >
+                {(item) => (
+                  <AutocompleteItem key={item.key}>
+                    {item.label}
+                  </AutocompleteItem>
+                )}
+              </Autocomplete>
+              <Button
+                color="primary"
+                size="sm"
+                startContent={<PlayCircle size={14} />}
+                onPress={testAll}
+                isLoading={running}
+                isDisabled={accounts.length === 0}
+                className="mb-0.5"
+              >
+                一键检测（{accounts.length}）
+              </Button>
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {(
