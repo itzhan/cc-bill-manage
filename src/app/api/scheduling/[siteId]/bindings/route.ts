@@ -29,6 +29,13 @@ export async function GET(
       maxConcurrency: number | null;
       upstreamKeyName: string;
       upstreamAccountName: string;
+      upstreamGroupName: string;
+      // Group default × multiplier (display reference).
+      upstreamGroupRateMultiplier: number;
+      // The rate actually applied to this user; equals group default unless
+      // an exclusive override exists.
+      upstreamEffectiveRateMultiplier: number;
+      upstreamHasExclusiveRate: boolean;
     }>
   > = {};
   for (const a of accounts) {
@@ -37,6 +44,10 @@ export async function GET(
       maxConcurrency: b.maxConcurrency,
       upstreamKeyName: b.upstreamKey.name,
       upstreamAccountName: b.upstreamKey.upstreamAccount.name,
+      upstreamGroupName: b.upstreamKey.groupName,
+      upstreamGroupRateMultiplier: b.upstreamKey.groupRateMultiplier,
+      upstreamEffectiveRateMultiplier: b.upstreamKey.effectiveRateMultiplier,
+      upstreamHasExclusiveRate: b.upstreamKey.hasExclusiveRate,
     }));
   }
   return NextResponse.json({ byRemoteAccountId });

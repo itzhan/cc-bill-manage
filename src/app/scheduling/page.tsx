@@ -114,6 +114,10 @@ interface BindingInfo {
   maxConcurrency: number | null;
   upstreamKeyName: string;
   upstreamAccountName: string;
+  upstreamGroupName: string;
+  upstreamGroupRateMultiplier: number;
+  upstreamEffectiveRateMultiplier: number;
+  upstreamHasExclusiveRate: boolean;
 }
 
 interface GroupUsersRow {
@@ -1976,6 +1980,59 @@ function ErrorAccountModal({
   );
 }
 
+// Compact rate chip shown on each scheduled-channel row. Reads upstream
+// rate from the local Binding rows (which are already on the page state),
+// so it's instant — no extra API call.
+function BindingRateChip({ bind }: { bind: BindingInfo[] }) {
+  if (bind.length === 0) {
+    return (
+      <span
+        className="text-[10px] text-default-400 italic"
+        title="该渠道未在「绑定」页配置上游 key"
+      >
+        未绑定
+      </span>
+    );
+  }
+  const sorted = [...bind].sort(
+    (a, b) =>
+      a.upstreamEffectiveRateMultiplier - b.upstreamEffectiveRateMultiplier,
+  );
+  const first = sorted[0];
+  const tooltip = sorted
+    .map(
+      (b) =>
+        `${b.upstreamGroupName} ×${b.upstreamEffectiveRateMultiplier}${b.upstreamHasExclusiveRate ? "（专属）" : ""} → ${b.upstreamKeyName}`,
+    )
+    .join("\n");
+  // Color hint by rate vs face value (1×):
+  //   < 1  green  — we buy cheaper than face, good margin
+  //   = 1  default
+  //   > 1  warning — we pay more than face, watch out
+  const r = first.upstreamEffectiveRateMultiplier;
+  const colorClass =
+    r < 1
+      ? "text-success"
+      : r > 1
+        ? "text-warning"
+        : "text-default-500";
+  return (
+    <span
+      className={`text-[10px] ${colorClass} font-medium`}
+      title={tooltip}
+    >
+      上游 {first.upstreamGroupName} ×{r}
+      {first.upstreamHasExclusiveRate ? " 专属" : ""}
+      {sorted.length > 1 && (
+        <span className="text-default-400 font-normal">
+          {" "}
+          +{sorted.length - 1}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function ChannelCredsBlock({
   creds,
   loading,
@@ -2361,10 +2418,11 @@ function GroupCard({
                     P{a.priority ?? 0}
                   </span>
                 </div>
-                <div className="flex items-center gap-1 leading-tight">
+                <div className="flex items-center gap-1 leading-tight flex-wrap">
                   {a.schedulable === false && (
                     <span className="text-[10px] text-warning">未调度</span>
                   )}
+                  <BindingRateChip bind={bind} />
                   {bind.length > 0 && bind[0].maxConcurrency != null && (
                     <span className="text-[10px] text-primary">
                       绑 max {bind[0].maxConcurrency}
