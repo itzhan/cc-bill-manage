@@ -153,6 +153,12 @@ export default function SmartDispatchPanel({
     }
   }
 
+  async function testRow(a: Account) {
+    setTests((prev) => ({ ...prev, [a.id]: { kind: "testing" } }));
+    const res = await testOne(a.id);
+    setTests((prev) => ({ ...prev, [a.id]: res }));
+  }
+
   async function testAll() {
     if (running) return;
     setRunning(true);
@@ -369,7 +375,7 @@ export default function SmartDispatchPanel({
             当前筛选下没有符合条件的渠道。
             {view === "passed" &&
               counts.pending > 0 &&
-              " 先点上方「一键检测」。"}
+              " 先点单条「测试」或上方「一键检测」，或者切到「全部」直接启用。"}
           </CardBody>
         </Card>
       ) : (
@@ -377,7 +383,18 @@ export default function SmartDispatchPanel({
           {filtered.map((a) => {
             const t = tests[a.id] ?? { kind: "idle" };
             const tags = classifyProblem(a);
-            const canEnable = t.kind === "ok";
+            // Color the 启用 button by current test state, but never disable
+            // it: the user is allowed to flip a channel back on without
+            // testing first (e.g. they already know it's healthy).
+            const enableColor: "success" | "warning" | "primary" =
+              t.kind === "ok"
+                ? "success"
+                : t.kind === "fail"
+                  ? "warning"
+                  : "primary";
+            const enableLabel =
+              t.kind === "fail" ? "仍要启用" : "启用";
+            const testing = t.kind === "testing";
             return (
               <Card
                 key={a.id}
@@ -416,17 +433,30 @@ export default function SmartDispatchPanel({
                       {t.output}
                     </div>
                   )}
-                  <div className="flex justify-end mt-1">
+                  <div className="flex justify-end gap-1 mt-1">
                     <Button
                       size="sm"
-                      color="success"
+                      variant="flat"
+                      startContent={<PlayCircle size={14} />}
+                      onPress={() => testRow(a)}
+                      isLoading={testing}
+                      isDisabled={running}
+                    >
+                      {t.kind === "ok"
+                        ? "重测"
+                        : t.kind === "fail"
+                          ? "重测"
+                          : "测试"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      color={enableColor}
                       variant="flat"
                       startContent={<Power size={14} />}
                       onPress={() => enable(a)}
                       isLoading={enabling.has(a.id)}
-                      isDisabled={!canEnable}
                     >
-                      启用
+                      {enableLabel}
                     </Button>
                   </div>
                 </CardBody>
