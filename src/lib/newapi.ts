@@ -198,6 +198,11 @@ export class NewApiClient {
       username: string;
       email?: string;
       role: number;
+      // newapi convention: `quota` on /user/self is the **current remaining**
+      // (it decreases as the user spends), NOT lifetime allocation. So
+      // balance = quota / QUOTA_PER_USD directly.
+      // `used_quota` is lifetime consumption — useful for dashboards but
+      // unrelated to the remaining-balance figure.
       quota: number;
       used_quota: number;
       group?: string;
@@ -206,9 +211,7 @@ export class NewApiClient {
       id: data.id,
       email: data.email ?? this.creds.email,
       username: data.username,
-      // Remaining balance, in USD float.
-      balance: Math.max(0, (data.quota ?? 0) - (data.used_quota ?? 0)) /
-        QUOTA_PER_USD,
+      balance: Math.max(0, data.quota ?? 0) / QUOTA_PER_USD,
       role: data.role >= 10 ? "admin" : "user",
     };
   }
