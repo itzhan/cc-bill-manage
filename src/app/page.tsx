@@ -41,6 +41,7 @@ import ExpenseBarChart, {
 } from "@/components/ExpenseBarChart";
 import { type TrendPoint } from "@/components/TrendLineChart";
 import DailyRevenueChart from "@/components/DailyRevenueChart";
+import DailyDetailModal from "@/components/DailyDetailModal";
 import { fmtDate, fmtMoney, fmtMoneyShort } from "@/lib/format";
 import type { DashboardSummary } from "@/lib/dashboard";
 
@@ -83,6 +84,7 @@ export default function DashboardPage() {
   const [backfillEnd, setBackfillEnd] = useState<string>(today);
   const [backfilling, setBackfilling] = useState(false);
   const [showUnusedBindings, setShowUnusedBindings] = useState(false);
+  const [detailDate, setDetailDate] = useState<string | null>(null);
 
   async function loadAll(rangeArg: string = range) {
     setLoading(true);
@@ -880,10 +882,16 @@ export default function DashboardPage() {
                     {daily.map((d, i) => {
                       const isToday = i === 0;
                       return (
-                        <TableRow key={d.id}>
+                        <TableRow
+                          key={d.id}
+                          className="cursor-pointer hover:bg-content2/60 transition-colors"
+                          onClick={() => setDetailDate(d.date)}
+                        >
                           <TableCell>
                             <div className="flex items-center gap-1.5">
-                              <span className="font-medium">{d.date}</span>
+                              <span className="font-medium underline decoration-dotted underline-offset-2">
+                                {d.date}
+                              </span>
                               {isToday && (
                                 <Chip
                                   size="sm"
@@ -958,6 +966,14 @@ export default function DashboardPage() {
           </Card>
         </>
       )}
+
+      <DailyDetailModal
+        date={detailDate}
+        isOpen={detailDate !== null}
+        onOpenChange={(v) => {
+          if (!v) setDetailDate(null);
+        }}
+      />
     </Shell>
   );
 }
