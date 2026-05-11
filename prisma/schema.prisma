@@ -413,6 +413,24 @@ model DailyProfit {
   updatedAt             DateTime @updatedAt
 }
 
+// 项目跟踪：手工维护的合作进度表。两种 type：
+//   customer  — 我们 → 企业，客户跑我们的 API
+//   upstream  — 我们 → 渠道商，我们跑对方的 API（多 siteUrl 列）
+// 状态 status 只有三档：discussing / pending_test / tested
+model Project {
+  id           Int      @id @default(autoincrement())
+  type         String   // customer | upstream
+  partnerName  String
+  status       String   @default("discussing") // discussing | pending_test | tested
+  // 多目标存储：每行一条，渲染时切分为编号列表
+  goal         String   @default("")
+  siteUrl      String?  // 仅 upstream 用
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([type, status])
+}
+
 // 自定义分组：把 sub2api 上的多个原生分组聚合到一个虚拟分组里，
 // 在「资源调度」页统一查看 + 一键智能调度。原生分组本身不变，
 // 这只是一层 UI 层面的聚合视图。

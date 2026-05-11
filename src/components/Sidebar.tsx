@@ -13,6 +13,7 @@ import {
   Wand2,
   Activity,
   Gauge,
+  Briefcase,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -32,6 +33,7 @@ export const navItems: NavItem[] = [
   { href: "/scheduling", label: "资源调度", icon: <Activity size={18} /> },
   { href: "/az", label: "az 管理", icon: <Wand2 size={18} /> },
   { href: "/bench", label: "基准测试", icon: <Gauge size={18} /> },
+  { href: "/projects", label: "项目跟踪", icon: <Briefcase size={18} /> },
   { href: "/settings", label: "设置", icon: <Settings size={18} /> },
 ];
 
@@ -45,7 +47,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="hidden md:flex shrink-0 w-64 h-screen sticky top-0 bg-content1 flex-col">
+    <aside className="hidden md:flex shrink-0 w-52 h-screen sticky top-0 bg-content1 flex-col">
       <div className="p-4 flex items-center gap-3">
         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 via-fuchsia-500 to-purple-600 flex items-center justify-center shadow-md shadow-purple-500/20">
           <Wallet size={18} className="text-white" />
