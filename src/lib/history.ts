@@ -277,9 +277,12 @@ export async function backfillRange(
     row.diff = Math.abs(row.upstreamCostBase - row.siteCostBase);
   }
 
-  // Upsert rows in parallel via $transaction.
+  // 跳过任何捕获到错误的日期 — 部分失败的日期数据残缺，写入会覆盖之前
+  // 的好数据。让前端拿到 errors[] 决定重试。
+  const badDates = new Set(errors.map((e) => e.date));
+  const writable = [...perDate.values()].filter((r) => !badDates.has(r.date));
   await prisma.$transaction(
-    [...perDate.values()].map((row) =>
+    writable.map((row) =>
       prisma.dailyProfit.upsert({
         where: { date: row.date },
         create: row,

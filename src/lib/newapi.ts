@@ -303,15 +303,16 @@ export class NewApiClient {
   }
 
   // Per-key historical usage between two YYYY-MM-DD dates (inclusive).
-  // Used by the historical backfill flow. newapi has no dedicated stats
-  // endpoint, so we paginate /api/log/self filtered by token_name + the
-  // date range and aggregate quota.
+  // Used by the historical backfill flow.
   //
-  // The sub2api shape returns BOTH total_cost (1× base) and
-  // total_actual_cost (× user rate). On newapi the log's `quota` is the
-  // already-charged amount → that's the actual_cost. We derive 1× base
-  // by dividing by the token's current group rate (best-effort; historical
-  // rate changes aren't tracked).
+  // 服务端聚合的 /api/log/self/stat?type=0 直接返回区间内 token 的总 quota，
+  // 跟控制台看到的「花费」数字一致。我们之前翻页 /api/log/self?type=2 是只
+  // 算 type=2 的消费日志，会漏掉其他类型 → 总额偏小，回填后利润看起来比真
+  // 实更高（亏损被吃掉）。
+  //
+  // sub2api 返回 total_cost (1×) 和 total_actual_cost (×rate)。newapi 这边
+  // stat 给的就是 actual_cost；1× base 用 token 的当前 group rate 反推（历史
+  // 上倍率变更很少，best-effort 就够）。
   async getKeyUsageStats(
     apiKeyId: number,
     startDate: string,
@@ -325,7 +326,12 @@ export class NewApiClient {
     if (!this.tokensCache) await this.listKeys();
     const token = this.tokensCache?.find((t) => t.id === apiKeyId);
     if (!token) {
-      return { total_requests: 0, total_cost: 0, total_actual_cost: 0 };
+      // 之前是静默返回 0 → 回填时上游某把 key 失踪会悄悄把 expense 算成 0，
+      // 让那一天利润看起来虚高甚至变成正利润，且 errors[] 不会捕获。改成抛错
+      // 触发上层 errors[] 记录 + 跳过 upsert（在 history.backfillRange 里）。
+      throw new Error(
+        `newapi: bound key ${apiKeyId} not found in account tokensCache — account may need re-login, or the key was deleted upstream`,
+      );
     }
 
     const startMs = Date.parse(`${startDate}T00:00:00+08:00`);
@@ -336,47 +342,19 @@ export class NewApiClient {
     const startTs = Math.floor(startMs / 1000);
     const endTs = Math.floor(endMs / 1000);
 
-    let totalQuota = 0;
-    let totalRequests = 0;
-    let totalTokens = 0;
-    // No safety bound — paginate until the server returns a short page.
-    // High-traffic tokens may produce hundreds of thousands of entries; we
-    // need them all for an accurate backfill.
-    const PAGE_SIZE = 5000;
-    for (let p = 0; ; p++) {
-      const qs = new URLSearchParams({
-        type: "2",
-        token_name: token.name,
-        start_timestamp: String(startTs),
-        end_timestamp: String(endTs),
-        p: String(p),
-        size: String(PAGE_SIZE),
-      });
-      const resp = await this.request<
-        | {
-            items?: NewApiLogRow[];
-            data?: NewApiLogRow[];
-            records?: NewApiLogRow[];
-          }
-        | NewApiLogRow[]
-      >("GET", `/api/log/self?${qs.toString()}`);
-      const rows: NewApiLogRow[] = Array.isArray(resp)
-        ? resp
-        : (resp.items ?? resp.records ?? resp.data ?? []);
-      if (rows.length === 0) break;
-      for (const r of rows) {
-        totalQuota += Number(r.quota ?? 0);
-        totalRequests++;
-        const pt = Number(
-          (r as { prompt_tokens?: number }).prompt_tokens ?? 0,
-        );
-        const ct = Number(
-          (r as { completion_tokens?: number }).completion_tokens ?? 0,
-        );
-        totalTokens += pt + ct;
-      }
-      if (rows.length < PAGE_SIZE) break;
-    }
+    const qs = new URLSearchParams({
+      type: "0",
+      token_name: token.name,
+      model_name: "",
+      start_timestamp: String(startTs),
+      end_timestamp: String(endTs),
+      group: "",
+    });
+    const resp = await this.request<{
+      data?: { quota?: number; rpm?: number; tpm?: number };
+      success?: boolean;
+    }>("GET", `/api/log/self/stat?${qs.toString()}`);
+    const totalQuota = Number(resp?.data?.quota ?? 0);
 
     const actualCost = totalQuota / QUOTA_PER_USD;
     // Estimate 1× base via current group rate (good enough; historical
@@ -390,10 +368,9 @@ export class NewApiClient {
       // ignore — fall back to 1×
     }
     return {
-      total_requests: totalRequests,
+      total_requests: 0, // /stat doesn't expose request count
       total_cost: rate > 0 ? actualCost / rate : actualCost,
       total_actual_cost: actualCost,
-      total_tokens: totalTokens,
     };
   }
 
