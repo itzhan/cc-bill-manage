@@ -428,6 +428,37 @@ model DailyProfit {
   updatedAt             DateTime @updatedAt
 }
 
+// 逐 key / 逐账号的每日明细快照。每次 sync / backfill / breakdown 查询
+// 都会 upsert 到这里，作为上游下线后的"灰飞烟灭"兜底——只要点开过/同步过
+// 至少一次，明细就永久留底。
+model DailyProfitBreakdown {
+  id                  Int      @id @default(autoincrement())
+  date                String              // YYYY-MM-DD Asia/Shanghai
+  kind                String              // "upstream" | "site"
+  refId               Int                 // UpstreamKey.id 或 SiteBoundAccount.id（在各自 namespace 内唯一）
+  label               String              // 显示用："acme / vip-key" 或 "acme / acc-1"
+  // upstream-only metadata snapshots (倍率等 — 留底时定格，免得后续改了倍率
+  // 看历史时被算错)
+  groupName           String?
+  effectiveRate       Float?
+  rechargeMultiplier  Float?
+  upstreamAccountId   Int?
+  upstreamAccountName String?
+  upstreamType        String?
+  // site-only metadata
+  siteAccountId       Int?
+  siteAccountName     String?
+  rateMultiplier      Float?
+  // 实数据
+  cost                Float               // 1× 基础（face value）
+  actualCost          Float               // 应用倍率后（贡献给 revenue 或 expense）
+  capturedAt          DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([date, kind, refId])
+  @@index([date])
+}
+
 // 项目跟踪：手工维护的合作进度表。两种 type：
 //   customer  — 我们 → 企业，客户跑我们的 API
 //   upstream  — 我们 → 渠道商，我们跑对方的 API（多 siteUrl 列）

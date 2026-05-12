@@ -50,6 +50,8 @@ interface Breakdown {
     diff: number;
   };
   errors: { date: string; kind: "site" | "upstream"; id: number; error: string }[];
+  fromCache?: boolean;
+  cachedAt?: string;
 }
 
 export default function DailyDetailModal({
@@ -108,9 +110,15 @@ export default function DailyDetailModal({
                 )}
               </div>
               <p className="text-xs text-default-500 font-normal">
-                按每把上游 key、每个本站绑定账号的当日数据汇总。点击日期实时
-                拉取，不写 DB
+                按每把上游 key、每个本站绑定账号的当日数据汇总。优先实时拉取并留底，上游不可达时回落到本地快照。
               </p>
+              {data?.fromCache && (
+                <Chip size="sm" color="warning" variant="flat">
+                  📦 上游不可达，来自本地快照
+                  {data.cachedAt &&
+                    ` · ${new Date(data.cachedAt).toLocaleString("zh-CN")}`}
+                </Chip>
+              )}
             </ModalHeader>
             <ModalBody className="pb-6">
               {loading && (

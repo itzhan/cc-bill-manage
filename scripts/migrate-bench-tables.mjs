@@ -110,5 +110,33 @@ await ensureColumn("BenchRun", "truncProbeHasText", "BOOLEAN");
 await ensureColumn("BenchRun", "truncProbeVerdict", "TEXT");
 await ensureColumn("BenchRun", "truncProbeAnswerPreview", "TEXT");
 
+// DailyProfitBreakdown — 逐 key/账号 留底，上游下线兜底。
+await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DailyProfitBreakdown" (
+  "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  "date" TEXT NOT NULL,
+  "kind" TEXT NOT NULL,
+  "refId" INTEGER NOT NULL,
+  "label" TEXT NOT NULL,
+  "groupName" TEXT,
+  "effectiveRate" REAL,
+  "rechargeMultiplier" REAL,
+  "upstreamAccountId" INTEGER,
+  "upstreamAccountName" TEXT,
+  "upstreamType" TEXT,
+  "siteAccountId" INTEGER,
+  "siteAccountName" TEXT,
+  "rateMultiplier" REAL,
+  "cost" REAL NOT NULL,
+  "actualCost" REAL NOT NULL,
+  "capturedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL
+)`);
+await prisma.$executeRawUnsafe(
+  `CREATE UNIQUE INDEX IF NOT EXISTS "DailyProfitBreakdown_date_kind_refId_key" ON "DailyProfitBreakdown"("date", "kind", "refId")`,
+);
+await prisma.$executeRawUnsafe(
+  `CREATE INDEX IF NOT EXISTS "DailyProfitBreakdown_date_idx" ON "DailyProfitBreakdown"("date")`,
+);
+
 console.log("bench tables migrated");
 await prisma.$disconnect();

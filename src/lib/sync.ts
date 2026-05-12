@@ -3,6 +3,7 @@ import { Sub2ApiClient } from "./sub2api";
 import type { AdminUser } from "./sub2api";
 import { makeUpstreamApiClient } from "./upstream-client";
 import { getDashboardSummary } from "./dashboard";
+import { persistTodayBreakdown } from "./history";
 import {
   maybeSendDiffAlert,
   maybeSendErrorRateAlert,
@@ -632,6 +633,15 @@ async function recordSnapshot(): Promise<void> {
       create: { date: today, ...profitData },
       update: profitData,
     });
+
+    // Per-key/per-account snapshot for today — so any historical view stays
+    // populated even if the upstream goes offline later. Failures are logged
+    // but don't break the sync (DailyProfit row already written).
+    try {
+      await persistTodayBreakdown();
+    } catch (e) {
+      console.error("[snapshot] persistTodayBreakdown failed:", e);
+    }
 
     // Trigger email alert if diff exceeds threshold (cooldown enforced inside)
     await maybeSendDiffAlert(s);
