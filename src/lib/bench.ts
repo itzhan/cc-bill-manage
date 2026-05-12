@@ -56,6 +56,10 @@ interface CallResult {
   };
   thinkingChars: number;
   hasSignature: boolean;
+  // Anthropic Messages stop_reason. Critical for the truncation probe — when
+  // upstream silently caps thinking/output, this comes back as "max_tokens"
+  // instead of "end_turn".
+  stopReason: string;
   // Raw JSON response from /v1/messages, kept around for forensic inspection
   // by the probe step. Only populated when CallOptions.keepRaw is true so the
   // hot QnA loop doesn't cart 30 KB strings around per task.
@@ -80,6 +84,9 @@ interface CallOptions {
   retries?: number;
   timeoutMs?: number;
   keepRaw?: boolean;
+  // Override max_tokens. Defaults to 40000 when effort is set, 4096 when not.
+  // Truncation probe uses a high override (~64000) to test if upstream caps it.
+  maxTokensOverride?: number;
 }
 
 async function callRelay(
@@ -93,7 +100,7 @@ async function callRelay(
     "anthropic-version": "2023-06-01",
     "Content-Type": "application/json",
   };
-  const maxTokens = opts.effort ? 40000 : 4096;
+  const maxTokens = opts.maxTokensOverride ?? (opts.effort ? 40000 : 4096);
   const payload: Record<string, unknown> = {
     model: opts.model,
     max_tokens: maxTokens,
@@ -124,6 +131,7 @@ async function callRelay(
         const data = JSON.parse(bodyText) as {
           content: { type: string; text?: string; thinking?: string; signature?: string }[];
           usage?: CallResult["usage"];
+          stop_reason?: string;
         };
         const text = data.content
           .filter((b) => b.type === "text")
@@ -140,6 +148,7 @@ async function callRelay(
           usage: data.usage ?? {},
           thinkingChars,
           hasSignature,
+          stopReason: data.stop_reason ?? "",
           rawJson: opts.keepRaw ? bodyText : undefined,
         };
       }
@@ -383,6 +392,131 @@ export async function runProbe(opts: {
   }
 }
 
+// ────────────────────────────────────────────────────────────────
+// 长文本思考截断探针
+// ────────────────────────────────────────────────────────────────
+// Sends ONE long-thinking prompt with a generous max_tokens budget and
+// inspects stop_reason / thinking_chars to detect:
+//   - thinking_cut:    stop_reason=max_tokens AND no text  → upstream capped
+//                      thinking mid-stream, model never got to answer.
+//   - answer_cut:      stop_reason=max_tokens AND text     → output cap binding.
+//   - silent_throttle: stop_reason=end_turn   AND thinking_chars too low
+//                      relative to expectation → upstream压低了 thinking 预算
+//                      but didn't surface it via stop_reason.
+//   - network_cut:     fetch/parse failure mid-stream.
+//   - ok:              everything looks healthy.
+
+// Prompt chosen to *reliably* induce >5K thinking chars on real Claude at
+// high effort: open-ended survey-style comparison with multi-dimensional
+// reasoning requirements.
+const TRUNC_PROBE_PROMPT =
+  "Write a thorough technical comparison of three sorting algorithms: " +
+  "merge sort, quicksort, and heapsort. For each, walk carefully through " +
+  "(a) the recurrence and rigorous derivation of average-case time " +
+  "complexity, (b) worst-case behavior and the inputs that trigger it, " +
+  "(c) cache behavior and memory hierarchy effects, (d) stability and " +
+  "in-place properties, (e) practical hybrid uses in standard libraries " +
+  "(e.g. introsort, Timsort). Reason carefully through each point and " +
+  "include concrete numerical comparisons where relevant. Conclude with a " +
+  "5-row recommendation matrix mapping scenarios to the preferred algorithm.";
+
+// Minimum thinking_chars we expect from a healthy thinking-enabled run.
+// Below this, with stop_reason=end_turn, we flag silent_throttle.
+const TRUNC_MIN_THINKING_CHARS = 3000;
+
+// We send this much budget. If a healthy real-Claude run takes ~20-40K
+// output tokens for this prompt, 64K leaves comfortable headroom — so any
+// max_tokens stop indicates upstream cap, not natural completion.
+const TRUNC_PROBE_MAX_TOKENS = 64000;
+
+export interface TruncProbeResult {
+  ok: boolean;
+  error?: string;
+  latencyS?: number;
+  requestedMaxTokens: number;
+  stopReason?: string;
+  outputTokens?: number;
+  thinkingChars?: number;
+  hasText?: boolean;
+  verdict?:
+    | "ok"
+    | "thinking_cut"
+    | "answer_cut"
+    | "silent_throttle"
+    | "network_cut";
+  answerPreview?: string;
+}
+
+export async function runTruncationProbe(opts: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  effort: string;
+}): Promise<TruncProbeResult> {
+  const t0 = Date.now();
+  // No thinking on the run → skipping is the honest answer; nothing to truncate.
+  if (!opts.effort) {
+    return {
+      ok: false,
+      error: "skipped: run has no thinking enabled",
+      requestedMaxTokens: TRUNC_PROBE_MAX_TOKENS,
+      latencyS: 0,
+    };
+  }
+  try {
+    const r = await callRelay(
+      [{ role: "user", content: TRUNC_PROBE_PROMPT }],
+      "",
+      {
+        baseUrl: opts.baseUrl,
+        apiKey: opts.apiKey,
+        model: opts.model,
+        effort: opts.effort,
+        maxTokensOverride: TRUNC_PROBE_MAX_TOKENS,
+        // 3 retries — probe is time-sensitive, not a hot path.
+        retries: 3,
+        // Long-thinking responses can legitimately take several minutes.
+        timeoutMs: 600_000,
+        keepRaw: false,
+      },
+    );
+    const latencyS = (Date.now() - t0) / 1000;
+    const hasText = r.text.trim().length > 0;
+    const stopReason = r.stopReason || "";
+    const outputTokens = r.usage.output_tokens ?? 0;
+    let verdict: TruncProbeResult["verdict"];
+    if (stopReason === "max_tokens") {
+      verdict = hasText ? "answer_cut" : "thinking_cut";
+    } else if (
+      (stopReason === "end_turn" || stopReason === "stop_sequence") &&
+      r.thinkingChars < TRUNC_MIN_THINKING_CHARS
+    ) {
+      verdict = "silent_throttle";
+    } else {
+      verdict = "ok";
+    }
+    return {
+      ok: true,
+      latencyS: Math.round(latencyS * 100) / 100,
+      requestedMaxTokens: TRUNC_PROBE_MAX_TOKENS,
+      stopReason,
+      outputTokens,
+      thinkingChars: r.thinkingChars,
+      hasText,
+      verdict,
+      answerPreview: clampStr(r.text, 4000),
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      latencyS: Math.round((Date.now() - t0) / 100) / 10,
+      requestedMaxTokens: TRUNC_PROBE_MAX_TOKENS,
+      verdict: "network_cut",
+    };
+  }
+}
+
 // Run a benchmark to completion. Caller has already created BenchRun (status=queued)
 // and pre-seeded BenchTask rows for each sampled question.
 export async function executeRun(runId: number) {
@@ -449,6 +583,11 @@ export async function executeRun(runId: number) {
       });
     }
   }
+
+  // 1b) Truncation probe — opt-in (truncProbeStatus defaults to "not_requested").
+  //     Runs only if the user checked the box at run-create time (status set
+  //     to "pending") or triggered it manually later.
+  await executeTruncProbeForRun(runId);
 
   // Re-read in case probe just landed and we want fresh values.
   const samples = await sampleByConfig(run.n, run.seed);
@@ -610,5 +749,94 @@ export function startInBackground(runId: number) {
     })
     .finally(() => {
       running.delete(runId);
+    });
+}
+
+// Runs the truncation probe for a given run, but only if the user has opted
+// in (truncProbeStatus = pending or running). Called from executeRun in the
+// regular flow, and from the standalone trigger endpoint to retro-run on
+// existing finished runs.
+export async function executeTruncProbeForRun(runId: number) {
+  const run = await prisma.benchRun.findUnique({ where: { id: runId } });
+  if (!run) return;
+  if (
+    run.truncProbeStatus !== "pending" &&
+    run.truncProbeStatus !== "running"
+  ) {
+    return;
+  }
+  await prisma.benchRun.update({
+    where: { id: runId },
+    data: { truncProbeStatus: "running" },
+  });
+  const t = await runTruncationProbe({
+    baseUrl: run.baseUrl,
+    apiKey: run.apiKey,
+    model: run.model,
+    effort: run.effort,
+  });
+  if (t.ok) {
+    await prisma.benchRun.update({
+      where: { id: runId },
+      data: {
+        truncProbeStatus: "done",
+        truncProbeError: null,
+        truncProbeLatencyS: t.latencyS,
+        truncProbeRequestedMaxTokens: t.requestedMaxTokens,
+        truncProbeStopReason: t.stopReason ?? null,
+        truncProbeOutputTokens: t.outputTokens ?? null,
+        truncProbeThinkingChars: t.thinkingChars ?? null,
+        truncProbeHasText: t.hasText ?? null,
+        truncProbeVerdict: t.verdict ?? null,
+        truncProbeAnswerPreview: t.answerPreview ?? null,
+      },
+    });
+  } else if (t.error?.startsWith("skipped:")) {
+    await prisma.benchRun.update({
+      where: { id: runId },
+      data: {
+        truncProbeStatus: "skipped",
+        truncProbeError: t.error.slice(0, 2000),
+        truncProbeLatencyS: t.latencyS,
+        truncProbeRequestedMaxTokens: t.requestedMaxTokens,
+      },
+    });
+  } else {
+    await prisma.benchRun.update({
+      where: { id: runId },
+      data: {
+        truncProbeStatus: "error",
+        truncProbeError: t.error?.slice(0, 2000),
+        truncProbeLatencyS: t.latencyS,
+        truncProbeRequestedMaxTokens: t.requestedMaxTokens,
+        truncProbeVerdict: t.verdict ?? null,
+      },
+    });
+  }
+}
+
+const truncRunning = new Set<number>();
+
+// Detached trigger for the truncation probe alone — used by the manual
+// "开始检测" button on the bench detail page, for finished runs whose owner
+// didn't opt in at create time.
+export function startTruncProbeInBackground(runId: number) {
+  if (truncRunning.has(runId)) return;
+  truncRunning.add(runId);
+  executeTruncProbeForRun(runId)
+    .catch(async (e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      await prisma.benchRun
+        .update({
+          where: { id: runId },
+          data: {
+            truncProbeStatus: "error",
+            truncProbeError: msg.slice(0, 2000),
+          },
+        })
+        .catch(() => {});
+    })
+    .finally(() => {
+      truncRunning.delete(runId);
     });
 }

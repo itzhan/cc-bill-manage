@@ -7,6 +7,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Checkbox,
   Chip,
   Input,
   Modal,
@@ -903,6 +904,7 @@ function TestRunModal({
   const [mode, setMode] = useState<Set<string>>(new Set(["30"]));
   const [effort, setEffort] = useState<Set<string>>(new Set(["high"]));
   const [concurrency, setConcurrency] = useState(10);
+  const [runTruncProbe, setRunTruncProbe] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -911,6 +913,7 @@ function TestRunModal({
     setMode(new Set(["30"]));
     setEffort(new Set(["high"]));
     setConcurrency(10);
+    setRunTruncProbe(false);
   }, [isOpen]);
 
   async function submit() {
@@ -933,6 +936,7 @@ function TestRunModal({
           effort: [...effort][0] ?? "high",
           judgeEffort: [...effort][0] ?? "high",
           concurrency,
+          runTruncProbe,
         }),
       });
       const d = await r.json();
@@ -991,6 +995,8 @@ function TestRunModal({
               selectedKeys={effort}
               onSelectionChange={(k) => setEffort(new Set(k as Set<string>))}
             >
+              <SelectItem key="max">max</SelectItem>
+              <SelectItem key="xhigh">xhigh</SelectItem>
               <SelectItem key="high">high（推荐）</SelectItem>
               <SelectItem key="medium">medium</SelectItem>
               <SelectItem key="low">low</SelectItem>
@@ -1012,6 +1018,17 @@ function TestRunModal({
               官方基线只锁定了 n=30 模式。其它模式只能跨自有 key 横比。
             </p>
           )}
+          <Checkbox
+            size="sm"
+            isSelected={runTruncProbe}
+            onValueChange={setRunTruncProbe}
+            isDisabled={!([...effort][0] ?? "")}
+          >
+            <span className="text-sm">同时测长文本思考截断</span>
+            <span className="block text-[11px] text-default-500">
+              额外发送一道高思考量大题（max_tokens=64K），约 1-3 分钟。需要开启思考。
+            </span>
+          </Checkbox>
         </ModalBody>
         <ModalFooter>
           <Button variant="light" onPress={onClose}>

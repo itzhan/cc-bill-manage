@@ -101,6 +101,17 @@ interface RunDetail {
   probeAuthenticityScore: number | null;
   probeVerdict: string | null;
   probeAnswerPreview: string | null;
+  // 长文本思考截断探针
+  truncProbeStatus: string;
+  truncProbeError: string | null;
+  truncProbeLatencyS: number | null;
+  truncProbeRequestedMaxTokens: number | null;
+  truncProbeStopReason: string | null;
+  truncProbeOutputTokens: number | null;
+  truncProbeThinkingChars: number | null;
+  truncProbeHasText: boolean | null;
+  truncProbeVerdict: string | null;
+  truncProbeAnswerPreview: string | null;
   tasks: TaskRow[];
 }
 
@@ -223,17 +234,21 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
 
   useEffect(() => {
     if (!run) return;
+    const probeActive =
+      run.probeStatus === "running" ||
+      run.probeStatus === "pending" ||
+      run.truncProbeStatus === "running" ||
+      run.truncProbeStatus === "pending";
     const terminal =
       (run.status === "done" || run.status === "error" || run.status === "canceled") &&
-      run.probeStatus !== "running" &&
-      run.probeStatus !== "pending";
+      !probeActive;
     if (terminal) return;
-    // Faster polling while probe phase is in flight (typically ≤ 30s).
-    const interval = run.probeStatus === "done" ? 3000 : 1500;
+    // Faster polling while any probe phase is in flight.
+    const interval = probeActive ? 1500 : 3000;
     const t = setInterval(load, interval);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run?.status, run?.probeStatus]);
+  }, [run?.status, run?.probeStatus, run?.truncProbeStatus]);
 
   async function cancel() {
     if (!confirm("取消该测试？已在跑的题会跑完")) return;
@@ -279,6 +294,7 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
       </div>
 
       <ProbePanel run={run} />
+      <TruncationPanel run={run} onRefresh={load} />
 
       {/* Comparison source picker — affects the StatTile delta + table column */}
       <Card className="mb-4 bg-content1 border border-divider/50 shadow-none">
@@ -641,6 +657,212 @@ function ProbeCell({
         {detail}
       </span>
     </div>
+  );
+}
+
+function TruncationPanel({
+  run,
+  onRefresh,
+}: {
+  run: RunDetail;
+  onRefresh: () => void;
+}) {
+  const [triggering, setTriggering] = useState(false);
+  async function trigger() {
+    if (triggering) return;
+    setTriggering(true);
+    try {
+      const r = await fetch(`/api/bench/runs/${run.id}/trunc-probe`, {
+        method: "POST",
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        addToast({
+          title: "触发失败",
+          description: j.error ?? "",
+          color: "danger",
+        });
+        return;
+      }
+      onRefresh();
+    } finally {
+      setTriggering(false);
+    }
+  }
+
+  // 用户没勾选 / 没手动开启时的空闲态：展示一个 CTA。
+  if (run.truncProbeStatus === "not_requested") {
+    const noThinking = !run.effort;
+    return (
+      <Card className="mb-4 border border-divider/50 bg-content1 shadow-none">
+        <CardBody className="flex flex-row items-center justify-between gap-3 flex-wrap">
+          <div className="text-xs text-default-500 flex-1 min-w-0">
+            <div className="font-semibold text-sm text-default-700 flex items-center gap-1.5">
+              <AlertTriangle size={14} /> 长文本思考截断检测
+            </div>
+            <div className="mt-0.5">
+              {noThinking
+                ? "本次 run 未开启思考（effort 为空），无法测试截断。"
+                : "发送一道高思考量大题（max_tokens=64K），检测上游是否压低思考预算或答案上限。约 1-3 分钟。"}
+            </div>
+          </div>
+          <Button
+            size="sm"
+            color="primary"
+            variant="flat"
+            isDisabled={noThinking || triggering}
+            isLoading={triggering}
+            onPress={trigger}
+          >
+            开始检测
+          </Button>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  if (run.truncProbeStatus === "pending" || run.truncProbeStatus === "running") {
+    return (
+      <Card className="mb-4 border border-primary/30 bg-primary-50/30 dark:bg-primary-950/20 shadow-none">
+        <CardBody className="flex flex-row items-center gap-3">
+          <Spinner size="sm" />
+          <div className="flex-1">
+            <div className="font-semibold text-sm flex items-center gap-1.5">
+              <AlertTriangle size={14} /> 正在做长文本思考截断检测…
+            </div>
+            <div className="text-xs text-default-500 mt-0.5">
+              发送一道长思考题（max_tokens=64K），检测上游是否偷偷压低 thinking 预算或 max_tokens。
+            </div>
+          </div>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  if (run.truncProbeStatus === "skipped") {
+    return (
+      <Card className="mb-4 border border-divider/50 bg-content1 shadow-none">
+        <CardBody className="text-xs text-default-500">
+          长文本截断检测已跳过：当前 run 未开启思考（effort 为空）。
+        </CardBody>
+      </Card>
+    );
+  }
+
+  if (run.truncProbeStatus === "error") {
+    return (
+      <Card className="mb-4 border border-danger/40 bg-danger-50/40 dark:bg-danger-950/20 shadow-none">
+        <CardBody className="gap-1">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="font-semibold text-sm flex items-center gap-1.5 text-danger">
+              <XCircle size={14} /> 长文本截断检测请求失败
+            </div>
+            <Button
+              size="sm"
+              variant="flat"
+              isLoading={triggering}
+              onPress={trigger}
+            >
+              重试
+            </Button>
+          </div>
+          <div className="text-xs text-default-600 break-all">
+            {run.truncProbeError ?? "(no detail)"}
+          </div>
+          <div className="text-[11px] text-default-400 mt-1">
+            可能是上游在 thinking 中段断开连接（network_cut），也可能是临时故障。
+          </div>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  // status === "done"
+  const verdict = run.truncProbeVerdict ?? "ok";
+  const meta: Record<
+    string,
+    { color: "success" | "warning" | "danger"; label: string; hint: string }
+  > = {
+    ok: {
+      color: "success",
+      label: "未发现截断",
+      hint: "stop_reason=end_turn，thinking 长度正常",
+    },
+    thinking_cut: {
+      color: "danger",
+      label: "思考被截断",
+      hint: "stop_reason=max_tokens 且没有最终答案——上游在 thinking 阶段就被砍了",
+    },
+    answer_cut: {
+      color: "warning",
+      label: "答案被截断",
+      hint: "stop_reason=max_tokens 但有部分答案——max_tokens 上限触顶",
+    },
+    silent_throttle: {
+      color: "warning",
+      label: "疑似静默压思考",
+      hint: "stop_reason=end_turn 但 thinking_chars 远低于基线——上游可能压低了 max_thinking_tokens",
+    },
+    network_cut: {
+      color: "danger",
+      label: "网络中断",
+      hint: "请求或响应在中途断开，可能是代理超时",
+    },
+  };
+  const v = meta[verdict] ?? meta.ok;
+
+  return (
+    <Card className="mb-4 border border-divider/50 bg-content1 shadow-none">
+      <CardHeader className="flex justify-between items-center pb-2">
+        <div className="flex items-center gap-2">
+          <AlertTriangle size={16} className="text-default-500" />
+          <span className="font-semibold text-sm">长文本思考截断</span>
+          <Chip size="sm" color={v.color} variant="flat">
+            {v.label}
+          </Chip>
+          <span className="text-xs text-default-500">{v.hint}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-default-400">
+            探针耗时 {run.truncProbeLatencyS != null ? `${run.truncProbeLatencyS.toFixed(1)}s` : "—"}
+          </span>
+          <Button
+            size="sm"
+            variant="light"
+            isLoading={triggering}
+            onPress={trigger}
+            isDisabled={!run.effort}
+          >
+            重新检测
+          </Button>
+        </div>
+      </CardHeader>
+      <CardBody className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-0 text-xs">
+        <ProbeCell
+          label="stop_reason"
+          ok={
+            run.truncProbeStopReason === "end_turn" ||
+            run.truncProbeStopReason === "stop_sequence"
+          }
+          detail={run.truncProbeStopReason ?? "—"}
+        />
+        <ProbeCell
+          label="思考字符数"
+          ok={(run.truncProbeThinkingChars ?? 0) >= 3000}
+          detail={`${run.truncProbeThinkingChars ?? "—"}（≥3000 健康）`}
+        />
+        <ProbeCell
+          label="output_tokens"
+          ok={(run.truncProbeOutputTokens ?? 0) > 0}
+          detail={`${run.truncProbeOutputTokens ?? "—"} / ${run.truncProbeRequestedMaxTokens ?? "—"} 上限`}
+        />
+        <ProbeCell
+          label="是否返回答案"
+          ok={run.truncProbeHasText === true}
+          detail={run.truncProbeHasText ? "是" : "否"}
+        />
+      </CardBody>
+    </Card>
   );
 }
 

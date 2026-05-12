@@ -350,6 +350,21 @@ model BenchRun {
   probeAnswerPreview       String?
   // 完整 raw response JSON（截断到 ~30K，便于复盘）
   probeRawResponse         String?
+  // ── 长文本思考截断探针（opt-in：用户在新建 run 或详情页手动开启）──
+  // not_requested | pending | running | done | error | skipped
+  truncProbeStatus            String   @default("not_requested")
+  truncProbeError             String?
+  truncProbeLatencyS          Float?
+  // requested max_tokens we sent (~64000)
+  truncProbeRequestedMaxTokens Int?
+  // Anthropic Messages stop_reason: end_turn | max_tokens | stop_sequence | …
+  truncProbeStopReason        String?
+  truncProbeOutputTokens      Int?
+  truncProbeThinkingChars     Int?
+  truncProbeHasText           Boolean?
+  // ok | thinking_cut | answer_cut | silent_throttle | network_cut
+  truncProbeVerdict           String?
+  truncProbeAnswerPreview     String?
   startedAt                DateTime?
   finishedAt               DateTime?
   createdAt                DateTime  @default(now())

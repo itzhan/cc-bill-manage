@@ -56,6 +56,8 @@ export async function POST(req: Request) {
     seed: number;
     concurrency: number;
     channelKeyId: number;
+    // Opt-in for the long-thinking truncation probe. Default false.
+    runTruncProbe: boolean;
   }>;
 
   // Two paths:
@@ -115,6 +117,10 @@ export async function POST(req: Request) {
       seed,
       concurrency,
       totalCount: samples.length,
+      // Opt-in: "pending" → engine will run it after fingerprint probe.
+      // "not_requested" (default) → engine skips it; user can still trigger
+      // manually from the detail page later.
+      truncProbeStatus: body.runTruncProbe ? "pending" : "not_requested",
       tasks: {
         create: samples.map((s) => ({
           taskId: s.task_id,

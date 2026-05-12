@@ -81,5 +81,34 @@ const STATEMENTS = [
 for (const sql of STATEMENTS) {
   await prisma.$executeRawUnsafe(sql);
 }
+
+// Idempotent ALTER TABLE — adds columns that were introduced after the
+// initial CREATE TABLE above. Re-running is a no-op once the column exists.
+async function ensureColumn(table, name, ddl) {
+  const cols = await prisma.$queryRawUnsafe(`PRAGMA table_info("${table}")`);
+  if (cols.some((c) => c.name === name)) return false;
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "${table}" ADD COLUMN "${name}" ${ddl}`,
+  );
+  console.log(`added ${table}.${name}`);
+  return true;
+}
+
+// Truncation probe columns (added 2026-05).
+await ensureColumn(
+  "BenchRun",
+  "truncProbeStatus",
+  "TEXT NOT NULL DEFAULT 'not_requested'",
+);
+await ensureColumn("BenchRun", "truncProbeError", "TEXT");
+await ensureColumn("BenchRun", "truncProbeLatencyS", "REAL");
+await ensureColumn("BenchRun", "truncProbeRequestedMaxTokens", "INTEGER");
+await ensureColumn("BenchRun", "truncProbeStopReason", "TEXT");
+await ensureColumn("BenchRun", "truncProbeOutputTokens", "INTEGER");
+await ensureColumn("BenchRun", "truncProbeThinkingChars", "INTEGER");
+await ensureColumn("BenchRun", "truncProbeHasText", "BOOLEAN");
+await ensureColumn("BenchRun", "truncProbeVerdict", "TEXT");
+await ensureColumn("BenchRun", "truncProbeAnswerPreview", "TEXT");
+
 console.log("bench tables migrated");
 await prisma.$disconnect();
