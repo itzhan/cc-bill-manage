@@ -712,13 +712,22 @@ function ExpenseRulesDialog({
   const [newPrefix, setNewPrefix] = useState("");
   const [newCost, setNewCost] = useState("");
   const [saving, setSaving] = useState(false);
+  // 每行的草稿 + busy 状态 — 用 Map 维护，避免给每个 row 起 sub-component
+  // 否则 heroui Table 的 Collection API 不认（必须是 TableRow 直接子）。
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [rowBusy, setRowBusy] = useState<Record<number, boolean>>({});
 
   async function load() {
     setLoading(true);
     try {
       const r = await fetch("/api/expense-rules", { cache: "no-store" });
       const j = await r.json();
-      setItems((j.items ?? []) as ExpenseRule[]);
+      const list = (j.items ?? []) as ExpenseRule[];
+      setItems(list);
+      // 同步 drafts 默认值
+      const next: Record<number, string> = {};
+      for (const it of list) next[it.id] = String(it.fixedCost);
+      setDrafts(next);
     } finally {
       setLoading(false);
     }
@@ -755,31 +764,46 @@ function ExpenseRulesDialog({
     }
   }
 
-  async function updateRule(id: number, fixedCost: number) {
-    const r = await fetch(`/api/expense-rules/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fixedCost }),
-    });
-    if (!r.ok) {
-      const j = await r.json().catch(() => ({}));
-      addToast({ title: "更新失败", description: j.error, color: "danger" });
+  async function updateRule(id: number) {
+    const v = Number(drafts[id]);
+    if (!Number.isFinite(v) || v < 0) {
+      addToast({ title: "数值非法", color: "warning" });
       return;
     }
-    await load();
-    onChanged();
+    setRowBusy((s) => ({ ...s, [id]: true }));
+    try {
+      const r = await fetch(`/api/expense-rules/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fixedCost: v }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        addToast({ title: "更新失败", description: j.error, color: "danger" });
+        return;
+      }
+      await load();
+      onChanged();
+    } finally {
+      setRowBusy((s) => ({ ...s, [id]: false }));
+    }
   }
 
   async function deleteRule(id: number) {
     if (!confirm("删除这条规则？")) return;
-    const r = await fetch(`/api/expense-rules/${id}`, { method: "DELETE" });
-    if (!r.ok) {
-      const j = await r.json().catch(() => ({}));
-      addToast({ title: "删除失败", description: j.error, color: "danger" });
-      return;
+    setRowBusy((s) => ({ ...s, [id]: true }));
+    try {
+      const r = await fetch(`/api/expense-rules/${id}`, { method: "DELETE" });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        addToast({ title: "删除失败", description: j.error, color: "danger" });
+        return;
+      }
+      await load();
+      onChanged();
+    } finally {
+      setRowBusy((s) => ({ ...s, [id]: false }));
     }
-    await load();
-    onChanged();
   }
 
   return (
@@ -828,73 +852,57 @@ function ExpenseRulesDialog({
                 <TableColumn>操作</TableColumn>
               </TableHeader>
               <TableBody>
-                {items.map((r) => (
-                  <RuleRow
-                    key={r.id}
-                    rule={r}
-                    onSave={(v) => updateRule(r.id, v)}
-                    onDelete={() => deleteRule(r.id)}
-                  />
-                ))}
+                {items.map((r) => {
+                  const draft = drafts[r.id] ?? String(r.fixedCost);
+                  const dirty = Number(draft) !== r.fixedCost;
+                  const busy = rowBusy[r.id] === true;
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell>
+                        <span className="font-mono text-sm">{r.prefix}</span>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          size="sm"
+                          value={draft}
+                          onValueChange={(v) =>
+                            setDrafts((s) => ({ ...s, [r.id]: v }))
+                          }
+                          className="w-28"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            color="primary"
+                            variant="flat"
+                            isDisabled={!dirty || busy}
+                            isLoading={busy}
+                            onPress={() => updateRule(r.id)}
+                          >
+                            保存
+                          </Button>
+                          <Button
+                            size="sm"
+                            color="danger"
+                            variant="flat"
+                            isDisabled={busy}
+                            onPress={() => deleteRule(r.id)}
+                          >
+                            删除
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
         </ModalBody>
       </ModalContent>
     </Modal>
-  );
-}
-
-function RuleRow({
-  rule,
-  onSave,
-  onDelete,
-}: {
-  rule: ExpenseRule;
-  onSave: (v: number) => Promise<void>;
-  onDelete: () => Promise<void>;
-}) {
-  const [draft, setDraft] = useState(String(rule.fixedCost));
-  const [saving, setSaving] = useState(false);
-  const dirty = Number(draft) !== rule.fixedCost;
-  return (
-    <TableRow>
-      <TableCell>
-        <span className="font-mono text-sm">{rule.prefix}</span>
-      </TableCell>
-      <TableCell>
-        <Input
-          type="number"
-          size="sm"
-          value={draft}
-          onValueChange={setDraft}
-          className="w-28"
-        />
-      </TableCell>
-      <TableCell>
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            color="primary"
-            variant="flat"
-            isDisabled={!dirty || saving}
-            isLoading={saving}
-            onPress={async () => {
-              setSaving(true);
-              try {
-                await onSave(Number(draft));
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            保存
-          </Button>
-          <Button size="sm" color="danger" variant="flat" onPress={onDelete}>
-            删除
-          </Button>
-        </div>
-      </TableCell>
-    </TableRow>
   );
 }
