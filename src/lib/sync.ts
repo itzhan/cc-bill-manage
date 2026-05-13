@@ -3,7 +3,7 @@ import { Sub2ApiClient } from "./sub2api";
 import type { AdminUser } from "./sub2api";
 import { makeUpstreamApiClient } from "./upstream-client";
 import { getDashboardSummary } from "./dashboard";
-import { persistTodayBreakdown } from "./history";
+import { aggregateFromBreakdown, persistTodayBreakdown } from "./history";
 import {
   maybeSendDiffAlert,
   maybeSendErrorRateAlert,
@@ -621,31 +621,32 @@ async function recordSnapshot(): Promise<void> {
       });
     }
 
-    // Upsert today's row in DailyProfit. Refreshes during the day; once
-    // the calendar date rolls over (Asia/Shanghai), next sync will create
-    // a new row and yesterday's frozen at its last-captured value.
     const today = shanghaiDateString();
-    const profitData = {
-      revenue: s.totalRevenue,
-      expense: s.totalExpense,
-      profit: s.totalProfit,
-      siteCostBase: s.totalSiteCostBase,
-      upstreamCostBase: s.totalUpstreamCostBase,
-      diff: s.totalDiff,
-    };
-    await prisma.dailyProfit.upsert({
-      where: { date: today },
-      create: { date: today, ...profitData },
-      update: profitData,
-    });
 
-    // Per-key/per-account snapshot for today — so any historical view stays
-    // populated even if the upstream goes offline later. Failures are logged
-    // but don't break the sync (DailyProfit row already written).
+    // 顺序：先写 breakdown 表，再从 breakdown 聚合得到 DailyProfit。
+    // 这样保证 UI 的"每日利润表"和"每日明细 modal"用同一数据源——不会
+    // 出现 table 显示一个利润数、modal 算出另一个数的怪现象。
     try {
       await persistTodayBreakdown();
     } catch (e) {
       console.error("[snapshot] persistTodayBreakdown failed:", e);
+    }
+    try {
+      const agg = await aggregateFromBreakdown(today);
+      await prisma.dailyProfit.upsert({
+        where: { date: today },
+        create: { ...agg },
+        update: {
+          revenue: agg.revenue,
+          expense: agg.expense,
+          profit: agg.profit,
+          siteCostBase: agg.siteCostBase,
+          upstreamCostBase: agg.upstreamCostBase,
+          diff: agg.diff,
+        },
+      });
+    } catch (e) {
+      console.error("[snapshot] aggregateFromBreakdown failed:", e);
     }
 
     // Trigger email alert if diff exceeds threshold (cooldown enforced inside)

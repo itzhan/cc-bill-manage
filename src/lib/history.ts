@@ -333,8 +333,28 @@ export async function backfillRange(
   for (const r of results) {
     successByDate.set(r.date, (successByDate.get(r.date) ?? 0) + 1);
   }
-  const writable = [...perDate.values()].filter(
-    (r) => (successByDate.get(r.date) ?? 0) > 0,
+  const writableDates = [...perDate.values()]
+    .filter((r) => (successByDate.get(r.date) ?? 0) > 0)
+    .map((r) => r.date);
+
+  // 顺序：先 persist 逐 key 明细到 DailyProfitBreakdown，再从 breakdown 表
+  // **重新聚合**写 DailyProfit。这样 DailyProfit ≡ Σ breakdown，永远跟
+  // modal 看到的数字一致。死渠道这次 fetch 失败时，breakdown 表里那些
+  // stale row 仍计入聚合，跟 modal 一致。
+  for (const date of writableDates) {
+    const dateResults = results.filter((r) => r.date === date);
+    await persistBreakdownForDate(date, dateResults, bindings, allSites);
+  }
+
+  // 从 breakdown 重新聚合 → 覆盖 perDate 里的值（确保 DailyProfit 和
+  // breakdown 同源）。
+  for (const date of writableDates) {
+    const agg = await aggregateFromBreakdown(date);
+    perDate.set(date, agg);
+  }
+
+  const writable = writableDates.map((d) => perDate.get(d)).filter(
+    (r): r is BackfillRow => r != null,
   );
   await prisma.$transaction(
     writable.map((row) =>
@@ -345,12 +365,6 @@ export async function backfillRange(
       }),
     ),
   );
-
-  // Persist逐 key 明细快照（每个有成功数据的日期一份），为上游下线后留底。
-  for (const date of writable.map((r) => r.date)) {
-    const dateResults = results.filter((r) => r.date === date);
-    await persistBreakdownForDate(date, dateResults, bindings, allSites);
-  }
 
   const totals = [...perDate.values()].reduce(
     (acc, r) => {
@@ -492,6 +506,42 @@ async function persistBreakdownForDate(
     }
   }
   await Promise.all(writes);
+}
+
+// 从 DailyProfitBreakdown 表里读出某日所有行，聚合成 DailyProfit 行。
+// 优先用 manualActualCost（用户手填），fallback 到同步值。
+// 调用前提：breakdown 该日期已写过；否则全 0。
+export async function aggregateFromBreakdown(date: string): Promise<BackfillRow> {
+  const rows = await prisma.dailyProfitBreakdown.findMany({
+    where: { date },
+    select: {
+      kind: true,
+      cost: true,
+      actualCost: true,
+      manualActualCost: true,
+    },
+  });
+  const row: BackfillRow = {
+    date,
+    revenue: 0,
+    expense: 0,
+    profit: 0,
+    siteCostBase: 0,
+    upstreamCostBase: 0,
+    diff: 0,
+  };
+  for (const r of rows) {
+    if (r.kind === "site") {
+      row.revenue += r.actualCost;
+      row.siteCostBase += r.cost;
+    } else {
+      row.expense += r.manualActualCost ?? r.actualCost;
+      row.upstreamCostBase += r.cost;
+    }
+  }
+  row.profit = row.revenue - row.expense;
+  row.diff = Math.max(0, row.upstreamCostBase - row.siteCostBase);
+  return row;
 }
 
 // Today's per-key snapshot from current UpstreamKey / SiteBoundAccount state.
