@@ -158,6 +158,14 @@ export default function SchedulingPage() {
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [concurrency, setConcurrency] = useState<ConcurrencyState>({});
+  // Site-level RPM/TPM (polled every 2s alongside concurrency).
+  const [siteRate, setSiteRate] = useState<{ rpm: number; tpm: number } | null>(null);
+  // Per-user real-time concurrency. Used by the top-5 panel above the
+  // channels list. `enabled=false` when sub2api监控未开启 → 隐藏面板。
+  const [userConc, setUserConc] = useState<{
+    enabled: boolean;
+    user: Record<string, { user_id: number; user_email?: string; username?: string; current_in_use: number; max_capacity?: number }>;
+  } | null>(null);
   const [bindings, setBindings] = useState<
     Record<string, BindingInfo[]>
   >({});
@@ -391,6 +399,41 @@ export default function SchedulingPage() {
     }
   }, [siteId]);
 
+  const loadSiteRate = useCallback(async () => {
+    if (siteId == null) return;
+    try {
+      const r = await fetch(`/api/scheduling/${siteId}/dashboard-stats`, {
+        cache: "no-store",
+      });
+      const j = await r.json();
+      if (r.ok)
+        setSiteRate({
+          rpm: typeof j.rpm === "number" ? j.rpm : 0,
+          tpm: typeof j.tpm === "number" ? j.tpm : 0,
+        });
+    } catch {
+      // soft-fail
+    }
+  }, [siteId]);
+
+  const loadUserConc = useCallback(async () => {
+    if (siteId == null) return;
+    try {
+      const r = await fetch(`/api/scheduling/${siteId}/user-concurrency`, {
+        cache: "no-store",
+      });
+      const j = await r.json();
+      if (r.ok) {
+        setUserConc({
+          enabled: j.enabled !== false,
+          user: j.user ?? {},
+        });
+      }
+    } catch {
+      // soft-fail
+    }
+  }, [siteId]);
+
   const loadBindings = useCallback(async () => {
     if (siteId == null) return;
     try {
@@ -532,26 +575,32 @@ export default function SchedulingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
 
-  // Concurrency keeps a 2s poll regardless — it's the live indicator and
-  // the call is cheap. Paused while tab is hidden.
+  // Concurrency + site RPM/TPM + per-user concurrency all poll at the same
+  // 2s tick — they're the live indicators and all three calls are cheap.
+  // Paused while tab is hidden.
   useEffect(() => {
     if (siteId == null) return;
-    loadConcurrency();
+    const fireAll = () => {
+      loadConcurrency();
+      loadSiteRate();
+      loadUserConc();
+    };
+    fireAll();
     const tick = () => {
       if (!visibleRef.current) return;
-      loadConcurrency();
+      fireAll();
     };
     const t = setInterval(tick, POLL_MS);
     const onVis = () => {
       visibleRef.current = !document.hidden;
-      if (!document.hidden) loadConcurrency();
+      if (!document.hidden) fireAll();
     };
     document.addEventListener("visibilitychange", onVis);
     return () => {
       clearInterval(t);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [siteId, loadConcurrency]);
+  }, [siteId, loadConcurrency, loadSiteRate, loadUserConc]);
 
   // Group-users view: load on first switch if cache empty.
   useEffect(() => {
@@ -704,26 +753,6 @@ export default function SchedulingPage() {
   ]);
 
   const hiddenCount = accounts.length - filteredAccounts.length;
-
-  const stats = useMemo(() => {
-    // Sum per-account, NOT per-group: an account in N groups would otherwise
-    // get counted N times. filteredAccounts is already unique by id.
-    let totalInFlight = 0;
-    let totalCap = 0;
-    for (const a of filteredAccounts) {
-      totalInFlight +=
-        concurrency.account?.[String(a.id)]?.current_in_use ?? 0;
-      totalCap += a.concurrency ?? 0;
-    }
-    const totalAcc = filteredAccounts.length;
-    const errCount = filteredAccounts.filter(isErrored).length;
-    // "Active and healthy" — exclude accounts with error_message even when
-    // sub2api still reports status=active.
-    const activeCount = filteredAccounts.filter(
-      (a) => a.status === "active" && !isErrored(a),
-    ).length;
-    return { totalInFlight, totalCap, totalAcc, errCount, activeCount };
-  }, [filteredAccounts, concurrency]);
 
   async function patchAccount(
     accId: number,
@@ -883,29 +912,22 @@ export default function SchedulingPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+      <div className="grid grid-cols-2 gap-3 mb-3">
         <StatCard
-          label="当前总并发"
-          value={`${stats.totalInFlight} / ${stats.totalCap}`}
+          label="当前 RPM"
+          value={siteRate ? siteRate.rpm.toLocaleString() : "—"}
           icon={Activity}
           accent="primary"
         />
         <StatCard
-          label="渠道（active）"
-          value={`${stats.activeCount} / ${stats.totalAcc}`}
+          label="当前 TPM"
+          value={siteRate ? siteRate.tpm.toLocaleString() : "—"}
           accent="success"
         />
-        <StatCard
-          label="异常渠道"
-          value={String(stats.errCount)}
-          accent={stats.errCount > 0 ? "danger" : "default"}
-        />
-        <StatCard
-          label="分组数"
-          value={String(grouped.length)}
-          accent="default"
-        />
       </div>
+
+      <TopUsersPanel userConc={userConc} />
+
 
       {error && (
         <Card className="mb-4 bg-danger-50 border border-danger-200 shadow-none">
@@ -2361,12 +2383,37 @@ function GroupCard({
       | { kind: "fail"; latencyMs: number; output: string }
     >
   >({});
-  // Bulk concurrency adjust based on the most recent test results.
-  // Threshold: <10s = "fast" (+5), ≥10s = "slow" (-10), per user spec.
+  // SLOW_MS仍用于"快/慢"分类显示（chip 颜色）。批量调整并发已下线，改为
+  // 用户手动看测试结果再决定。
   const SLOW_MS = 10_000;
-  const FAST_DELTA = 5;
-  const SLOW_DELTA = -10;
-  const [groupAdjusting, setGroupAdjusting] = useState(false);
+  // 自动测试：每 X 秒触发一次"一键测试"。每个单测固定 30s 超时。
+  const AUTO_TEST_MIN_SEC = 30;
+  const AUTO_TEST_KEY = `scheduling.autoTest.${siteId ?? "x"}.${group.id}`;
+  const [autoTestEnabled, setAutoTestEnabled] = useState(false);
+  const [autoTestInterval, setAutoTestInterval] = useState(60);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(AUTO_TEST_KEY);
+      if (!raw) return;
+      const v = JSON.parse(raw) as { enabled?: boolean; intervalSec?: number };
+      if (typeof v.enabled === "boolean") setAutoTestEnabled(v.enabled);
+      if (typeof v.intervalSec === "number" && v.intervalSec >= AUTO_TEST_MIN_SEC)
+        setAutoTestInterval(v.intervalSec);
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [AUTO_TEST_KEY]);
+  function persistAutoTest(enabled: boolean, intervalSec: number) {
+    try {
+      localStorage.setItem(
+        AUTO_TEST_KEY,
+        JSON.stringify({ enabled, intervalSec }),
+      );
+    } catch {
+      // ignore
+    }
+  }
 
   const baseList = mode === "scheduled" ? accounts : unscheduled;
   const q = search.trim().toLowerCase();
@@ -2412,6 +2459,8 @@ function GroupCard({
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(m ? { model_id: m } : {}),
+              // 单测 30 秒硬上限——避免一个挂死的渠道阻塞整轮测试。
+              signal: AbortSignal.timeout(30_000),
             },
           );
           const j = await r.json();
@@ -2427,12 +2476,20 @@ function GroupCard({
                 },
           }));
         } catch (e) {
+          const latencyMs = Date.now() - t0;
+          const isTimeout =
+            (e instanceof DOMException && e.name === "TimeoutError") ||
+            (e instanceof Error && /timeout/i.test(e.message));
           setGroupTestResults((prev) => ({
             ...prev,
             [a.id]: {
               kind: "fail",
-              latencyMs: Date.now() - t0,
-              output: e instanceof Error ? e.message : String(e),
+              latencyMs,
+              output: isTimeout
+                ? `超时（>30s）`
+                : e instanceof Error
+                  ? e.message
+                  : String(e),
             },
           }));
         }
@@ -2446,101 +2503,33 @@ function GroupCard({
     setGroupTesting(false);
   }
 
-  // Apply concurrency deltas based on latest test results:
-  //   ok && latency<10s  → current + 5
-  //   ok && latency≥10s  → max(0, current - 10)
-  // failed / pending / no-result → skip.
-  async function applyConcurrencyAdjust() {
-    if (groupAdjusting || siteId == null) return;
-    const targets: Array<{
-      a: AccountRow;
-      from: number;
-      to: number;
-      reason: "fast" | "slow";
-    }> = [];
-    for (const a of sortedAccounts) {
-      const r = groupTestResults[a.id];
-      if (!r || r.kind !== "ok") continue;
-      const cur = a.concurrency ?? 0;
-      const delta = r.latencyMs < SLOW_MS ? FAST_DELTA : SLOW_DELTA;
-      const next = Math.max(0, cur + delta);
-      if (next === cur) continue;
-      targets.push({
-        a,
-        from: cur,
-        to: next,
-        reason: delta > 0 ? "fast" : "slow",
+  // 自动测试：每 intervalSec 秒触发一次 testGroup。in-flight 守卫=groupTesting，
+  // 标签页切走时停。testGroup 用 ref 取最新闭包，避免 interval 锁定旧 sortedAccounts。
+  const testGroupRef = useRef<() => Promise<void>>(testGroup);
+  useEffect(() => {
+    testGroupRef.current = testGroup;
+  });
+  useEffect(() => {
+    if (!autoTestEnabled || sortedAccounts.length === 0) return;
+    const interval = Math.max(AUTO_TEST_MIN_SEC, autoTestInterval) * 1000;
+    let canceled = false;
+    const tick = () => {
+      if (canceled) return;
+      if (document.hidden) return;
+      if (groupTesting) return; // 上一轮没结束，跳过本次
+      testGroupRef.current().catch(() => {
+        // testGroup itself never throws (errors collected per-task)
       });
-    }
-    if (targets.length === 0) {
-      addToast({
-        title: "没有可调整的渠道",
-        description: "需要先一键测试，且至少一条通过；失败/未测的不动",
-        color: "warning",
-      });
-      return;
-    }
-    if (
-      !confirm(
-        `将调整 ${targets.length} 个渠道的并发：` +
-          `${targets.filter((x) => x.reason === "fast").length} 个 +${FAST_DELTA}（<10s），` +
-          `${targets.filter((x) => x.reason === "slow").length} 个 ${SLOW_DELTA}（≥10s）。继续？`,
-      )
-    ) {
-      return;
-    }
-    setGroupAdjusting(true);
-    let ok = 0;
-    let failed = 0;
-    const errors: string[] = [];
-    // Tight concurrency = 5 to avoid hammering sub2api with PUTs.
-    const queue = [...targets];
-    async function worker() {
-      while (queue.length > 0) {
-        const item = queue.shift();
-        if (!item) break;
-        try {
-          const r = await fetch(
-            `/api/scheduling/${siteId}/channels/${item.a.id}`,
-            {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ concurrency: item.to }),
-            },
-          );
-          if (!r.ok) {
-            const j = await r.json().catch(() => ({}));
-            errors.push(`${item.a.name}: ${j.error || r.status}`);
-            failed++;
-          } else {
-            ok++;
-          }
-        } catch (e) {
-          errors.push(
-            `${item.a.name}: ${e instanceof Error ? e.message : String(e)}`,
-          );
-          failed++;
-        }
-      }
-    }
-    await Promise.all(
-      Array.from({ length: Math.min(5, targets.length) }, () => worker()),
-    );
-    setGroupAdjusting(false);
-    if (failed === 0) {
-      addToast({
-        title: `已调整 ${ok} 个渠道的并发`,
-        color: "success",
-      });
-    } else {
-      addToast({
-        title: `${ok} 成功 · ${failed} 失败`,
-        description: errors.slice(0, 3).join(" · "),
-        color: "warning",
-      });
-    }
-    await onChanged();
-  }
+    };
+    // 开启时立即跑一次
+    tick();
+    const t = setInterval(tick, interval);
+    return () => {
+      canceled = true;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoTestEnabled, autoTestInterval, sortedAccounts.length]);
 
   const testStats = (() => {
     let ok = 0;
@@ -2672,36 +2661,34 @@ function GroupCard({
           >
             一键测试（{sortedAccounts.length}）
           </Button>
-          {(() => {
-            // Count actionable rows so the button text shows what'll happen.
-            let fast = 0;
-            let slow = 0;
-            for (const a of sortedAccounts) {
-              const r = groupTestResults[a.id];
-              if (r?.kind !== "ok") continue;
-              if (r.latencyMs < SLOW_MS) fast++;
-              else slow++;
-            }
-            const total = fast + slow;
-            return (
-              <Button
-                size="sm"
-                color="warning"
-                variant="flat"
-                onPress={applyConcurrencyAdjust}
-                isLoading={groupAdjusting}
-                isDisabled={total === 0 || groupTesting}
-                className="mb-0.5"
-                title={
-                  total === 0
-                    ? "先一键测试；通过的会被纳入"
-                    : `${fast} 个快速 +5 / ${slow} 个慢速 -10`
-                }
-              >
-                调整并发（+{fast} / −{slow}）
-              </Button>
-            );
-          })()}
+          {/* 自动测试：勾上开关 + 设置间隔（秒，≥30）。单测 30 秒超时。 */}
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <Switch
+              size="sm"
+              isSelected={autoTestEnabled}
+              onValueChange={(v) => {
+                setAutoTestEnabled(v);
+                persistAutoTest(v, autoTestInterval);
+              }}
+            >
+              <span className="text-xs">自动测试</span>
+            </Switch>
+            <Input
+              type="number"
+              size="sm"
+              variant="bordered"
+              className="w-20"
+              classNames={{ inputWrapper: "h-8 min-h-8" }}
+              value={String(autoTestInterval)}
+              min={AUTO_TEST_MIN_SEC}
+              onValueChange={(s) => {
+                const n = Math.max(AUTO_TEST_MIN_SEC, Number(s) || AUTO_TEST_MIN_SEC);
+                setAutoTestInterval(n);
+                persistAutoTest(autoTestEnabled, n);
+              }}
+              endContent={<span className="text-[10px] text-default-400">秒</span>}
+            />
+          </div>
           {(testStats.ok > 0 || testStats.fail > 0) && (
             <span className="text-[11px] text-default-500 self-center">
               {testStats.ok} 通过
@@ -3675,5 +3662,89 @@ function TemplatesModal({
         </ModalFooter>
       </ModalContent>
     </Modal>
+  );
+}
+
+// Top 5 用户实时并发面板 — 2 秒一刷（与 concurrency 同节奏）。当 sub2api
+// 端未开启 realtime monitoring 时 enabled=false，整面板隐藏。
+function TopUsersPanel({
+  userConc,
+}: {
+  userConc: {
+    enabled: boolean;
+    user: Record<
+      string,
+      {
+        user_id: number;
+        user_email?: string;
+        username?: string;
+        current_in_use: number;
+        max_capacity?: number;
+      }
+    >;
+  } | null;
+}) {
+  if (!userConc) {
+    return (
+      <div className="mb-5 text-xs text-default-400">加载用户并发中…</div>
+    );
+  }
+  if (!userConc.enabled) {
+    return (
+      <div className="mb-5 text-xs text-default-400">
+        sub2api 未开启实时监控（settings 里打开 realtime monitoring 即可显示用户并发）
+      </div>
+    );
+  }
+  const all = Object.values(userConc.user);
+  const top5 = [...all]
+    .filter((u) => (u.current_in_use ?? 0) > 0)
+    .sort((a, b) => b.current_in_use - a.current_in_use)
+    .slice(0, 5);
+  if (top5.length === 0) {
+    return (
+      <Card className="mb-5 bg-content1 border border-divider/50 shadow-none">
+        <CardBody className="py-3 text-xs text-default-500">
+          当前没有用户有 in-flight 请求
+        </CardBody>
+      </Card>
+    );
+  }
+  const maxInUse = top5[0].current_in_use;
+  return (
+    <Card className="mb-5 bg-content1 border border-divider/50 shadow-none">
+      <CardHeader className="pb-1 pt-3">
+        <div className="flex items-center gap-2">
+          <Activity size={14} className="text-default-500" />
+          <span className="font-semibold text-sm">用户实时并发 · Top 5</span>
+          <span className="text-[11px] text-default-400">每 2 秒刷新</span>
+        </div>
+      </CardHeader>
+      <CardBody className="pt-1 pb-3 gap-1">
+        {top5.map((u) => {
+          const name = u.username || u.user_email || `用户 #${u.user_id}`;
+          const pct = maxInUse > 0 ? (u.current_in_use / maxInUse) * 100 : 0;
+          return (
+            <div key={u.user_id} className="flex items-center gap-2 text-xs">
+              <span className="w-40 truncate" title={name}>
+                {name}
+              </span>
+              <div className="flex-1 h-1.5 rounded bg-default-100 overflow-hidden">
+                <div
+                  className="h-full bg-primary"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="tabular-nums w-24 text-right">
+                {u.current_in_use}
+                {u.max_capacity != null && u.max_capacity > 0 && (
+                  <span className="text-default-400"> / {u.max_capacity}</span>
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </CardBody>
+    </Card>
   );
 }

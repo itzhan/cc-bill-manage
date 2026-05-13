@@ -493,6 +493,37 @@ export class Sub2ApiClient {
     return this.request("GET", `/api/v1/admin/ops/concurrency`);
   }
 
+  // Site-level real-time RPM/TPM (and lots of other counters; we only
+  // expose what the scheduling page cares about).
+  async getDashboardStats(): Promise<{
+    rpm?: number;
+    tpm?: number;
+    [k: string]: unknown;
+  }> {
+    return this.request("GET", `/api/v1/admin/dashboard/stats`);
+  }
+
+  // Per-user real-time concurrency. Keyed by user_id, with current_in_use
+  // / max_capacity. Requires monitoring to be enabled on the sub2api side.
+  async getUserConcurrency(): Promise<{
+    enabled?: boolean;
+    user?: Record<
+      string,
+      {
+        user_id: number;
+        user_email?: string;
+        username?: string;
+        current_in_use: number;
+        max_capacity?: number;
+        load_percentage?: number;
+        waiting_in_queue?: number;
+      }
+    >;
+    timestamp?: string;
+  }> {
+    return this.request("GET", `/api/v1/admin/ops/user-concurrency`);
+  }
+
   // Bulk per-user today + lifetime cost in a single call. Replaces the
   // pattern of fanning out /admin/usage/stats?user_id=N per user.
   // Sub2api requires user_ids in the body (otherwise 400).
