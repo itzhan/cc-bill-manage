@@ -36,6 +36,10 @@ model Settings {
   // Persisted server-side (was localStorage) so the same exclusion
   // applies for every operator.
   schedulingExcludePrefixes String?
+  // Newline-separated name prefixes excluded from the "未绑定账号" view.
+  // 典型用法：把 AZ 前缀（如 az-）排除掉，因为这些账号靠 fixedCost 单独
+  // 计算，不需要再去补 upstream binding。
+  unboundExcludePrefixes    String?
   // Preferred site account for the az batch tool. Quick-pick on page load.
   defaultAzSiteAccountId Int?
 }

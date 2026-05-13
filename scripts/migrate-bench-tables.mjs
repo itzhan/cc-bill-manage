@@ -138,5 +138,8 @@ await prisma.$executeRawUnsafe(
   `CREATE INDEX IF NOT EXISTS "DailyProfitBreakdown_date_idx" ON "DailyProfitBreakdown"("date")`,
 );
 
+// Settings.unboundExcludePrefixes — 2026-05
+await ensureColumn("Settings", "unboundExcludePrefixes", "TEXT");
+
 console.log("bench tables migrated");
 await prisma.$disconnect();

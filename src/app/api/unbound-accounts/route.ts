@@ -29,19 +29,44 @@ export async function GET(req: Request) {
     day: "2-digit",
   }).format(new Date(Date.now() - (days - 1) * 86400_000));
 
-  const unbound = await prisma.siteBoundAccount.findMany({
-    where: { bindings: { none: {} } },
-    include: { siteAccount: true },
-  });
+  const [unbound, settings] = await Promise.all([
+    prisma.siteBoundAccount.findMany({
+      where: { bindings: { none: {} } },
+      include: { siteAccount: true },
+    }),
+    prisma.settings.findUnique({
+      where: { id: 1 },
+      select: { unboundExcludePrefixes: true },
+    }),
+  ]);
 
-  if (unbound.length === 0) {
-    return NextResponse.json({ days, items: [], totalRevenue: 0 });
+  // 解析排除前缀（按行/逗号分隔，跳过空白和 # 注释）。
+  const excludePrefixes = (settings?.unboundExcludePrefixes ?? "")
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s && !s.startsWith("#"));
+  const isExcluded = (name: string) =>
+    excludePrefixes.some((p) =>
+      name.toLowerCase().startsWith(p.toLowerCase()),
+    );
+
+  const filteredUnbound = unbound.filter((u) => !isExcluded(u.name));
+
+  if (filteredUnbound.length === 0) {
+    return NextResponse.json({
+      days,
+      items: [],
+      totalRevenue: 0,
+      totalCostBase: 0,
+      totalProfit: 0,
+      excludePrefixes,
+    });
   }
 
   const breakdowns = await prisma.dailyProfitBreakdown.findMany({
     where: {
       kind: "site",
-      refId: { in: unbound.map((u) => u.id) },
+      refId: { in: filteredUnbound.map((u) => u.id) },
       date: { gte: cutoff, lte: today },
     },
     select: { refId: true, cost: true, actualCost: true },
@@ -55,7 +80,7 @@ export async function GET(req: Request) {
     agg.set(b.refId, m);
   }
 
-  const items = unbound
+  const items = filteredUnbound
     .map((u) => {
       const m = agg.get(u.id) ?? { revenue: 0, costBase: 0 };
       // 利润估算：对设了 fixedCost (AZ 一次性投入) 的账号，profit = revenue - fixedCost；
@@ -88,5 +113,6 @@ export async function GET(req: Request) {
     totalCostBase,
     totalProfit,
     items,
+    excludePrefixes,
   });
 }

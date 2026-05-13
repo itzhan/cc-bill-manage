@@ -12,6 +12,11 @@ import {
   DropdownMenu,
   DropdownTrigger,
   Input,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
   Spinner,
   Tab,
   Table,
@@ -21,6 +26,7 @@ import {
   TableHeader,
   TableRow,
   Tabs,
+  Textarea,
   addToast,
 } from "@heroui/react";
 import {
@@ -84,6 +90,7 @@ interface UnboundAccountsResp {
   totalCostBase: number;
   totalProfit: number;
   items: UnboundAccountRow[];
+  excludePrefixes?: string[];
 }
 
 export default function DashboardPage() {
@@ -1084,14 +1091,63 @@ function UnboundView({
   onDaysChange: (d: number) => void;
   onRefresh: () => void;
 }) {
+  const [editingPrefix, setEditingPrefix] = useState(false);
+  const [prefixDraft, setPrefixDraft] = useState("");
+  const [savingPrefix, setSavingPrefix] = useState(false);
+
+  async function openPrefixDialog() {
+    // 拉一次 settings 以加载原始 raw 值（API 返回的是已解析的数组）。
+    try {
+      const r = await fetch("/api/settings", { cache: "no-store" });
+      const j = await r.json();
+      setPrefixDraft(j.settings?.unboundExcludePrefixes ?? "");
+    } catch {
+      setPrefixDraft("");
+    }
+    setEditingPrefix(true);
+  }
+  async function savePrefix() {
+    setSavingPrefix(true);
+    try {
+      const r = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unboundExcludePrefixes: prefixDraft || null }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        addToast({ title: "保存失败", description: j.error, color: "danger" });
+        return;
+      }
+      setEditingPrefix(false);
+      addToast({ title: "已保存", color: "success" });
+      onRefresh();
+    } finally {
+      setSavingPrefix(false);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-end gap-2 mb-3 flex-wrap">
         <div className="text-xs text-default-500 flex-1 min-w-0">
-          所有"未绑定 upstream key"的 site 账号（含 AZ 渠道等），按近 {days} 天
+          所有"未绑定 upstream key"的 site 账号，按近 {days} 天
           <b>收入</b> 降序排。这些账号的支出无法从 binding 推出，绑定后利润才
-          算得准。fixedCost = AZ 一次性投入。
+          算得准。
+          {data?.excludePrefixes && data.excludePrefixes.length > 0 && (
+            <span className="ml-1 text-warning">
+              · 已排除前缀: {data.excludePrefixes.join(", ")}
+            </span>
+          )}
         </div>
+        <Button size="sm" variant="flat" onPress={openPrefixDialog}>
+          排除前缀
+          {data?.excludePrefixes && data.excludePrefixes.length > 0 && (
+            <span className="ml-0.5 text-default-400">
+              ({data.excludePrefixes.length})
+            </span>
+          )}
+        </Button>
         <Input
           type="number"
           size="sm"
@@ -1115,6 +1171,15 @@ function UnboundView({
           刷新
         </Button>
       </div>
+
+      <PrefixDialog
+        isOpen={editingPrefix}
+        value={prefixDraft}
+        onChange={setPrefixDraft}
+        onClose={() => setEditingPrefix(false)}
+        onSave={savePrefix}
+        saving={savingPrefix}
+      />
 
       {loading && !data && (
         <div className="flex justify-center p-8">
@@ -1249,5 +1314,49 @@ function StatTile({
         {value}
       </span>
     </div>
+  );
+}
+
+function PrefixDialog({
+  isOpen,
+  value,
+  onChange,
+  onClose,
+  onSave,
+  saving,
+}: {
+  isOpen: boolean;
+  value: string;
+  onChange: (s: string) => void;
+  onClose: () => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="md">
+      <ModalContent>
+        <ModalHeader>未绑定账号 · 排除前缀</ModalHeader>
+        <ModalBody>
+          <p className="text-xs text-default-500">
+            以前缀匹配（区分大小写不敏感），账号名以这些前缀开头会被隐藏。
+            一行一个；# 开头视作注释。例如：
+          </p>
+          <Textarea
+            minRows={4}
+            placeholder={"az-\n# 隐藏所有以 trial- 开头的账号\ntrial-"}
+            value={value}
+            onValueChange={onChange}
+          />
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="flat" onPress={onClose}>
+            取消
+          </Button>
+          <Button color="primary" isLoading={saving} onPress={onSave}>
+            保存
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
   );
 }
