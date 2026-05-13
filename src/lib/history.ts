@@ -498,10 +498,24 @@ export async function persistTodayBreakdown(): Promise<void> {
       actualCost: number;
     }
   >();
+  // Stale 行 (sync 失败、lastUpdatedAt 是昨天) 跳过——否则会把昨天的总额
+  // 当作"今天的快照"覆盖到 DailyProfitBreakdown，污染历史回读。
+  function isFreshToday(t: Date | null | undefined): boolean {
+    if (!t) return false;
+    return (
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(t) === today
+    );
+  }
   // Dedupe — multiple bindings can reference same key/account.
   for (const b of bindings) {
     if (!upKeyMap.has(b.upstreamKey.id)) {
       const k = b.upstreamKey;
+      if (!isFreshToday(k.lastUpdatedAt)) continue;
       const eff = k.effectiveRateMultiplier > 0 ? k.effectiveRateMultiplier : 1;
       // 1× face value: prefer split when rate changed mid-day, otherwise
       // simple division. Mirrors dashboard.upstreamBase().
@@ -526,6 +540,7 @@ export async function persistTodayBreakdown(): Promise<void> {
     }
     if (!siteAccMap.has(b.siteBoundAccount.id)) {
       const a = b.siteBoundAccount;
+      if (!isFreshToday(a.lastUpdatedAt)) continue;
       const effectiveUC =
         a.rateMultiplierOverride != null
           ? a.todayCost * a.rateMultiplierOverride

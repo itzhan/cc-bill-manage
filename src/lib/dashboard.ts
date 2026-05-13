@@ -1,6 +1,24 @@
 import { prisma } from "./db";
 import { readConfig } from "./az";
 
+// Asia/Shanghai 日历日（YYYY-MM-DD）。todayCost/todayActualCost 字段是
+// "今天的累计计数"，由 sync 写入；上游下线时 sync 失败 → 字段会卡在
+// 昨天的总额，被错误地继续算进今日利润。读时网关：lastUpdatedAt 不是
+// 今天 (Shanghai) 就把那一行的今日值当 0。
+function shanghaiDateString(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function isFreshForToday(lastUpdatedAt: Date | null | undefined): boolean {
+  if (!lastUpdatedAt) return false;
+  return shanghaiDateString(lastUpdatedAt) === shanghaiDateString();
+}
+
 export interface DashboardSummary {
   // Revenue (today): sum of all site bound accounts user_cost
   totalRevenue: number;
@@ -116,7 +134,9 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 
   // Effective user_cost: if user has set rateMultiplierOverride, recompute
   // revenue as base × override. Otherwise trust the synced todayUserCost.
+  // Stale rows (sync failed and lastUpdatedAt < today Shanghai) → 0.
   function effectiveUserCost(a: (typeof boundSiteAccounts)[number]): number {
+    if (!isFreshForToday(a.lastUpdatedAt)) return 0;
     if (a.rateMultiplierOverride != null) {
       return a.todayCost * a.rateMultiplierOverride;
     }
@@ -131,6 +151,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   // actually paid for the credits). The 1× / diff math below stays in
   // face-value space — rechargeMultiplier doesn't change token pricing.
   function realUpstreamCost(k: (typeof boundUpKeys)[number]): number {
+    if (!isFreshForToday(k.lastUpdatedAt)) return 0;
     return k.todayActualCost * (k.rechargeMultiplier ?? 1);
   }
   const totalExpense = boundUpKeys.reduce(
@@ -138,7 +159,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     0,
   );
   const totalSiteCostBase = boundSiteAccounts.reduce(
-    (s, a) => s + a.todayCost,
+    (s, a) => s + (isFreshForToday(a.lastUpdatedAt) ? a.todayCost : 0),
     0,
   );
 
@@ -147,6 +168,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   // rate, and the cost accumulated since (newToday − snapshot) uses the
   // current rate. Refresh writes the snapshot when it detects a rate change.
   function upstreamBase(k: (typeof boundUpKeys)[number]): number {
+    if (!isFreshForToday(k.lastUpdatedAt)) return 0;
     const cur = k.effectiveRateMultiplier > 0 ? k.effectiveRateMultiplier : 1;
     const prev = k.previousEffectiveRateMultiplier;
     const snap = k.costAtRateChange;
@@ -186,19 +208,22 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   >();
   for (const b of bindings) {
     const a = b.siteBoundAccount;
+    const fresh = isFreshForToday(a.lastUpdatedAt);
+    const aTodayCost = fresh ? a.todayCost : 0;
+    const aTodayUserCost = fresh ? a.todayUserCost : 0;
     const syncedDerivedRate =
-      a.todayCost > 0 ? a.todayUserCost / a.todayCost : a.rateMultiplier;
+      aTodayCost > 0 ? aTodayUserCost / aTodayCost : a.rateMultiplier;
     const effectiveRate = a.rateMultiplierOverride ?? syncedDerivedRate;
     const effectiveUC =
       a.rateMultiplierOverride != null
-        ? a.todayCost * a.rateMultiplierOverride
-        : a.todayUserCost;
+        ? aTodayCost * a.rateMultiplierOverride
+        : aTodayUserCost;
     const info: BoundSiteAccountInfo = {
       siteBoundAccountId: b.siteBoundAccountId,
       name: `${a.siteAccount.name} / ${a.name}`,
       userCost: effectiveUC,
-      userCostSynced: a.todayUserCost,
-      costBase: a.todayCost,
+      userCostSynced: aTodayUserCost,
+      costBase: aTodayCost,
       rateMultiplier: a.rateMultiplier,
       rateMultiplierOverride: a.rateMultiplierOverride,
       rateEffective: effectiveRate,
@@ -256,15 +281,18 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     return re ? re.test(a.name) : false;
   });
   function effectiveAzRevenue(a: (typeof azAccounts)[number]): number {
+    if (!isFreshForToday(a.lastUpdatedAt)) return 0;
     if (a.rateMultiplierOverride != null) {
       return a.todayCost * a.rateMultiplierOverride;
     }
     return a.todayUserCost;
   }
   // az cost is FIXED (one-time fee per account), not per-token. When fixedCost
-  // is set, that's our 成本; the synced todayCost is ignored for profit math.
+  // is set, that's our 成本 (stays valid even if sync is stale); the synced
+  // todayCost fallback is gated by freshness.
   function effectiveAzCost(a: (typeof azAccounts)[number]): number {
-    return a.fixedCost ?? a.todayCost;
+    if (a.fixedCost != null) return a.fixedCost;
+    return isFreshForToday(a.lastUpdatedAt) ? a.todayCost : 0;
   }
   const totalAzRevenue = azAccounts.reduce(
     (s, a) => s + effectiveAzRevenue(a),
