@@ -147,5 +147,15 @@ await ensureColumn("UpstreamKey", "apiKey", "TEXT");
 // DailyProfitBreakdown.manualActualCost — 2026-05 (user override)
 await ensureColumn("DailyProfitBreakdown", "manualActualCost", "REAL");
 
+// ExpenseRule — 2026-05 (prefix-based fixedCost rules)
+await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ExpenseRule" (
+  "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  "prefix" TEXT NOT NULL UNIQUE,
+  "fixedCost" REAL NOT NULL,
+  "notes" TEXT,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL
+)`);
+
 console.log("bench tables migrated");
 await prisma.$disconnect();

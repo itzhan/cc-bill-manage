@@ -10,6 +10,7 @@ export async function PATCH(
   const { id } = await ctx.params;
   const body = (await req.json().catch(() => ({}))) as Partial<{
     rateMultiplierOverride: number | null;
+    fixedCost: number | null;
   }>;
   const data: Record<string, unknown> = {};
   if ("rateMultiplierOverride" in body) {
@@ -18,6 +19,20 @@ export async function PATCH(
       Number.isNaN(Number(body.rateMultiplierOverride))
         ? null
         : Number(body.rateMultiplierOverride);
+  }
+  if ("fixedCost" in body) {
+    if (body.fixedCost == null) {
+      data.fixedCost = null;
+    } else {
+      const v = Number(body.fixedCost);
+      if (!Number.isFinite(v) || v < 0) {
+        return NextResponse.json(
+          { error: "fixedCost 数值非法" },
+          { status: 400 },
+        );
+      }
+      data.fixedCost = v;
+    }
   }
   if (Object.keys(data).length === 0) {
     return NextResponse.json(

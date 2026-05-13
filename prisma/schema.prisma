@@ -436,6 +436,18 @@ model DailyProfit {
   updatedAt             DateTime @updatedAt
 }
 
+// 全局支出规则——按账号名前缀给一类账号设固定支出。
+// 典型场景：所有 az- 前缀的账号都算 500 块/天，不需要绑 upstream key。
+// 优先级低于 SiteBoundAccount.fixedCost (后者是 per-账号 override)。
+model ExpenseRule {
+  id        Int      @id @default(autoincrement())
+  prefix    String   @unique // 大小写不敏感匹配
+  fixedCost Float
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // 逐 key / 逐账号的每日明细快照。每次 sync / backfill / breakdown 查询
 // 都会 upsert 到这里，作为上游下线后的"灰飞烟灭"兜底——只要点开过/同步过
 // 至少一次，明细就永久留底。

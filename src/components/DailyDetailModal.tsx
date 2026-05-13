@@ -47,6 +47,8 @@ interface PairedRow {
   expense: number;
   expenseSynced?: number;
   expenseIsManual?: boolean;
+  expenseSource?: "synced" | "manual" | "rule" | "account_fixed";
+  expenseRulePrefix?: string;
   siteCostBase: number;
   upstreamCostBase: number;
   diff: number;
@@ -83,6 +85,7 @@ export default function DailyDetailModal({
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [view, setView] = useState<"paired" | "unbound">("paired");
+  const [showRules, setShowRules] = useState(false);
 
   // 未绑定 site 账号视图：只看 kind=unbound_site，按收入 (actualCost = revenue)
   // 倒序——花得多的排前面，方便优先去绑定补全利润计算。
@@ -158,6 +161,13 @@ export default function DailyDetailModal({
                   onPress={() => load(true)}
                 >
                   重新从上游拉取
+                </Button>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  onPress={() => setShowRules(true)}
+                >
+                  支出规则
                 </Button>
               </div>
               <p className="text-xs text-default-500 font-normal">
@@ -330,7 +340,7 @@ export default function DailyDetailModal({
                               <TableRow
                                 key={r.rowKey}
                                 className={
-                                  isUnbound
+                                  isUnbound && !r.expenseSource
                                     ? "bg-warning-50 dark:bg-warning-950/30"
                                     : ""
                                 }
@@ -370,9 +380,19 @@ export default function DailyDetailModal({
                                           </Chip>
                                         )}
                                     </div>
-                                    {isUnbound && (
+                                    {isUnbound && !r.expenseSource && (
                                       <span className="text-[10px] text-warning font-medium">
                                         ⚠ 未绑定 upstream（不计支出）
+                                      </span>
+                                    )}
+                                    {isUnbound && r.expenseSource === "rule" && (
+                                      <span className="text-[10px] text-primary font-medium">
+                                        支出来自规则 {r.expenseRulePrefix}
+                                      </span>
+                                    )}
+                                    {isUnbound && r.expenseSource === "account_fixed" && (
+                                      <span className="text-[10px] text-primary font-medium">
+                                        支出来自手动设置
                                       </span>
                                     )}
                                     {r.siteAccounts &&
@@ -461,6 +481,11 @@ export default function DailyDetailModal({
                 </>
               )}
             </ModalBody>
+            <ExpenseRulesDialog
+              isOpen={showRules}
+              onClose={() => setShowRules(false)}
+              onChanged={reload}
+            />
           </>
         )}
       </ModalContent>
@@ -524,11 +549,17 @@ function ExpenseCell({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string>("");
   const [saving, setSaving] = useState(false);
-  const canEdit = row.upstreamKeyId != null;
+  // 两种可编辑情况：
+  // 1) paired/unbound_upstream 行有 upstreamKeyId → 写 DailyProfitBreakdown.manualActualCost (per-day)
+  // 2) unbound_site 行有 siteBoundAccountId → 写 SiteBoundAccount.fixedCost (per-account 永久)
+  const sbaId =
+    row.kind === "unbound_site" ? row.siteAccounts?.[0]?.siteBoundAccountId ?? null : null;
+  const canEdit = row.upstreamKeyId != null || sbaId != null;
   const isManual = row.expenseIsManual === true;
+  const isRule = row.expenseSource === "rule";
+  const isAccountFixed = row.expenseSource === "account_fixed";
 
   async function save(clear: boolean) {
-    if (!row.upstreamKeyId) return;
     const v = clear ? null : Number(draft);
     if (!clear && (!Number.isFinite(v as number) || (v as number) < 0)) {
       addToast({ title: "支出数值非法", color: "warning" });
@@ -536,21 +567,30 @@ function ExpenseCell({
     }
     setSaving(true);
     try {
-      const r = await fetch(
-        `/api/daily-profit/${date}/breakdown/upstream/${row.upstreamKeyId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ manualActualCost: v }),
-        },
-      );
+      let url: string;
+      let body: Record<string, unknown>;
+      if (row.upstreamKeyId != null) {
+        url = `/api/daily-profit/${date}/breakdown/upstream/${row.upstreamKeyId}`;
+        body = { manualActualCost: v };
+      } else if (sbaId != null) {
+        url = `/api/site-bound-accounts/${sbaId}`;
+        body = { fixedCost: v };
+      } else {
+        setSaving(false);
+        return;
+      }
+      const r = await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         addToast({ title: "保存失败", description: j.error, color: "danger" });
         return;
       }
       addToast({
-        title: clear ? "已恢复同步值" : "已保存手动支出",
+        title: clear ? "已清除手动支出" : "已保存手动支出",
         color: "success",
       });
       setOpen(false);
@@ -560,17 +600,23 @@ function ExpenseCell({
     }
   }
 
+  // 显示样式：手动/规则 = 蓝色；纯同步 = 默认
+  const tinted = isManual || isAccountFixed || isRule;
   const displayValue = (
     <span
-      className={isManual ? "tabular-nums text-primary font-medium" : "tabular-nums"}
+      className={tinted ? "tabular-nums text-primary font-medium" : "tabular-nums"}
       title={
         isManual && row.expenseSynced != null
           ? `手动: ${fmtMoney(row.expense)} (同步值 ${fmtMoney(row.expenseSynced)})`
-          : fmtMoney(row.expense)
+          : isRule
+            ? `规则 ${row.expenseRulePrefix} → ${fmtMoney(row.expense)}`
+            : isAccountFixed
+              ? `账号 fixedCost: ${fmtMoney(row.expense)}`
+              : fmtMoney(row.expense)
       }
     >
       {fmtMoneyShort(row.expense)}
-      {isManual && <span className="ml-1 text-[10px] text-primary">✎</span>}
+      {tinted && <span className="ml-1 text-[10px] text-primary">✎</span>}
     </span>
   );
 
@@ -640,5 +686,215 @@ function ExpenseCell({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+interface ExpenseRule {
+  id: number;
+  prefix: string;
+  fixedCost: number;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function ExpenseRulesDialog({
+  isOpen,
+  onClose,
+  onChanged,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [items, setItems] = useState<ExpenseRule[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [newPrefix, setNewPrefix] = useState("");
+  const [newCost, setNewCost] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/expense-rules", { cache: "no-store" });
+      const j = await r.json();
+      setItems((j.items ?? []) as ExpenseRule[]);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (isOpen) load();
+  }, [isOpen]);
+
+  async function addRule() {
+    const prefix = newPrefix.trim();
+    const cost = Number(newCost);
+    if (!prefix || !Number.isFinite(cost) || cost < 0) {
+      addToast({ title: "前缀和金额必填", color: "warning" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await fetch("/api/expense-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prefix, fixedCost: cost }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        addToast({ title: "添加失败", description: j.error, color: "danger" });
+        return;
+      }
+      setNewPrefix("");
+      setNewCost("");
+      await load();
+      onChanged();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateRule(id: number, fixedCost: number) {
+    const r = await fetch(`/api/expense-rules/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fixedCost }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      addToast({ title: "更新失败", description: j.error, color: "danger" });
+      return;
+    }
+    await load();
+    onChanged();
+  }
+
+  async function deleteRule(id: number) {
+    if (!confirm("删除这条规则？")) return;
+    const r = await fetch(`/api/expense-rules/${id}`, { method: "DELETE" });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      addToast({ title: "删除失败", description: j.error, color: "danger" });
+      return;
+    }
+    await load();
+    onChanged();
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
+      <ModalContent>
+        <ModalHeader className="flex flex-col items-start gap-0.5">
+          <span>支出规则</span>
+          <span className="text-xs text-default-500 font-normal">
+            按账号名前缀给一类账号设固定支出。例如 az- → 500，所有 az- 前缀
+            的未绑定账号都按 500 计每日支出。优先级低于账号自身的 fixedCost。
+          </span>
+        </ModalHeader>
+        <ModalBody className="gap-3">
+          <div className="flex items-end gap-2">
+            <Input
+              size="sm"
+              label="前缀"
+              placeholder="az-"
+              value={newPrefix}
+              onValueChange={setNewPrefix}
+              className="flex-1"
+            />
+            <Input
+              size="sm"
+              type="number"
+              label="固定支出"
+              placeholder="500"
+              value={newCost}
+              onValueChange={setNewCost}
+              className="w-32"
+            />
+            <Button color="primary" isLoading={saving} onPress={addRule}>
+              新增
+            </Button>
+          </div>
+
+          {loading && <Spinner size="sm" />}
+          {items.length === 0 && !loading && (
+            <p className="text-xs text-default-400">还没有规则</p>
+          )}
+          {items.length > 0 && (
+            <Table aria-label="rules" removeWrapper>
+              <TableHeader>
+                <TableColumn>前缀</TableColumn>
+                <TableColumn>固定支出</TableColumn>
+                <TableColumn>操作</TableColumn>
+              </TableHeader>
+              <TableBody>
+                {items.map((r) => (
+                  <RuleRow
+                    key={r.id}
+                    rule={r}
+                    onSave={(v) => updateRule(r.id, v)}
+                    onDelete={() => deleteRule(r.id)}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </ModalBody>
+      </ModalContent>
+    </Modal>
+  );
+}
+
+function RuleRow({
+  rule,
+  onSave,
+  onDelete,
+}: {
+  rule: ExpenseRule;
+  onSave: (v: number) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(String(rule.fixedCost));
+  const [saving, setSaving] = useState(false);
+  const dirty = Number(draft) !== rule.fixedCost;
+  return (
+    <TableRow>
+      <TableCell>
+        <span className="font-mono text-sm">{rule.prefix}</span>
+      </TableCell>
+      <TableCell>
+        <Input
+          type="number"
+          size="sm"
+          value={draft}
+          onValueChange={setDraft}
+          className="w-28"
+        />
+      </TableCell>
+      <TableCell>
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            color="primary"
+            variant="flat"
+            isDisabled={!dirty || saving}
+            isLoading={saving}
+            onPress={async () => {
+              setSaving(true);
+              try {
+                await onSave(Number(draft));
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            保存
+          </Button>
+          <Button size="sm" color="danger" variant="flat" onPress={onDelete}>
+            删除
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 }

@@ -508,19 +508,48 @@ async function persistBreakdownForDate(
   await Promise.all(writes);
 }
 
+// 给定一个 site 账号名 + per-account fixedCost + 全局规则，
+// 返回该账号的固定支出（每天一份）。null 表示没规则也没 override。
+// 优先级：账号自己的 fixedCost > 第一个匹配的前缀规则。
+export function resolveFixedCost(
+  name: string,
+  ownFixedCost: number | null,
+  rules: { prefix: string; fixedCost: number }[],
+): number | null {
+  if (ownFixedCost != null) return ownFixedCost;
+  const n = name.toLowerCase();
+  for (const r of rules) {
+    if (n.startsWith(r.prefix.toLowerCase())) return r.fixedCost;
+  }
+  return null;
+}
+
 // 从 DailyProfitBreakdown 表里读出某日所有行，聚合成 DailyProfit 行。
 // 优先用 manualActualCost（用户手填），fallback 到同步值。
+// 还会加上"未绑定 site 账号"由 ExpenseRule/SiteBoundAccount.fixedCost
+// 决定的固定支出（用户配的规则）。
 // 调用前提：breakdown 该日期已写过；否则全 0。
 export async function aggregateFromBreakdown(date: string): Promise<BackfillRow> {
-  const rows = await prisma.dailyProfitBreakdown.findMany({
-    where: { date },
-    select: {
-      kind: true,
-      cost: true,
-      actualCost: true,
-      manualActualCost: true,
-    },
-  });
+  const [rows, bindingsCnt, rules, accounts] = await Promise.all([
+    prisma.dailyProfitBreakdown.findMany({
+      where: { date },
+      select: {
+        kind: true,
+        refId: true,
+        cost: true,
+        actualCost: true,
+        manualActualCost: true,
+      },
+    }),
+    prisma.binding.findMany({ select: { siteBoundAccountId: true } }),
+    prisma.expenseRule.findMany({ orderBy: { id: "asc" } }),
+    prisma.siteBoundAccount.findMany({
+      select: { id: true, name: true, fixedCost: true },
+    }),
+  ]);
+  const boundIds = new Set(bindingsCnt.map((b) => b.siteBoundAccountId));
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+
   const row: BackfillRow = {
     date,
     revenue: 0,
@@ -534,6 +563,14 @@ export async function aggregateFromBreakdown(date: string): Promise<BackfillRow>
     if (r.kind === "site") {
       row.revenue += r.actualCost;
       row.siteCostBase += r.cost;
+      // 未绑定 + 有规则/fixedCost → 加上固定支出
+      if (!boundIds.has(r.refId) && r.actualCost > 0) {
+        const a = accById.get(r.refId);
+        if (a) {
+          const fc = resolveFixedCost(a.name, a.fixedCost ?? null, rules);
+          if (fc != null) row.expense += fc;
+        }
+      }
     } else {
       row.expense += r.manualActualCost ?? r.actualCost;
       row.upstreamCostBase += r.cost;
@@ -772,9 +809,11 @@ export interface PairedBreakdownRow {
   }>;
   // Metrics (in display currency = same scale across paired/unbound)
   revenue: number; // sum of paired site actualCost (or own for unbound site)
-  expense: number; // effective expense（手动值优先；否则同步值）
+  expense: number; // effective expense（手动值优先；否则同步值/规则）
   expenseSynced?: number; // 原同步值（仅有手动 override 时才填，用于显示对照）
   expenseIsManual?: boolean; // true = expense 来自用户手动改写
+  expenseSource?: "synced" | "manual" | "rule" | "account_fixed"; // 支出来源
+  expenseRulePrefix?: string; // 命中的规则前缀（仅 source=rule 时）
   siteCostBase: number;
   upstreamCostBase: number;
   diff: number; // max(0, upstreamCostBase - siteCostBase)
@@ -810,6 +849,11 @@ function buildPairedView(
   upstream: BreakdownUpstreamRow[],
   site: BreakdownSiteRow[],
   bindings: BindingFull[],
+  // 当 ctx 提供时，未绑定 site 行会按 rules / per-account fixedCost 计算支出。
+  ctx?: {
+    rules: { prefix: string; fixedCost: number }[];
+    accountsById: Map<number, { name: string; fixedCost: number | null }>;
+  },
 ): PairedBreakdownRow[] {
   const upRowByKeyId = new Map<number, BreakdownUpstreamRow>();
   for (const r of upstream) upRowByKeyId.set(r.keyId, r);
@@ -882,6 +926,27 @@ function buildPairedView(
   for (const s of site) {
     if (boundSiteIds.has(s.siteBoundAccountId)) continue;
     if (s.actualCost === 0 && s.cost === 0) continue;
+    // 计算未绑定行的支出：per-account fixedCost > 规则 > 0
+    let expense = 0;
+    let expenseSource: PairedBreakdownRow["expenseSource"] = undefined;
+    let expenseRulePrefix: string | undefined = undefined;
+    if (ctx) {
+      const acc = ctx.accountsById.get(s.siteBoundAccountId);
+      if (acc) {
+        if (acc.fixedCost != null) {
+          expense = acc.fixedCost;
+          expenseSource = "account_fixed";
+        } else {
+          const n = acc.name.toLowerCase();
+          const r = ctx.rules.find((rr) => n.startsWith(rr.prefix.toLowerCase()));
+          if (r) {
+            expense = r.fixedCost;
+            expenseSource = "rule";
+            expenseRulePrefix = r.prefix;
+          }
+        }
+      }
+    }
     rows.push({
       rowKey: `unbound_site:${s.siteBoundAccountId}`,
       kind: "unbound_site",
@@ -897,11 +962,13 @@ function buildPairedView(
         },
       ],
       revenue: s.actualCost,
-      expense: 0,
+      expense,
+      expenseSource,
+      expenseRulePrefix,
       siteCostBase: s.cost,
       upstreamCostBase: 0,
       diff: 0,
-      profit: s.actualCost,
+      profit: s.actualCost - expense,
     });
   }
 
@@ -949,10 +1016,17 @@ export async function fetchDateBreakdown(
     throw new Error("invalid date");
   }
 
-  const [bindings, allSites] = await Promise.all([
+  const [bindings, allSites, rules] = await Promise.all([
     loadBindings(),
     loadAllSiteBoundAccounts(),
+    prisma.expenseRule.findMany({ orderBy: { id: "asc" } }),
   ]);
+  // 给 buildPairedView 用的上下文：所有 site 账号的 fixedCost + 全局规则
+  const accountsById = new Map<number, { name: string; fixedCost: number | null }>();
+  for (const a of allSites) {
+    accountsById.set(a.id, { name: a.name, fixedCost: a.fixedCost ?? null });
+  }
+  const pairedCtx = { rules, accountsById };
 
   // ── 缓存优先 ─────────────────────────────────────────────────
   // 每日明细数据写在 DailyProfitBreakdown 表（每次 sync + backfill 都写）。
@@ -961,7 +1035,10 @@ export async function fetchDateBreakdown(
   if (!opts.forceRefresh) {
     const cached = await loadPersistedBreakdown(date);
     if (cached) {
-      return { ...cached, paired: buildPairedView(cached.upstream, cached.site, bindings) };
+      return {
+        ...cached,
+        paired: buildPairedView(cached.upstream, cached.site, bindings, pairedCtx),
+      };
     }
     // 缓存为空时 fall through 到 live fetch + write-through。
   }
@@ -1045,7 +1122,7 @@ export async function fetchDateBreakdown(
     if (cached) {
       return {
         ...cached,
-        paired: buildPairedView(cached.upstream, cached.site, bindings),
+        paired: buildPairedView(cached.upstream, cached.site, bindings, pairedCtx),
       };
     }
     // 缓存也没有 → 把 errors 暴露出去，前端能看到。
@@ -1121,6 +1198,6 @@ export async function fetchDateBreakdown(
     }
   }
 
-  const paired = buildPairedView(upstream, site, bindings);
+  const paired = buildPairedView(upstream, site, bindings, pairedCtx);
   return { date, upstream, site, paired, totals, errors };
 }
