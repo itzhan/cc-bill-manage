@@ -447,11 +447,22 @@ export class Sub2ApiClient {
   }
 
   async listAdminAccounts(): Promise<AdminAccount[]> {
-    const data = await this.request<{ items: AdminAccount[]; total: number }>(
-      "GET",
-      `/api/v1/admin/accounts?page=1&page_size=200&platform=&type=&status=&privacy_mode=&group=&search=&sort_by=name&sort_order=desc&lite=1&timezone=Asia%2FShanghai`,
-    );
-    return data.items || [];
+    // 翻页拉到尾 — sub2api 单页上限 1000，超过 200 个账号的站会被截断。
+    const items: AdminAccount[] = [];
+    let page = 1;
+    const pageSize = 1000;
+    // 防御性上限：如果 sub2api 返回怪异分页就停在 50 页（5w 账号）。
+    for (let i = 0; i < 50; i++) {
+      const data = await this.request<{ items: AdminAccount[]; total: number }>(
+        "GET",
+        `/api/v1/admin/accounts?page=${page}&page_size=${pageSize}&platform=&type=&status=&privacy_mode=&group=&search=&sort_by=name&sort_order=desc&lite=1&timezone=Asia%2FShanghai`,
+      );
+      const batch = data.items || [];
+      items.push(...batch);
+      if (batch.length < pageSize) break;
+      page++;
+    }
+    return items;
   }
 
   async getAccountsStats(
