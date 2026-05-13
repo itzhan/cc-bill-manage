@@ -17,6 +17,9 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Select,
   SelectItem,
   Spinner,
@@ -1168,6 +1171,39 @@ function UnboundView({
   const [autoMatching, setAutoMatching] = useState(false);
   const [autoPlan, setAutoPlan] = useState<AutoMatchPlan | null>(null);
   const [autoApplying, setAutoApplying] = useState(false);
+
+  // 一次性投入编辑状态——per 行 Popover open + 草稿 + busy
+  const [fcOpenId, setFcOpenId] = useState<number | null>(null);
+  const [fcDraft, setFcDraft] = useState<Record<number, string>>({});
+  const [fcSaving, setFcSaving] = useState<Record<number, boolean>>({});
+  async function saveFixedCost(id: number, clear: boolean) {
+    const v = clear ? null : Number(fcDraft[id]);
+    if (!clear && (!Number.isFinite(v as number) || (v as number) < 0)) {
+      addToast({ title: "数值非法", color: "warning" });
+      return;
+    }
+    setFcSaving((s) => ({ ...s, [id]: true }));
+    try {
+      const r = await fetch(`/api/site-bound-accounts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fixedCost: v }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        addToast({ title: "保存失败", description: j.error, color: "danger" });
+        return;
+      }
+      addToast({
+        title: clear ? "已清除一次性投入" : "已保存一次性投入",
+        color: "success",
+      });
+      setFcOpenId(null);
+      onRefresh();
+    } finally {
+      setFcSaving((s) => ({ ...s, [id]: false }));
+    }
+  }
   async function runAutoMatch() {
     setAutoMatching(true);
     setAutoPlan(null);
@@ -1433,16 +1469,84 @@ function UnboundView({
                       </span>
                     </TableCell>
                     <TableCell>
-                      {r.fixedCost != null ? (
-                        <span
-                          className="tabular-nums text-primary"
-                          title={fmtMoney(r.fixedCost)}
-                        >
-                          {fmtMoneyShort(r.fixedCost)}
-                        </span>
-                      ) : (
-                        <span className="text-default-400">—</span>
-                      )}
+                      <Popover
+                        isOpen={fcOpenId === r.id}
+                        onOpenChange={(v) => {
+                          if (v) {
+                            setFcDraft((s) => ({
+                              ...s,
+                              [r.id]: String(r.fixedCost ?? ""),
+                            }));
+                            setFcOpenId(r.id);
+                          } else {
+                            setFcOpenId(null);
+                          }
+                        }}
+                        placement="bottom-start"
+                      >
+                        <PopoverTrigger>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 hover:bg-content2/60 rounded px-1 py-0.5"
+                          >
+                            {r.fixedCost != null ? (
+                              <span
+                                className="tabular-nums text-primary font-medium"
+                                title={fmtMoney(r.fixedCost)}
+                              >
+                                {fmtMoneyShort(r.fixedCost)}
+                              </span>
+                            ) : (
+                              <span className="text-default-400 text-xs">点击设置</span>
+                            )}
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="p-3">
+                          <div className="flex flex-col gap-2 w-64">
+                            <div className="text-[11px] text-default-500">
+                              {r.accountName}
+                            </div>
+                            <Input
+                              type="number"
+                              size="sm"
+                              label="一次性投入"
+                              value={fcDraft[r.id] ?? ""}
+                              onValueChange={(v) =>
+                                setFcDraft((s) => ({ ...s, [r.id]: v }))
+                              }
+                              description="设置后每日支出按此金额算，sync/backfill 不会覆盖"
+                            />
+                            <div className="flex justify-between gap-2">
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                isLoading={fcSaving[r.id]}
+                                isDisabled={r.fixedCost == null}
+                                onPress={() => saveFixedCost(r.id, true)}
+                              >
+                                清除
+                              </Button>
+                              <div className="flex gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="flat"
+                                  onPress={() => setFcOpenId(null)}
+                                >
+                                  取消
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  color="primary"
+                                  isLoading={fcSaving[r.id]}
+                                  onPress={() => saveFixedCost(r.id, false)}
+                                >
+                                  保存
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                     </TableCell>
                     <TableCell>
                       <span className="tabular-nums" title={fmtMoney(r.costBase)}>
