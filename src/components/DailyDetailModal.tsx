@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Button,
   Chip,
@@ -8,12 +8,14 @@ import {
   ModalContent,
   ModalHeader,
   Spinner,
+  Tab,
   Table,
   TableBody,
   TableCell,
   TableColumn,
   TableHeader,
   TableRow,
+  Tabs,
 } from "@heroui/react";
 import { RefreshCw } from "lucide-react";
 import { fmtMoney, fmtMoneyShort } from "@/lib/format";
@@ -73,6 +75,21 @@ export default function DailyDetailModal({
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [view, setView] = useState<"paired" | "unbound">("paired");
+
+  // 未绑定 site 账号视图：只看 kind=unbound_site，按收入 (actualCost = revenue)
+  // 倒序——花得多的排前面，方便优先去绑定补全利润计算。
+  const unboundRows = useMemo(() => {
+    if (!data) return [];
+    return data.paired
+      .filter((r) => r.kind === "unbound_site")
+      .filter((r) => r.revenue > 0 || r.siteCostBase > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [data]);
+  const unboundTotal = useMemo(
+    () => unboundRows.reduce((s, r) => s + r.revenue, 0),
+    [unboundRows],
+  );
 
   async function load(forceRefresh: boolean) {
     if (!date) return;
@@ -173,16 +190,116 @@ export default function DailyDetailModal({
                     </div>
                   )}
 
-                  <section className="mt-4">
-                    <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                      逐 key 利润
-                      <Chip size="sm" variant="flat">
-                        {data.paired.length}
-                      </Chip>
-                      <span className="text-[11px] text-default-400 font-normal">
-                        当天 0 流量已隐藏
-                      </span>
-                    </h3>
+                  <Tabs
+                    className="mt-3"
+                    selectedKey={view}
+                    onSelectionChange={(k) =>
+                      setView(String(k) as "paired" | "unbound")
+                    }
+                    size="sm"
+                  >
+                    <Tab
+                      key="paired"
+                      title={
+                        <span className="flex items-center gap-1.5">
+                          逐 key 利润
+                          <Chip size="sm" variant="flat">
+                            {data.paired.length}
+                          </Chip>
+                        </span>
+                      }
+                    />
+                    <Tab
+                      key="unbound"
+                      title={
+                        <span className="flex items-center gap-1.5">
+                          未绑定账号
+                          <Chip
+                            size="sm"
+                            variant="flat"
+                            color={unboundRows.length > 0 ? "warning" : "default"}
+                          >
+                            {unboundRows.length}
+                          </Chip>
+                        </span>
+                      }
+                    />
+                  </Tabs>
+
+                  {view === "unbound" ? (
+                    <section className="mt-2">
+                      <p className="text-[11px] text-default-500 mb-2">
+                        当天有使用但<b>未绑定 upstream key</b> 的 site 账号，按收入降序排。
+                        这些账号的支出不在利润计算里——绑定后才能算出真实利润。
+                        共 {unboundRows.length} 个，今日收入合计{" "}
+                        <b>{fmtMoneyShort(unboundTotal)}</b>。
+                      </p>
+                      {unboundRows.length === 0 ? (
+                        <p className="text-default-500 text-sm">
+                          没有未绑定账号 — 当天所有使用过的账号都已正确配对
+                        </p>
+                      ) : (
+                        <Table aria-label="unbound site accounts" removeWrapper>
+                          <TableHeader>
+                            <TableColumn>账号</TableColumn>
+                            <TableColumn>所属站点</TableColumn>
+                            <TableColumn>倍率</TableColumn>
+                            <TableColumn>1× 成本</TableColumn>
+                            <TableColumn>今日收入</TableColumn>
+                          </TableHeader>
+                          <TableBody>
+                            {unboundRows.map((r) => {
+                              const sa = r.siteAccounts?.[0];
+                              return (
+                                <TableRow
+                                  key={r.rowKey}
+                                  className="bg-warning-50/40 dark:bg-warning-950/20"
+                                >
+                                  <TableCell>
+                                    <span className="font-medium text-sm">
+                                      {sa?.accountName ?? r.label}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <span className="text-xs text-default-500">
+                                      {sa?.siteAccountName ?? "—"}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <span className="text-sm tabular-nums">
+                                      {sa
+                                        ? `×${sa.rateMultiplier.toFixed(2)}`
+                                        : "—"}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <span
+                                      className="tabular-nums"
+                                      title={fmtMoney(r.siteCostBase)}
+                                    >
+                                      {fmtMoneyShort(r.siteCostBase)}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <span
+                                      className="tabular-nums font-semibold text-warning"
+                                      title={fmtMoney(r.revenue)}
+                                    >
+                                      {fmtMoneyShort(r.revenue)}
+                                    </span>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      )}
+                    </section>
+                  ) : (
+                    <section className="mt-2">
+                      <p className="text-[11px] text-default-400 mb-2">
+                        按利润降序 · 当天 0 流量已隐藏 · 橙色行 = 未绑定 upstream
+                      </p>
                     {data.paired.length === 0 ? (
                       <p className="text-default-500 text-sm">当天无任何使用记录</p>
                     ) : (
@@ -289,7 +406,8 @@ export default function DailyDetailModal({
                         </TableBody>
                       </Table>
                     )}
-                  </section>
+                    </section>
+                  )}
                 </>
               )}
             </ModalBody>
