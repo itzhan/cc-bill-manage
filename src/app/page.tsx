@@ -17,6 +17,8 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
+  Select,
+  SelectItem,
   Spinner,
   Tab,
   Table,
@@ -1078,6 +1080,18 @@ function Legend({ color, label }: { color: string; label: string }) {
   );
 }
 
+interface UpstreamKeyOpt {
+  id: number;
+  label: string;
+  groupName: string;
+  groupRateMultiplier: number;
+  effectiveRateMultiplier: number;
+  hasExclusiveRate: boolean;
+  keyMasked: string;
+  upstreamAccountId: number;
+  upstreamAccountName: string;
+}
+
 function UnboundView({
   data,
   loading,
@@ -1094,6 +1108,65 @@ function UnboundView({
   const [editingPrefix, setEditingPrefix] = useState(false);
   const [prefixDraft, setPrefixDraft] = useState("");
   const [savingPrefix, setSavingPrefix] = useState(false);
+
+  // 绑定弹窗状态
+  const [bindTarget, setBindTarget] = useState<UnboundAccountRow | null>(null);
+  const [upstreamKeyOpts, setUpstreamKeyOpts] = useState<UpstreamKeyOpt[]>([]);
+  const [optsLoading, setOptsLoading] = useState(false);
+  const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
+  const [binding, setBinding] = useState(false);
+
+  async function openBindDialog(row: UnboundAccountRow) {
+    setBindTarget(row);
+    setSelectedKeyId(null);
+    if (upstreamKeyOpts.length === 0) {
+      setOptsLoading(true);
+      try {
+        const r = await fetch("/api/bindings/options", { cache: "no-store" });
+        const j = await r.json();
+        setUpstreamKeyOpts((j.upstreamKeys ?? []) as UpstreamKeyOpt[]);
+      } catch (e) {
+        addToast({
+          title: "加载 upstream key 失败",
+          description: String(e),
+          color: "danger",
+        });
+      } finally {
+        setOptsLoading(false);
+      }
+    }
+  }
+  async function doBind() {
+    if (!bindTarget || !selectedKeyId) return;
+    setBinding(true);
+    try {
+      const r = await fetch("/api/bindings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          siteBoundAccountId: bindTarget.id,
+          upstreamKeyId: selectedKeyId,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        addToast({
+          title: "绑定失败",
+          description: j.error,
+          color: "danger",
+        });
+        return;
+      }
+      addToast({
+        title: `已绑定 "${bindTarget.accountName}"`,
+        color: "success",
+      });
+      setBindTarget(null);
+      onRefresh();
+    } finally {
+      setBinding(false);
+    }
+  }
 
   async function openPrefixDialog() {
     // 拉一次 settings 以加载原始 raw 值（API 返回的是已解析的数组）。
@@ -1226,6 +1299,7 @@ function UnboundView({
                 <TableColumn>1× 成本</TableColumn>
                 <TableColumn>收入</TableColumn>
                 <TableColumn>估算利润</TableColumn>
+                <TableColumn>操作</TableColumn>
               </TableHeader>
               <TableBody>
                 {data.items.map((r) => (
@@ -1285,6 +1359,16 @@ function UnboundView({
                         {fmtMoneyShort(r.profit)}
                       </span>
                     </TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        color="primary"
+                        variant="flat"
+                        onPress={() => openBindDialog(r)}
+                      >
+                        绑定
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -1292,6 +1376,17 @@ function UnboundView({
           )}
         </>
       )}
+
+      <BindDialog
+        target={bindTarget}
+        upstreamKeyOpts={upstreamKeyOpts}
+        optsLoading={optsLoading}
+        selectedKeyId={selectedKeyId}
+        onSelectKey={setSelectedKeyId}
+        binding={binding}
+        onClose={() => setBindTarget(null)}
+        onConfirm={doBind}
+      />
     </div>
   );
 }
@@ -1354,6 +1449,82 @@ function PrefixDialog({
           </Button>
           <Button color="primary" isLoading={saving} onPress={onSave}>
             保存
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  );
+}
+
+function BindDialog({
+  target,
+  upstreamKeyOpts,
+  optsLoading,
+  selectedKeyId,
+  onSelectKey,
+  binding,
+  onClose,
+  onConfirm,
+}: {
+  target: UnboundAccountRow | null;
+  upstreamKeyOpts: UpstreamKeyOpt[];
+  optsLoading: boolean;
+  selectedKeyId: number | null;
+  onSelectKey: (id: number | null) => void;
+  binding: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal isOpen={target !== null} onClose={onClose} size="lg">
+      <ModalContent>
+        <ModalHeader className="flex flex-col items-start gap-0.5">
+          <span>绑定到 upstream key</span>
+          {target && (
+            <span className="text-xs text-default-500 font-normal">
+              {target.siteAccountName} / <b>{target.accountName}</b>
+            </span>
+          )}
+        </ModalHeader>
+        <ModalBody>
+          <p className="text-xs text-default-500">
+            选择该站点账号要绑定到的 upstream key。绑定后利润计算就能算上它的支出端。
+          </p>
+          <Select
+            label="选择 upstream key"
+            placeholder={optsLoading ? "加载中…" : "搜索或选择…"}
+            selectedKeys={
+              selectedKeyId != null ? new Set([String(selectedKeyId)]) : new Set()
+            }
+            onSelectionChange={(k) => {
+              const v = Array.from(k as Set<string>)[0];
+              onSelectKey(v ? Number(v) : null);
+            }}
+            isDisabled={optsLoading}
+          >
+            {upstreamKeyOpts.map((opt) => (
+              <SelectItem key={String(opt.id)} textValue={opt.label}>
+                <div className="flex flex-col leading-tight">
+                  <span className="text-sm">{opt.label}</span>
+                  <span className="text-[10px] text-default-400">
+                    {opt.keyMasked}
+                  </span>
+                </div>
+              </SelectItem>
+            ))}
+          </Select>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="flat" onPress={onClose}>
+            取消
+          </Button>
+          <Button
+            color="primary"
+            isLoading={binding}
+            isDisabled={!selectedKeyId}
+            onPress={onConfirm}
+          >
+            确认绑定
           </Button>
         </ModalFooter>
       </ModalContent>
