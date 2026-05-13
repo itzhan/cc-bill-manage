@@ -926,7 +926,7 @@ export default function SchedulingPage() {
         />
       </div>
 
-      <TopUsersPanel userConc={userConc} />
+      <TopUsersPanel userConc={userConc} siteId={siteId} />
 
 
       {error && (
@@ -3665,10 +3665,15 @@ function TemplatesModal({
   );
 }
 
-// Top 5 用户实时并发面板 — 2 秒一刷（与 concurrency 同节奏）。当 sub2api
-// 端未开启 realtime monitoring 时 enabled=false，整面板隐藏。
+// 用户实时并发面板 · Top N（默认 3，可调）。每个用户一张卡片：
+//   - 头部：用户名 / email + current_in_use / max_capacity 进度条
+//   - 主体：近 1 分钟内打过的分组 + RPM used/limit
+// 数据来源：
+//   - 并发：父组件 2 秒一刷的 user-concurrency
+//   - 分组 RPM：本组件按 topN 用户列表 fan-out /user-rpm-status（同节奏轮询）
 function TopUsersPanel({
   userConc,
+  siteId,
 }: {
   userConc: {
     enabled: boolean;
@@ -3683,7 +3688,75 @@ function TopUsersPanel({
       }
     >;
   } | null;
+  siteId: number | null;
 }) {
+  const [topN, setTopN] = useState<number>(3);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("scheduling.topUsersN");
+      const n = Number(raw);
+      if (Number.isFinite(n) && n >= 1 && n <= 20) setTopN(n);
+    } catch {
+      // ignore
+    }
+  }, []);
+  function persistTopN(n: number) {
+    setTopN(n);
+    try {
+      localStorage.setItem("scheduling.topUsersN", String(n));
+    } catch {
+      // ignore
+    }
+  }
+
+  type RpmStatus = {
+    user_rpm_used?: number;
+    user_rpm_limit?: number;
+    per_group?: Array<{
+      group_id: number;
+      group_name?: string;
+      used: number;
+      limit?: number;
+      source?: string;
+    }>;
+  };
+  const [rpmByUser, setRpmByUser] = useState<Record<string, RpmStatus>>({});
+
+  // Top-N 用户（按 current_in_use 倒序，过滤 0）。
+  const top = useMemo(() => {
+    if (!userConc) return [];
+    return Object.values(userConc.user)
+      .filter((u) => (u.current_in_use ?? 0) > 0)
+      .sort((a, b) => b.current_in_use - a.current_in_use)
+      .slice(0, topN);
+  }, [userConc, topN]);
+
+  // 跟 user-concurrency 同节奏拉每个 top 用户的 rpm-status. 用 idsKey 做依赖
+  // 避免 top 数组身份每秒变化（值没变但引用换了）导致重复触发。
+  const idsKey = top.map((u) => u.user_id).join(",");
+  useEffect(() => {
+    if (siteId == null || !idsKey) {
+      setRpmByUser({});
+      return;
+    }
+    let canceled = false;
+    fetch(
+      `/api/scheduling/${siteId}/user-rpm-status?userIds=${idsKey}`,
+      { cache: "no-store" },
+    )
+      .then((r) => r.json())
+      .then((j) => {
+        if (canceled) return;
+        setRpmByUser(j.status ?? {});
+      })
+      .catch(() => {
+        // soft-fail; next poll will retry
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [siteId, idsKey, userConc]);
+
   if (!userConc) {
     return (
       <div className="mb-5 text-xs text-default-400">加载用户并发中…</div>
@@ -3696,54 +3769,150 @@ function TopUsersPanel({
       </div>
     );
   }
-  const all = Object.values(userConc.user);
-  const top5 = [...all]
-    .filter((u) => (u.current_in_use ?? 0) > 0)
-    .sort((a, b) => b.current_in_use - a.current_in_use)
-    .slice(0, 5);
-  if (top5.length === 0) {
+
+  const header = (
+    <CardHeader className="pb-1 pt-3 flex items-center justify-between flex-wrap gap-2">
+      <div className="flex items-center gap-2">
+        <Activity size={14} className="text-default-500" />
+        <span className="font-semibold text-sm">用户实时并发</span>
+        <span className="text-[11px] text-default-400">每 2 秒刷新</span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-[11px] text-default-500">显示前</span>
+        <Input
+          type="number"
+          size="sm"
+          variant="bordered"
+          className="w-16"
+          classNames={{ inputWrapper: "h-7 min-h-7" }}
+          value={String(topN)}
+          min={1}
+          max={20}
+          onValueChange={(s) => {
+            const n = Math.max(1, Math.min(20, Number(s) || 1));
+            persistTopN(n);
+          }}
+        />
+        <span className="text-[11px] text-default-500">个</span>
+      </div>
+    </CardHeader>
+  );
+
+  if (top.length === 0) {
     return (
       <Card className="mb-5 bg-content1 border border-divider/50 shadow-none">
-        <CardBody className="py-3 text-xs text-default-500">
+        {header}
+        <CardBody className="pt-1 pb-3 text-xs text-default-500">
           当前没有用户有 in-flight 请求
         </CardBody>
       </Card>
     );
   }
-  const maxInUse = top5[0].current_in_use;
+
   return (
     <Card className="mb-5 bg-content1 border border-divider/50 shadow-none">
-      <CardHeader className="pb-1 pt-3">
-        <div className="flex items-center gap-2">
-          <Activity size={14} className="text-default-500" />
-          <span className="font-semibold text-sm">用户实时并发 · Top 5</span>
-          <span className="text-[11px] text-default-400">每 2 秒刷新</span>
-        </div>
-      </CardHeader>
-      <CardBody className="pt-1 pb-3 gap-1">
-        {top5.map((u) => {
-          const name = u.username || u.user_email || `用户 #${u.user_id}`;
-          const pct = maxInUse > 0 ? (u.current_in_use / maxInUse) * 100 : 0;
-          return (
-            <div key={u.user_id} className="flex items-center gap-2 text-xs">
-              <span className="w-40 truncate" title={name}>
-                {name}
-              </span>
-              <div className="flex-1 h-1.5 rounded bg-default-100 overflow-hidden">
-                <div
-                  className="h-full bg-primary"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              <span className="tabular-nums w-24 text-right">
-                {u.current_in_use}
-                {u.max_capacity != null && u.max_capacity > 0 && (
-                  <span className="text-default-400"> / {u.max_capacity}</span>
+      {header}
+      <CardBody className="pt-1 pb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {top.map((u) => {
+            const name = u.username || u.user_email || `用户 #${u.user_id}`;
+            const cap = u.max_capacity ?? 0;
+            const concPct =
+              cap > 0
+                ? Math.min(100, Math.round((u.current_in_use / cap) * 100))
+                : 0;
+            const concBar =
+              concPct >= 90 ? "bg-danger" : concPct >= 70 ? "bg-warning" : "bg-primary";
+            const rpm = rpmByUser[String(u.user_id)];
+            const perGroup = (rpm?.per_group ?? [])
+              .filter((g) => g.used > 0)
+              .sort((a, b) => b.used - a.used);
+            return (
+              <div
+                key={u.user_id}
+                className="rounded-md border border-divider/60 bg-content2/30 p-2.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className="text-sm font-medium truncate"
+                    title={name}
+                  >
+                    {name}
+                  </span>
+                  <span className="text-xs tabular-nums shrink-0">
+                    {u.current_in_use}
+                    {cap > 0 && (
+                      <span className="text-default-400"> / {cap}</span>
+                    )}
+                  </span>
+                </div>
+                {cap > 0 && (
+                  <div className="mt-1 h-1.5 rounded bg-default-100 overflow-hidden">
+                    <div
+                      className={`h-full ${concBar}`}
+                      style={{ width: `${concPct}%` }}
+                    />
+                  </div>
                 )}
-              </span>
-            </div>
-          );
-        })}
+                <div className="mt-2 flex items-center justify-between text-[11px] text-default-500">
+                  <span>近 1 分钟 RPM</span>
+                  <span className="tabular-nums">
+                    {rpm?.user_rpm_used ?? "—"}
+                    {rpm?.user_rpm_limit != null && rpm.user_rpm_limit > 0 && (
+                      <span className="text-default-400">
+                        {" "}
+                        / {rpm.user_rpm_limit}
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex flex-col gap-1">
+                  {perGroup.length === 0 ? (
+                    <span className="text-[11px] text-default-400">
+                      {rpm ? "本分钟无请求记录" : "加载中…"}
+                    </span>
+                  ) : (
+                    perGroup.map((g) => {
+                      const lim = g.limit ?? 0;
+                      const pct = lim > 0 ? Math.min(100, (g.used / lim) * 100) : 0;
+                      const barCol =
+                        pct >= 90
+                          ? "bg-danger"
+                          : pct >= 70
+                            ? "bg-warning"
+                            : "bg-primary/60";
+                      return (
+                        <div
+                          key={g.group_id}
+                          className="flex items-center gap-2 text-[11px]"
+                        >
+                          <span
+                            className="truncate w-24"
+                            title={g.group_name || `#${g.group_id}`}
+                          >
+                            {g.group_name || `#${g.group_id}`}
+                          </span>
+                          <div className="flex-1 h-1 rounded bg-default-100 overflow-hidden">
+                            <div
+                              className={`h-full ${barCol}`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <span className="tabular-nums w-16 text-right">
+                            {g.used}
+                            {lim > 0 && (
+                              <span className="text-default-400"> / {lim}</span>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </CardBody>
     </Card>
   );

@@ -503,6 +503,26 @@ export class Sub2ApiClient {
     return this.request("GET", `/api/v1/admin/dashboard/stats`);
   }
 
+  // Per-user RPM status (近 1 分钟). Returns total used/limit plus
+  // per-group breakdown — used by the Top-N user panel to show which
+  // groups the user is hitting right now.
+  async getUserRpmStatus(userId: number): Promise<{
+    user_rpm_used?: number;
+    user_rpm_limit?: number;
+    per_group?: Array<{
+      group_id: number;
+      group_name?: string;
+      used: number;
+      limit?: number;
+      source?: string;
+    }>;
+  }> {
+    return this.request(
+      "GET",
+      `/api/v1/admin/users/${userId}/rpm-status`,
+    );
+  }
+
   // Per-user real-time concurrency. Keyed by user_id, with current_in_use
   // / max_capacity. Requires monitoring to be enabled on the sub2api side.
   async getUserConcurrency(): Promise<{
