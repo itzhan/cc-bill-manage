@@ -1475,6 +1475,52 @@ function BindDialog({
   onClose: () => void;
   onConfirm: () => void;
 }) {
+  // 两段选择：先选上游账号，再选该账号下的 key。account 选项从 keys 推出。
+  const [selectedAccId, setSelectedAccId] = useState<number | null>(null);
+  // target 变化时重置 — Modal 关闭再开避免残留状态
+  useEffect(() => {
+    setSelectedAccId(null);
+  }, [target]);
+  // selectedKeyId 由父组件持有；如果父组件清掉了，本地的 account 也得跟着清
+  useEffect(() => {
+    if (selectedKeyId == null) return;
+    const k = upstreamKeyOpts.find((x) => x.id === selectedKeyId);
+    if (k) setSelectedAccId(k.upstreamAccountId);
+  }, [selectedKeyId, upstreamKeyOpts]);
+
+  // 去重得到上游账号列表（按 id 升序）
+  const accountOpts = useMemo(() => {
+    const m = new Map<number, { id: number; name: string; keyCount: number }>();
+    for (const k of upstreamKeyOpts) {
+      const cur = m.get(k.upstreamAccountId);
+      if (cur) cur.keyCount++;
+      else
+        m.set(k.upstreamAccountId, {
+          id: k.upstreamAccountId,
+          name: k.upstreamAccountName,
+          keyCount: 1,
+        });
+    }
+    return [...m.values()].sort((a, b) => a.id - b.id);
+  }, [upstreamKeyOpts]);
+
+  // 切换账号时清掉之前选的 key（要从新账号的 keys 里重选）
+  function onAccChange(accId: number | null) {
+    setSelectedAccId(accId);
+    if (selectedKeyId != null) {
+      const k = upstreamKeyOpts.find((x) => x.id === selectedKeyId);
+      if (k && k.upstreamAccountId !== accId) onSelectKey(null);
+    }
+  }
+
+  const keysOfAccount = useMemo(
+    () =>
+      selectedAccId == null
+        ? []
+        : upstreamKeyOpts.filter((k) => k.upstreamAccountId === selectedAccId),
+    [upstreamKeyOpts, selectedAccId],
+  );
+
   return (
     <Modal isOpen={target !== null} onClose={onClose} size="lg">
       <ModalContent>
@@ -1486,13 +1532,42 @@ function BindDialog({
             </span>
           )}
         </ModalHeader>
-        <ModalBody>
+        <ModalBody className="gap-3">
           <p className="text-xs text-default-500">
-            选择该站点账号要绑定到的 upstream key。绑定后利润计算就能算上它的支出端。
+            先选上游渠道（账号），再选该渠道下的具体 key。绑定后利润计算才能算上它的支出端。
           </p>
           <Select
-            label="选择 upstream key"
-            placeholder={optsLoading ? "加载中…" : "搜索或选择…"}
+            label="① 选择上游渠道"
+            placeholder={optsLoading ? "加载中…" : "选择一个渠道…"}
+            selectedKeys={
+              selectedAccId != null ? new Set([String(selectedAccId)]) : new Set()
+            }
+            onSelectionChange={(k) => {
+              const v = Array.from(k as Set<string>)[0];
+              onAccChange(v ? Number(v) : null);
+            }}
+            isDisabled={optsLoading}
+          >
+            {accountOpts.map((a) => (
+              <SelectItem key={String(a.id)} textValue={a.name}>
+                <div className="flex justify-between items-center w-full">
+                  <span className="text-sm">{a.name}</span>
+                  <span className="text-[10px] text-default-400 ml-2">
+                    {a.keyCount} key
+                  </span>
+                </div>
+              </SelectItem>
+            ))}
+          </Select>
+          <Select
+            label="② 选择 key"
+            placeholder={
+              selectedAccId == null
+                ? "请先选择上游渠道"
+                : keysOfAccount.length === 0
+                  ? "该渠道下没有 key"
+                  : "选择一个 key…"
+            }
             selectedKeys={
               selectedKeyId != null ? new Set([String(selectedKeyId)]) : new Set()
             }
@@ -1500,18 +1575,25 @@ function BindDialog({
               const v = Array.from(k as Set<string>)[0];
               onSelectKey(v ? Number(v) : null);
             }}
-            isDisabled={optsLoading}
+            isDisabled={selectedAccId == null || keysOfAccount.length === 0}
           >
-            {upstreamKeyOpts.map((opt) => (
-              <SelectItem key={String(opt.id)} textValue={opt.label}>
-                <div className="flex flex-col leading-tight">
-                  <span className="text-sm">{opt.label}</span>
-                  <span className="text-[10px] text-default-400">
-                    {opt.keyMasked}
-                  </span>
-                </div>
-              </SelectItem>
-            ))}
+            {keysOfAccount.map((opt) => {
+              const rateLabel = opt.hasExclusiveRate
+                ? `专属 ×${opt.effectiveRateMultiplier}`
+                : `×${opt.groupRateMultiplier}`;
+              return (
+                <SelectItem key={String(opt.id)} textValue={opt.label}>
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-sm">
+                      {opt.label.split(" / ").slice(1).join(" / ")}
+                    </span>
+                    <span className="text-[10px] text-default-400">
+                      {opt.groupName} · {rateLabel} · {opt.keyMasked}
+                    </span>
+                  </div>
+                </SelectItem>
+              );
+            })}
           </Select>
         </ModalBody>
         <ModalFooter>
