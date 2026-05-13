@@ -612,7 +612,9 @@ export async function persistTodayBreakdown(): Promise<void> {
 // Load persisted breakdown rows for a date back into the same shape as the
 // live-fetch result, so the API/UI can transparently fall back when upstream
 // is unreachable.
-async function loadPersistedBreakdown(date: string): Promise<DateBreakdown | null> {
+// 内部返回类型——少 paired 字段，由 caller 用当前 bindings 填上。
+type PersistedBreakdown = Omit<DateBreakdown, "paired">;
+async function loadPersistedBreakdown(date: string): Promise<PersistedBreakdown | null> {
   const rows = await prisma.dailyProfitBreakdown.findMany({
     where: { date },
   });
@@ -693,10 +695,44 @@ export interface BreakdownSiteRow {
   actualCost: number; // revenue contribution
 }
 
+// Per-row in the unified daily breakdown view. Each row pairs one upstream
+// key with all the site accounts bound to it (revenue side), or stands alone
+// as an unbound site account (= AZ-style account with no upstream pairing).
+export interface PairedBreakdownRow {
+  rowKey: string;
+  kind: "paired" | "unbound_site" | "unbound_upstream";
+  label: string;
+  // Optional context for richer rendering
+  upstreamKeyId?: number;
+  upstreamKeyName?: string;
+  upstreamAccountName?: string;
+  groupName?: string;
+  effectiveRate?: number;
+  rechargeMultiplier?: number;
+  siteAccounts?: Array<{
+    siteBoundAccountId: number;
+    accountName: string;
+    siteAccountName: string;
+    rateMultiplier: number;
+    cost: number;
+    actualCost: number;
+  }>;
+  // Metrics (in display currency = same scale across paired/unbound)
+  revenue: number; // sum of paired site actualCost (or own for unbound site)
+  expense: number; // upstream actualCost (paired/unbound_upstream); 0 for unbound site
+  siteCostBase: number;
+  upstreamCostBase: number;
+  diff: number; // max(0, upstreamCostBase - siteCostBase)
+  profit: number; // revenue - expense
+}
+
 export interface DateBreakdown {
   date: string;
   upstream: BreakdownUpstreamRow[];
   site: BreakdownSiteRow[];
+  // 配对视图 — 前端"每日明细"的主表数据源。已过滤掉当天 0 流量行，
+  // 按利润降序。kind=unbound_site 是无 upstream 绑定的 site 账号（AZ 等）。
+  paired: PairedBreakdownRow[];
   totals: {
     revenue: number;
     expense: number;
@@ -706,15 +742,144 @@ export interface DateBreakdown {
     diff: number;
   };
   errors: FetchError[];
-  // True when the data was served from the persisted DailyProfitBreakdown
-  // snapshot because the live upstream fetch produced no usable data (e.g.
-  // upstream is down or credentials revoked).
+  // True when the data came from the persisted DailyProfitBreakdown snapshot
+  // (the default path now — read-from-DB).
   fromCache?: boolean;
-  // When fromCache=true, the timestamp of the most recent persisted row.
+  // Timestamp of the most recent persisted row for that date.
   cachedAt?: Date;
 }
 
-export async function fetchDateBreakdown(date: string): Promise<DateBreakdown> {
+// Build the paired / unified row view from raw breakdown rows + current
+// bindings. Filters out fully-zero rows and sorts by profit descending.
+function buildPairedView(
+  upstream: BreakdownUpstreamRow[],
+  site: BreakdownSiteRow[],
+  bindings: BindingFull[],
+): PairedBreakdownRow[] {
+  const upRowByKeyId = new Map<number, BreakdownUpstreamRow>();
+  for (const r of upstream) upRowByKeyId.set(r.keyId, r);
+  const siteRowByAccId = new Map<number, BreakdownSiteRow>();
+  for (const r of site) siteRowByAccId.set(r.siteBoundAccountId, r);
+
+  // 分组 bindings：一把 upstream key 可能被 N 个 site account 绑定。
+  const bySiteByKey = new Map<number, number[]>();
+  for (const b of bindings) {
+    const list = bySiteByKey.get(b.upstreamKeyId) ?? [];
+    list.push(b.siteBoundAccountId);
+    bySiteByKey.set(b.upstreamKeyId, list);
+  }
+
+  const rows: PairedBreakdownRow[] = [];
+
+  // ── paired 行：每把 upstream key 一行，聚合其绑定的 site 账号。
+  for (const [keyId, siteIds] of bySiteByKey.entries()) {
+    const upRow = upRowByKeyId.get(keyId);
+    if (!upRow && siteIds.every((sid) => !siteRowByAccId.has(sid))) continue;
+    const sites: NonNullable<PairedBreakdownRow["siteAccounts"]> = [];
+    let revenue = 0;
+    let siteCostBase = 0;
+    for (const sid of siteIds) {
+      const sr = siteRowByAccId.get(sid);
+      if (!sr) continue;
+      sites.push({
+        siteBoundAccountId: sr.siteBoundAccountId,
+        accountName: sr.accountName,
+        siteAccountName: sr.siteAccountName,
+        rateMultiplier: sr.rateMultiplier,
+        cost: sr.cost,
+        actualCost: sr.actualCost,
+      });
+      revenue += sr.actualCost;
+      siteCostBase += sr.cost;
+    }
+    const expense = upRow?.actualCost ?? 0;
+    const upstreamCostBase = upRow?.cost ?? 0;
+    if (revenue === 0 && expense === 0) continue; // 当天没用
+    rows.push({
+      rowKey: `paired:${keyId}`,
+      kind: "paired",
+      label: upRow
+        ? `${upRow.upstreamAccountName} / ${upRow.keyName}`
+        : `key #${keyId}`,
+      upstreamKeyId: keyId,
+      upstreamKeyName: upRow?.keyName,
+      upstreamAccountName: upRow?.upstreamAccountName,
+      groupName: upRow?.groupName,
+      effectiveRate: upRow?.effectiveRate,
+      rechargeMultiplier: upRow?.rechargeMultiplier,
+      siteAccounts: sites,
+      revenue,
+      expense,
+      siteCostBase,
+      upstreamCostBase,
+      diff: Math.max(0, upstreamCostBase - siteCostBase),
+      profit: revenue - expense,
+    });
+  }
+
+  // ── unbound_site 行：site 账号未参与任何 binding → 高亮显示。
+  const boundSiteIds = new Set<number>();
+  for (const list of bySiteByKey.values()) for (const sid of list) boundSiteIds.add(sid);
+  for (const s of site) {
+    if (boundSiteIds.has(s.siteBoundAccountId)) continue;
+    if (s.actualCost === 0 && s.cost === 0) continue;
+    rows.push({
+      rowKey: `unbound_site:${s.siteBoundAccountId}`,
+      kind: "unbound_site",
+      label: `${s.siteAccountName} / ${s.accountName}`,
+      siteAccounts: [
+        {
+          siteBoundAccountId: s.siteBoundAccountId,
+          accountName: s.accountName,
+          siteAccountName: s.siteAccountName,
+          rateMultiplier: s.rateMultiplier,
+          cost: s.cost,
+          actualCost: s.actualCost,
+        },
+      ],
+      revenue: s.actualCost,
+      expense: 0,
+      siteCostBase: s.cost,
+      upstreamCostBase: 0,
+      diff: 0,
+      profit: s.actualCost,
+    });
+  }
+
+  // ── unbound_upstream 行：upstream key 有流量但没在任何 binding 里 — 不应
+  //    发生但还是兜底显示。
+  const boundKeyIds = new Set(bySiteByKey.keys());
+  for (const u of upstream) {
+    if (boundKeyIds.has(u.keyId)) continue;
+    if (u.actualCost === 0 && u.cost === 0) continue;
+    rows.push({
+      rowKey: `unbound_upstream:${u.keyId}`,
+      kind: "unbound_upstream",
+      label: `${u.upstreamAccountName} / ${u.keyName}`,
+      upstreamKeyId: u.keyId,
+      upstreamKeyName: u.keyName,
+      upstreamAccountName: u.upstreamAccountName,
+      groupName: u.groupName,
+      effectiveRate: u.effectiveRate,
+      rechargeMultiplier: u.rechargeMultiplier,
+      revenue: 0,
+      expense: u.actualCost,
+      siteCostBase: 0,
+      upstreamCostBase: u.cost,
+      diff: u.cost,
+      profit: -u.actualCost,
+    });
+  }
+
+  // 按利润降序：盈利的排前面，亏损（profit<0）排最后。
+  rows.sort((a, b) => b.profit - a.profit);
+  return rows;
+}
+
+export async function fetchDateBreakdown(
+  date: string,
+  opts: { forceRefresh?: boolean } = {},
+): Promise<DateBreakdown> {
   // Reuse the daterange validator for a 1-day "range".
   const dates = eachDayInRange(date, date);
   if (dates.length !== 1) {
@@ -725,11 +890,25 @@ export async function fetchDateBreakdown(date: string): Promise<DateBreakdown> {
     loadBindings(),
     loadAllSiteBoundAccounts(),
   ]);
+
+  // ── 缓存优先 ─────────────────────────────────────────────────
+  // 每日明细数据写在 DailyProfitBreakdown 表（每次 sync + backfill 都写）。
+  // 模态框默认从 DB 读，不再每次点开就打上游 ——这是 #几十次点击都把上游
+  // 打挂的根因。只有显式 force=true 才走 live。
+  if (!opts.forceRefresh) {
+    const cached = await loadPersistedBreakdown(date);
+    if (cached) {
+      return { ...cached, paired: buildPairedView(cached.upstream, cached.site, bindings) };
+    }
+    // 缓存为空时 fall through 到 live fetch + write-through。
+  }
+
   if (bindings.length === 0 && allSites.length === 0) {
     return {
       date,
       upstream: [],
       site: [],
+      paired: [],
       totals: {
         revenue: 0,
         expense: 0,
@@ -800,7 +979,12 @@ export async function fetchDateBreakdown(date: string): Promise<DateBreakdown> {
   // 上游全军覆没（每个绑定都失败 OR 0 条结果回来）→ 回落到本地快照。
   if (results.length === 0 && errors.length > 0) {
     const cached = await loadPersistedBreakdown(date);
-    if (cached) return cached;
+    if (cached) {
+      return {
+        ...cached,
+        paired: buildPairedView(cached.upstream, cached.site, bindings),
+      };
+    }
     // 缓存也没有 → 把 errors 暴露出去，前端能看到。
   }
 
@@ -861,5 +1045,6 @@ export async function fetchDateBreakdown(date: string): Promise<DateBreakdown> {
     });
   }
 
-  return { date, upstream, site, totals, errors };
+  const paired = buildPairedView(upstream, site, bindings);
+  return { date, upstream, site, paired, totals, errors };
 }

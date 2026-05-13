@@ -4,14 +4,13 @@ import { fetchDateBreakdown } from "@/lib/history";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-// GET /api/daily-profit/2026-05-04/breakdown
+// GET /api/daily-profit/2026-05-04/breakdown[?refresh=1]
 //
-// 实时拉某一天的逐 key 数据（不写 DB），用于"点击日期看明细"。
-// 跟回填用同一套抓取路径（upKeyMap + siteAccMap），所以结果跟那天最近一次
-// backfill 应该一致；如果你刚改了倍率，breakdown 会反映新倍率，DB 行还是
-// 旧的，直到下次 backfill。
+// 默认从本地 DailyProfitBreakdown 表读（不打上游），适用于反复点开看历史。
+// 带 ?refresh=1 强制重新从上游拉取并 write-through 到 DB——用于初次回填
+// 或怀疑数据有误时主动刷新。
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ date: string }> },
 ) {
   const { date } = await ctx.params;
@@ -21,8 +20,10 @@ export async function GET(
       { status: 400 },
     );
   }
+  const url = new URL(req.url);
+  const forceRefresh = url.searchParams.get("refresh") === "1";
   try {
-    const result = await fetchDateBreakdown(date);
+    const result = await fetchDateBreakdown(date, { forceRefresh });
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json(

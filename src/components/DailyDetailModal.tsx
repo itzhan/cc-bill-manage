@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
+  Button,
   Chip,
   Modal,
   ModalBody,
@@ -14,33 +15,38 @@ import {
   TableHeader,
   TableRow,
 } from "@heroui/react";
+import { RefreshCw } from "lucide-react";
 import { fmtMoney, fmtMoneyShort } from "@/lib/format";
 
-interface UpstreamRow {
-  keyId: number;
-  keyName: string;
-  groupName: string;
-  effectiveRate: number;
-  rechargeMultiplier: number;
-  upstreamAccountId: number;
-  upstreamAccountName: string;
-  upstreamType: string;
-  cost: number;
-  actualCost: number;
+interface PairedRow {
+  rowKey: string;
+  kind: "paired" | "unbound_site" | "unbound_upstream";
+  label: string;
+  upstreamKeyId?: number;
+  upstreamKeyName?: string;
+  upstreamAccountName?: string;
+  groupName?: string;
+  effectiveRate?: number;
+  rechargeMultiplier?: number;
+  siteAccounts?: Array<{
+    siteBoundAccountId: number;
+    accountName: string;
+    siteAccountName: string;
+    rateMultiplier: number;
+    cost: number;
+    actualCost: number;
+  }>;
+  revenue: number;
+  expense: number;
+  siteCostBase: number;
+  upstreamCostBase: number;
+  diff: number;
+  profit: number;
 }
-interface SiteRow {
-  siteBoundAccountId: number;
-  accountName: string;
-  siteAccountId: number;
-  siteAccountName: string;
-  rateMultiplier: number;
-  cost: number;
-  actualCost: number;
-}
+
 interface Breakdown {
   date: string;
-  upstream: UpstreamRow[];
-  site: SiteRow[];
+  paired: PairedRow[];
   totals: {
     revenue: number;
     expense: number;
@@ -65,7 +71,30 @@ export default function DailyDetailModal({
 }) {
   const [data, setData] = useState<Breakdown | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  async function load(forceRefresh: boolean) {
+    if (!date) return;
+    if (forceRefresh) setRefreshing(true);
+    else setLoading(true);
+    setErr(null);
+    try {
+      const url = `/api/daily-profit/${date}/breakdown${forceRefresh ? "?refresh=1" : ""}`;
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `${r.status}`);
+      }
+      const j = (await r.json()) as Breakdown;
+      setData(j);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
 
   useEffect(() => {
     if (!isOpen || !date) {
@@ -73,20 +102,8 @@ export default function DailyDetailModal({
       setErr(null);
       return;
     }
-    setLoading(true);
-    setErr(null);
-    setData(null);
-    fetch(`/api/daily-profit/${date}/breakdown`, { cache: "no-store" })
-      .then(async (r) => {
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          throw new Error(j.error || `${r.status}`);
-        }
-        return r.json();
-      })
-      .then((j: Breakdown) => setData(j))
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoading(false));
+    load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, date]);
 
   return (
@@ -95,7 +112,7 @@ export default function DailyDetailModal({
         {() => (
           <>
             <ModalHeader className="flex flex-col items-start gap-1">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span>每日明细 · {date}</span>
                 {data && (
                   <span
@@ -108,13 +125,23 @@ export default function DailyDetailModal({
                     利润 {fmtMoneyShort(data.totals.profit)}
                   </span>
                 )}
+                <Button
+                  size="sm"
+                  variant="flat"
+                  startContent={<RefreshCw size={14} />}
+                  isLoading={refreshing}
+                  onPress={() => load(true)}
+                >
+                  重新从上游拉取
+                </Button>
               </div>
               <p className="text-xs text-default-500 font-normal">
-                按每把上游 key、每个本站绑定账号的当日数据汇总。优先实时拉取并留底，上游不可达时回落到本地快照。
+                按 key 配对的当日明细，按利润降序。橙色行 = 无 upstream 绑定（如 AZ 渠道）。
+                数据默认从本地存档读取，点"重新从上游拉取"可强制重抓。
               </p>
               {data?.fromCache && (
-                <Chip size="sm" color="warning" variant="flat">
-                  📦 上游不可达，来自本地快照
+                <Chip size="sm" color="default" variant="flat">
+                  📦 本地存档
                   {data.cachedAt &&
                     ` · ${new Date(data.cachedAt).toLocaleString("zh-CN")}`}
                 </Chip>
@@ -126,9 +153,7 @@ export default function DailyDetailModal({
                   <Spinner label="加载明细中" />
                 </div>
               )}
-              {err && (
-                <div className="text-danger text-sm py-3">{err}</div>
-              )}
+              {err && <div className="text-danger text-sm py-3">{err}</div>}
               {data && (
                 <>
                   <TotalsCard b={data} />
@@ -136,7 +161,7 @@ export default function DailyDetailModal({
                   {data.errors.length > 0 && (
                     <div className="bg-danger/10 border border-danger/20 rounded-xl p-3 my-3 text-sm">
                       <div className="font-medium text-danger mb-1">
-                        {data.errors.length} 个抓取错误（已从汇总中排除）
+                        {data.errors.length} 个抓取错误（该行数据可能不全）
                       </div>
                       <ul className="text-xs text-danger/80 space-y-0.5 max-h-32 overflow-auto">
                         {data.errors.map((e, i) => (
@@ -150,135 +175,117 @@ export default function DailyDetailModal({
 
                   <section className="mt-4">
                     <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                      支出来源 · 上游 keys
+                      逐 key 利润
                       <Chip size="sm" variant="flat">
-                        {data.upstream.length}
+                        {data.paired.length}
                       </Chip>
+                      <span className="text-[11px] text-default-400 font-normal">
+                        当天 0 流量已隐藏
+                      </span>
                     </h3>
-                    {data.upstream.length === 0 ? (
-                      <p className="text-default-500 text-sm">无</p>
+                    {data.paired.length === 0 ? (
+                      <p className="text-default-500 text-sm">当天无任何使用记录</p>
                     ) : (
-                      <Table aria-label="upstream breakdown" removeWrapper>
+                      <Table aria-label="paired breakdown" removeWrapper>
                         <TableHeader>
-                          <TableColumn>Key</TableColumn>
-                          <TableColumn>上游账号 / 分组</TableColumn>
-                          <TableColumn>倍率</TableColumn>
-                          <TableColumn>充值倍率</TableColumn>
-                          <TableColumn>1× 成本</TableColumn>
-                          <TableColumn>实际支出</TableColumn>
-                        </TableHeader>
-                        <TableBody>
-                          {data.upstream.map((r) => (
-                            <TableRow key={r.keyId}>
-                              <TableCell>
-                                <span className="font-medium">{r.keyName}</span>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex flex-col leading-tight">
-                                  <span className="text-xs">
-                                    {r.upstreamAccountName}
-                                  </span>
-                                  <span className="text-xs text-default-400">
-                                    {r.groupName}
-                                    <span className="ml-1 text-default-400">
-                                      [{r.upstreamType}]
-                                    </span>
-                                  </span>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <span className="text-sm tabular-nums">
-                                  ×{r.effectiveRate.toFixed(2)}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <span
-                                  className={
-                                    r.rechargeMultiplier !== 1
-                                      ? "text-primary tabular-nums text-sm"
-                                      : "text-default-400 tabular-nums text-sm"
-                                  }
-                                >
-                                  ×{r.rechargeMultiplier.toFixed(2)}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <span
-                                  className="tabular-nums"
-                                  title={fmtMoney(r.cost)}
-                                >
-                                  {fmtMoneyShort(r.cost)}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <span
-                                  className="tabular-nums font-medium"
-                                  title={fmtMoney(r.actualCost)}
-                                >
-                                  {fmtMoneyShort(r.actualCost)}
-                                </span>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    )}
-                  </section>
-
-                  <section className="mt-6">
-                    <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                      收入来源 · 本站绑定账号
-                      <Chip size="sm" variant="flat">
-                        {data.site.length}
-                      </Chip>
-                    </h3>
-                    {data.site.length === 0 ? (
-                      <p className="text-default-500 text-sm">无</p>
-                    ) : (
-                      <Table aria-label="site breakdown" removeWrapper>
-                        <TableHeader>
-                          <TableColumn>本站账号</TableColumn>
-                          <TableColumn>所属站点</TableColumn>
-                          <TableColumn>倍率</TableColumn>
-                          <TableColumn>1× 成本</TableColumn>
+                          <TableColumn>名称</TableColumn>
+                          <TableColumn>分组 / 倍率</TableColumn>
                           <TableColumn>收入</TableColumn>
+                          <TableColumn>支出</TableColumn>
+                          <TableColumn>1× 差异</TableColumn>
+                          <TableColumn>利润</TableColumn>
                         </TableHeader>
                         <TableBody>
-                          {data.site.map((r) => (
-                            <TableRow key={r.siteBoundAccountId}>
-                              <TableCell>
-                                <span className="font-medium">
-                                  {r.accountName}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <span className="text-xs text-default-400">
-                                  {r.siteAccountName}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <span className="text-sm tabular-nums">
-                                  ×{r.rateMultiplier.toFixed(2)}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <span
-                                  className="tabular-nums"
-                                  title={fmtMoney(r.cost)}
-                                >
-                                  {fmtMoneyShort(r.cost)}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <span
-                                  className="tabular-nums font-medium"
-                                  title={fmtMoney(r.actualCost)}
-                                >
-                                  {fmtMoneyShort(r.actualCost)}
-                                </span>
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                          {data.paired.map((r) => {
+                            const isUnbound = r.kind === "unbound_site";
+                            return (
+                              <TableRow
+                                key={r.rowKey}
+                                className={
+                                  isUnbound
+                                    ? "bg-warning-50 dark:bg-warning-950/30"
+                                    : ""
+                                }
+                              >
+                                <TableCell>
+                                  <div className="flex flex-col leading-tight">
+                                    <span className="font-medium text-sm">
+                                      {r.label}
+                                    </span>
+                                    {isUnbound && (
+                                      <span className="text-[10px] text-warning font-medium">
+                                        ⚠ 未绑定 upstream（不计支出）
+                                      </span>
+                                    )}
+                                    {r.siteAccounts &&
+                                      r.siteAccounts.length > 1 && (
+                                        <span className="text-[10px] text-default-400">
+                                          含 {r.siteAccounts.length} 个绑定账号
+                                        </span>
+                                      )}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex flex-col leading-tight text-xs text-default-500">
+                                    <span>{r.groupName || "—"}</span>
+                                    <span className="text-default-400">
+                                      {r.effectiveRate != null && (
+                                        <>×{r.effectiveRate.toFixed(2)}</>
+                                      )}
+                                      {r.rechargeMultiplier != null &&
+                                        r.rechargeMultiplier !== 1 && (
+                                          <span className="text-primary ml-1">
+                                            充值 ×{r.rechargeMultiplier.toFixed(2)}
+                                          </span>
+                                        )}
+                                    </span>
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <span
+                                    className="tabular-nums"
+                                    title={fmtMoney(r.revenue)}
+                                  >
+                                    {fmtMoneyShort(r.revenue)}
+                                  </span>
+                                </TableCell>
+                                <TableCell>
+                                  <span
+                                    className="tabular-nums"
+                                    title={fmtMoney(r.expense)}
+                                  >
+                                    {fmtMoneyShort(r.expense)}
+                                  </span>
+                                </TableCell>
+                                <TableCell>
+                                  <span
+                                    className={
+                                      r.diff > 0
+                                        ? "tabular-nums text-warning"
+                                        : "tabular-nums text-default-400"
+                                    }
+                                    title={fmtMoney(r.diff)}
+                                  >
+                                    {fmtMoneyShort(r.diff)}
+                                  </span>
+                                </TableCell>
+                                <TableCell>
+                                  <span
+                                    className={
+                                      r.profit > 0
+                                        ? "tabular-nums font-semibold text-success"
+                                        : r.profit < 0
+                                          ? "tabular-nums font-semibold text-danger"
+                                          : "tabular-nums font-medium"
+                                    }
+                                    title={fmtMoney(r.profit)}
+                                  >
+                                    {fmtMoneyShort(r.profit)}
+                                  </span>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     )}
@@ -296,11 +303,7 @@ export default function DailyDetailModal({
 function TotalsCard({ b }: { b: Breakdown }) {
   const { totals } = b;
   const profitClass =
-    totals.profit > 0
-      ? "text-success"
-      : totals.profit < 0
-        ? "text-danger"
-        : "";
+    totals.profit > 0 ? "text-success" : totals.profit < 0 ? "text-danger" : "";
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-content2/40 rounded-xl p-4">
       <Stat label="收入 (revenue)" value={fmtMoneyShort(totals.revenue)} />
@@ -313,7 +316,7 @@ function TotalsCard({ b }: { b: Breakdown }) {
       <Stat label="本站 1× 总和" value={fmtMoneyShort(totals.siteCostBase)} />
       <Stat label="上游 1× 总和" value={fmtMoneyShort(totals.upstreamCostBase)} />
       <Stat
-        label="差异 (|上游 1× − 本站 1×|)"
+        label="差异 (上游 1× − 本站 1×)"
         value={fmtMoneyShort(totals.diff)}
       />
     </div>
