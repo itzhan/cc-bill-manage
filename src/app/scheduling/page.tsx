@@ -3735,6 +3735,39 @@ function TopUsersPanel({
   };
   const [rpmByUser, setRpmByUser] = useState<Record<string, RpmStatus>>({});
 
+  // 伪滑动窗口：sub2api 的 RPM 是"按分钟桶"存的，整点会归零。我们这边记录
+  // 每个 (user, group) 上一次观察到的 used，检测到下降 → 整点切换 → 把
+  // 切换前的最终值 stash 起来。显示时按当前在本分钟的秒数线性混合：
+  //   displayed = current_partial + prev_final × (60 − sec_into_minute) / 60
+  // 假设每分钟内流量均匀分布——视觉上把跳变变平滑。
+  const rollingRef = useRef<
+    Map<string, { lastValue: number; prevMinuteFinal: number }>
+  >(new Map());
+
+  function getSlidingValue(key: string, raw: number): number {
+    const r = rollingRef.current.get(key);
+    if (!r) return raw;
+    const sec = Math.floor(Date.now() / 1000) % 60;
+    const decay = (60 - sec) / 60;
+    return Math.round(r.lastValue + r.prevMinuteFinal * decay);
+  }
+
+  function recordRolling(key: string, cur: number) {
+    const prev = rollingRef.current.get(key);
+    if (prev && cur < prev.lastValue) {
+      // 下降 → 检测为整点切换：把切换前的值作为 prevMinuteFinal
+      rollingRef.current.set(key, {
+        lastValue: cur,
+        prevMinuteFinal: prev.lastValue,
+      });
+    } else {
+      rollingRef.current.set(key, {
+        lastValue: cur,
+        prevMinuteFinal: prev?.prevMinuteFinal ?? 0,
+      });
+    }
+  }
+
   // Top-N 用户（按 current_in_use 倒序，过滤 0）。
   const top = useMemo(() => {
     if (!userConc) return [];
@@ -3760,7 +3793,14 @@ function TopUsersPanel({
       .then((r) => r.json())
       .then((j) => {
         if (canceled) return;
-        setRpmByUser(j.status ?? {});
+        const status = (j.status ?? {}) as Record<string, RpmStatus>;
+        // 喂给伪滑动窗口追踪器
+        for (const [uid, rpm] of Object.entries(status)) {
+          for (const g of rpm.per_group ?? []) {
+            recordRolling(`${uid}:${g.group_id}`, g.used);
+          }
+        }
+        setRpmByUser(status);
       })
       .catch(() => {
         // soft-fail; next poll will retry
@@ -3857,11 +3897,15 @@ function TopUsersPanel({
             const concBar =
               concPct >= 90 ? "bg-danger" : concPct >= 70 ? "bg-warning" : "bg-primary";
             const rpm = rpmByUser[String(u.user_id)];
-            // 按 used desc 取前 topGroups 个分组——用户在跑的分组排前面。
+            // 用伪滑动后的值排序+展示。整点边界附近不会跳到 0。
             const perGroup = [...(rpm?.per_group ?? [])]
+              .map((g) => ({
+                ...g,
+                slidingUsed: getSlidingValue(`${u.user_id}:${g.group_id}`, g.used),
+              }))
               .sort(
                 (a, b) =>
-                  b.used - a.used ||
+                  b.slidingUsed - a.slidingUsed ||
                   (b.limit ?? 0) - (a.limit ?? 0) ||
                   a.group_id - b.group_id,
               )
@@ -3911,7 +3955,7 @@ function TopUsersPanel({
                           {g.group_name || `#${g.group_id}`}
                         </span>
                         <span className="tabular-nums text-default-500 shrink-0 ml-2">
-                          {g.used}
+                          {g.slidingUsed}
                           {g.limit != null && g.limit > 0 && (
                             <span className="text-default-400"> / {g.limit}</span>
                           )}

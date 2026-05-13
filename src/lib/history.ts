@@ -122,8 +122,20 @@ async function loadBindings() {
   });
 }
 
+// 加载全部 siteBoundAccount（不依赖是否绑定 upstream key）——历史回填的
+// 收入侧曾经只迭代 binding，结果把 AZ 渠道、未绑定的散户号等全漏掉了
+// （线上观察：221 个 siteBoundAccount 但只有 36 个有 binding → 漏 185 个）。
+// 收入按 site 算，不该受 upstream 绑定状态影响。
+type SiteBoundFull = Awaited<ReturnType<typeof loadAllSiteBoundAccounts>>[number];
+async function loadAllSiteBoundAccounts() {
+  return prisma.siteBoundAccount.findMany({
+    include: { siteAccount: true },
+  });
+}
+
 interface Setup {
   bindings: BindingFull[];
+  allSites: SiteBoundFull[];
   upKeyMap: Map<
     number,
     {
@@ -137,8 +149,9 @@ interface Setup {
   clientForSite: (acc: SiteAccountRow) => Sub2ApiClient;
 }
 
-function buildSetup(bindings: BindingFull[]): Setup {
-  // Dedupe upstream keys and site accounts (M:N → many bindings may reference same key).
+function buildSetup(bindings: BindingFull[], allSites: SiteBoundFull[]): Setup {
+  // upKeyMap 仍从 bindings 来（支出侧 = 我们买的 key，必须有 binding 才算）。
+  // siteAccMap 改从 allSites 来（收入侧 = 任何 site account 产生的 user 收入）。
   const upKeyMap: Setup["upKeyMap"] = new Map();
   const siteAccMap: Setup["siteAccMap"] = new Map();
   for (const b of bindings) {
@@ -147,9 +160,11 @@ function buildSetup(bindings: BindingFull[]): Setup {
       account: b.upstreamKey.upstreamAccount,
       rechargeMultiplier: b.upstreamKey.rechargeMultiplier ?? 1,
     });
-    siteAccMap.set(b.siteBoundAccount.id, {
-      remoteAccountId: b.siteBoundAccount.remoteAccountId,
-      account: b.siteBoundAccount.siteAccount,
+  }
+  for (const a of allSites) {
+    siteAccMap.set(a.id, {
+      remoteAccountId: a.remoteAccountId,
+      account: a.siteAccount,
     });
   }
 
@@ -172,7 +187,7 @@ function buildSetup(bindings: BindingFull[]): Setup {
     }
     return c;
   }
-  return { bindings, upKeyMap, siteAccMap, clientForUp, clientForSite };
+  return { bindings, allSites, upKeyMap, siteAccMap, clientForUp, clientForSite };
 }
 
 // Build all (date × key) fetch tasks. Errors are captured per-task, not thrown.
@@ -251,8 +266,11 @@ export async function backfillRange(
     throw new Error("invalid date range");
   }
 
-  const bindings = await loadBindings();
-  if (bindings.length === 0) {
+  const [bindings, allSites] = await Promise.all([
+    loadBindings(),
+    loadAllSiteBoundAccounts(),
+  ]);
+  if (bindings.length === 0 && allSites.length === 0) {
     return {
       rows: [],
       totals: {
@@ -268,7 +286,7 @@ export async function backfillRange(
     };
   }
 
-  const setup = buildSetup(bindings);
+  const setup = buildSetup(bindings, allSites);
   const errors: FetchError[] = [];
   const tasks: Promise<FetchResult | null>[] = [];
   for (const date of dates) {
@@ -326,7 +344,7 @@ export async function backfillRange(
   // 跟 DailyProfit 同步：跳过有 fetch 错误的日期。
   for (const date of writable.map((r) => r.date)) {
     const dateResults = results.filter((r) => r.date === date);
-    await persistBreakdownForDate(date, dateResults, bindings);
+    await persistBreakdownForDate(date, dateResults, bindings, allSites);
   }
 
   const totals = [...perDate.values()].reduce(
@@ -369,6 +387,7 @@ async function persistBreakdownForDate(
   date: string,
   dateResults: FetchResult[],
   bindings: BindingFull[],
+  allSites: SiteBoundFull[],
 ): Promise<void> {
   const upKeyMeta = new Map<
     number,
@@ -401,11 +420,15 @@ async function persistBreakdownForDate(
       upstreamAccountName: b.upstreamKey.upstreamAccount.name,
       upstreamType: b.upstreamKey.upstreamAccount.type,
     });
-    siteAccMeta.set(b.siteBoundAccount.id, {
-      label: `${b.siteBoundAccount.siteAccount.name} / ${b.siteBoundAccount.name}`,
-      siteAccountId: b.siteBoundAccount.siteAccountId,
-      siteAccountName: b.siteBoundAccount.siteAccount.name,
-      rateMultiplier: b.siteBoundAccount.rateMultiplier ?? 1,
+  }
+  // Site meta covers ALL siteBoundAccounts, including ones with no upstream
+  // binding (AZ-managed accounts produce real revenue with no upstream pair).
+  for (const a of allSites) {
+    siteAccMeta.set(a.id, {
+      label: `${a.siteAccount.name} / ${a.name}`,
+      siteAccountId: a.siteAccountId,
+      siteAccountName: a.siteAccount.name,
+      rateMultiplier: a.rateMultiplier ?? 1,
     });
   }
 
@@ -477,8 +500,11 @@ export async function persistTodayBreakdown(): Promise<void> {
     day: "2-digit",
   }).format(new Date());
 
-  const bindings = await loadBindings();
-  if (bindings.length === 0) return;
+  const [bindings, allSites] = await Promise.all([
+    loadBindings(),
+    loadAllSiteBoundAccounts(),
+  ]);
+  if (bindings.length === 0 && allSites.length === 0) return;
 
   // For "today" we don't fetch from upstream — we use the values already
   // synced into UpstreamKey/SiteBoundAccount. Those are the live values that
@@ -511,45 +537,45 @@ export async function persistTodayBreakdown(): Promise<void> {
       }).format(t) === today
     );
   }
-  // Dedupe — multiple bindings can reference same key/account.
+  // Upstream keys: 只看 bindings 里的（支出侧）。Dedupe by key id.
   for (const b of bindings) {
-    if (!upKeyMap.has(b.upstreamKey.id)) {
-      const k = b.upstreamKey;
-      if (!isFreshToday(k.lastUpdatedAt)) continue;
-      const eff = k.effectiveRateMultiplier > 0 ? k.effectiveRateMultiplier : 1;
-      // 1× face value: prefer split when rate changed mid-day, otherwise
-      // simple division. Mirrors dashboard.upstreamBase().
-      let costBase: number;
-      const prev = k.previousEffectiveRateMultiplier;
-      const snap = k.costAtRateChange;
-      if (
-        prev != null &&
-        prev > 0 &&
-        snap != null &&
-        snap > 0 &&
-        snap <= k.todayActualCost
-      ) {
-        costBase = snap / prev + (k.todayActualCost - snap) / eff;
-      } else {
-        costBase = k.todayActualCost / eff;
-      }
-      upKeyMap.set(k.id, {
-        cost: costBase,
-        actualCost: k.todayActualCost * (k.rechargeMultiplier ?? 1),
-      });
+    if (upKeyMap.has(b.upstreamKey.id)) continue;
+    const k = b.upstreamKey;
+    if (!isFreshToday(k.lastUpdatedAt)) continue;
+    const eff = k.effectiveRateMultiplier > 0 ? k.effectiveRateMultiplier : 1;
+    // 1× face value: prefer split when rate changed mid-day, otherwise
+    // simple division. Mirrors dashboard.upstreamBase().
+    let costBase: number;
+    const prev = k.previousEffectiveRateMultiplier;
+    const snap = k.costAtRateChange;
+    if (
+      prev != null &&
+      prev > 0 &&
+      snap != null &&
+      snap > 0 &&
+      snap <= k.todayActualCost
+    ) {
+      costBase = snap / prev + (k.todayActualCost - snap) / eff;
+    } else {
+      costBase = k.todayActualCost / eff;
     }
-    if (!siteAccMap.has(b.siteBoundAccount.id)) {
-      const a = b.siteBoundAccount;
-      if (!isFreshToday(a.lastUpdatedAt)) continue;
-      const effectiveUC =
-        a.rateMultiplierOverride != null
-          ? a.todayCost * a.rateMultiplierOverride
-          : a.todayUserCost;
-      siteAccMap.set(a.id, {
-        cost: a.todayCost,
-        actualCost: effectiveUC,
-      });
-    }
+    upKeyMap.set(k.id, {
+      cost: costBase,
+      actualCost: k.todayActualCost * (k.rechargeMultiplier ?? 1),
+    });
+  }
+  // Site bound accounts: 迭代 allSites 而不是 bindings（收入侧），覆盖
+  // 未绑 upstream 的 AZ 渠道/散户号。
+  for (const a of allSites) {
+    if (!isFreshToday(a.lastUpdatedAt)) continue;
+    const effectiveUC =
+      a.rateMultiplierOverride != null
+        ? a.todayCost * a.rateMultiplierOverride
+        : a.todayUserCost;
+    siteAccMap.set(a.id, {
+      cost: a.todayCost,
+      actualCost: effectiveUC,
+    });
   }
 
   const dateResults: FetchResult[] = [
@@ -575,7 +601,7 @@ export async function persistTodayBreakdown(): Promise<void> {
     ),
   ];
 
-  await persistBreakdownForDate(today, dateResults, bindings);
+  await persistBreakdownForDate(today, dateResults, bindings, allSites);
 }
 
 // Load persisted breakdown rows for a date back into the same shape as the
@@ -690,8 +716,11 @@ export async function fetchDateBreakdown(date: string): Promise<DateBreakdown> {
     throw new Error("invalid date");
   }
 
-  const bindings = await loadBindings();
-  if (bindings.length === 0) {
+  const [bindings, allSites] = await Promise.all([
+    loadBindings(),
+    loadAllSiteBoundAccounts(),
+  ]);
+  if (bindings.length === 0 && allSites.length === 0) {
     return {
       date,
       upstream: [],
@@ -708,7 +737,8 @@ export async function fetchDateBreakdown(date: string): Promise<DateBreakdown> {
     };
   }
 
-  // Build label lookup from the loaded bindings (keys + site accounts).
+  // Build label lookup. upKeyMeta 来自 bindings；siteAccMeta 来自 allSites
+  // 以保证未绑定的 AZ 渠道等也能展示。
   const upKeyMeta = new Map<
     number,
     {
@@ -740,15 +770,17 @@ export async function fetchDateBreakdown(date: string): Promise<DateBreakdown> {
       upstreamAccountName: b.upstreamKey.upstreamAccount.name,
       upstreamType: b.upstreamKey.upstreamAccount.type,
     });
-    siteAccMeta.set(b.siteBoundAccount.id, {
-      accountName: b.siteBoundAccount.name,
-      siteAccountId: b.siteBoundAccount.siteAccountId,
-      siteAccountName: b.siteBoundAccount.siteAccount.name,
-      rateMultiplier: b.siteBoundAccount.rateMultiplier ?? 1,
+  }
+  for (const a of allSites) {
+    siteAccMeta.set(a.id, {
+      accountName: a.name,
+      siteAccountId: a.siteAccountId,
+      siteAccountName: a.siteAccount.name,
+      rateMultiplier: a.rateMultiplier ?? 1,
     });
   }
 
-  const setup = buildSetup(bindings);
+  const setup = buildSetup(bindings, allSites);
   const errors: FetchError[] = [];
   let results: FetchResult[] = [];
   try {
@@ -819,7 +851,7 @@ export async function fetchDateBreakdown(date: string): Promise<DateBreakdown> {
   // Write-through: 拿到了实时数据就趁机留底。下次上游挂了就有兜底。
   // 错误不阻塞返回 — 失败时只是少了缓存，不影响本次响应。
   if (results.length > 0) {
-    persistBreakdownForDate(date, results, bindings).catch((e) => {
+    persistBreakdownForDate(date, results, bindings, allSites).catch((e) => {
       console.error(`[breakdown write-through ${date}] failed:`, e);
     });
   }
