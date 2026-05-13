@@ -634,6 +634,7 @@ async function loadPersistedBreakdown(date: string): Promise<PersistedBreakdown 
         upstreamType: r.upstreamType ?? "",
         cost: r.cost,
         actualCost: r.actualCost,
+        manualActualCost: r.manualActualCost ?? null,
       });
     } else {
       site.push({
@@ -682,7 +683,9 @@ export interface BreakdownUpstreamRow {
   upstreamAccountName: string;
   upstreamType: string;
   cost: number; // 1×
-  actualCost: number; // × effectiveRate × rechargeMultiplier (= expense contribution)
+  actualCost: number; // × effectiveRate × rechargeMultiplier (= expense contribution, synced)
+  // 用户手动改写过的支出。非 null 时 buildPairedView 优先用这个。
+  manualActualCost?: number | null;
 }
 
 export interface BreakdownSiteRow {
@@ -719,7 +722,9 @@ export interface PairedBreakdownRow {
   }>;
   // Metrics (in display currency = same scale across paired/unbound)
   revenue: number; // sum of paired site actualCost (or own for unbound site)
-  expense: number; // upstream actualCost (paired/unbound_upstream); 0 for unbound site
+  expense: number; // effective expense（手动值优先；否则同步值）
+  expenseSynced?: number; // 原同步值（仅有手动 override 时才填，用于显示对照）
+  expenseIsManual?: boolean; // true = expense 来自用户手动改写
   siteCostBase: number;
   upstreamCostBase: number;
   diff: number; // max(0, upstreamCostBase - siteCostBase)
@@ -792,9 +797,11 @@ function buildPairedView(
       revenue += sr.actualCost;
       siteCostBase += sr.cost;
     }
-    const expense = upRow?.actualCost ?? 0;
+    const synced = upRow?.actualCost ?? 0;
+    const manual = upRow?.manualActualCost ?? null;
+    const expense = manual ?? synced;
     const upstreamCostBase = upRow?.cost ?? 0;
-    if (revenue === 0 && expense === 0) continue; // 当天没用
+    if (revenue === 0 && expense === 0 && synced === 0) continue; // 当天没用
     rows.push({
       rowKey: `paired:${keyId}`,
       kind: "paired",
@@ -810,6 +817,8 @@ function buildPairedView(
       siteAccounts: sites,
       revenue,
       expense,
+      expenseSynced: manual != null ? synced : undefined,
+      expenseIsManual: manual != null,
       siteCostBase,
       upstreamCostBase,
       diff: Math.max(0, upstreamCostBase - siteCostBase),
@@ -851,7 +860,9 @@ function buildPairedView(
   const boundKeyIds = new Set(bySiteByKey.keys());
   for (const u of upstream) {
     if (boundKeyIds.has(u.keyId)) continue;
-    if (u.actualCost === 0 && u.cost === 0) continue;
+    const manual = u.manualActualCost ?? null;
+    const expense = manual ?? u.actualCost;
+    if (expense === 0 && u.actualCost === 0 && u.cost === 0) continue;
     rows.push({
       rowKey: `unbound_upstream:${u.keyId}`,
       kind: "unbound_upstream",
@@ -863,11 +874,13 @@ function buildPairedView(
       effectiveRate: u.effectiveRate,
       rechargeMultiplier: u.rechargeMultiplier,
       revenue: 0,
-      expense: u.actualCost,
+      expense,
+      expenseSynced: manual != null ? u.actualCost : undefined,
+      expenseIsManual: manual != null,
       siteCostBase: 0,
       upstreamCostBase: u.cost,
       diff: u.cost,
-      profit: -u.actualCost,
+      profit: -expense,
     });
   }
 
@@ -1043,6 +1056,19 @@ export async function fetchDateBreakdown(
     persistBreakdownForDate(date, results, bindings, allSites).catch((e) => {
       console.error(`[breakdown write-through ${date}] failed:`, e);
     });
+  }
+
+  // 合并 DB 里 upstream 侧的 manualActualCost（live fetch 不携带，要从 DB 取）
+  const manualOverrides = await prisma.dailyProfitBreakdown.findMany({
+    where: { date, kind: "upstream", manualActualCost: { not: null } },
+    select: { refId: true, manualActualCost: true },
+  });
+  if (manualOverrides.length > 0) {
+    const byId = new Map(manualOverrides.map((m) => [m.refId, m.manualActualCost]));
+    for (const u of upstream) {
+      const v = byId.get(u.keyId);
+      if (v != null) u.manualActualCost = v;
+    }
   }
 
   const paired = buildPairedView(upstream, site, bindings);

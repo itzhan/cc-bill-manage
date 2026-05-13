@@ -3,10 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Button,
   Chip,
+  Input,
   Modal,
   ModalBody,
   ModalContent,
   ModalHeader,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Spinner,
   Tab,
   Table,
@@ -16,8 +20,9 @@ import {
   TableHeader,
   TableRow,
   Tabs,
+  addToast,
 } from "@heroui/react";
-import { RefreshCw } from "lucide-react";
+import { Pencil, RefreshCw, RotateCcw } from "lucide-react";
 import { fmtMoney, fmtMoneyShort } from "@/lib/format";
 
 interface PairedRow {
@@ -40,6 +45,8 @@ interface PairedRow {
   }>;
   revenue: number;
   expense: number;
+  expenseSynced?: number;
+  expenseIsManual?: boolean;
   siteCostBase: number;
   upstreamCostBase: number;
   diff: number;
@@ -91,6 +98,7 @@ export default function DailyDetailModal({
     [unboundRows],
   );
 
+  const reload = () => load(false);
   async function load(forceRefresh: boolean) {
     if (!date) return;
     if (forceRefresh) setRefreshing(true);
@@ -306,15 +314,18 @@ export default function DailyDetailModal({
                       <Table aria-label="paired breakdown" removeWrapper>
                         <TableHeader>
                           <TableColumn>名称</TableColumn>
-                          <TableColumn>分组 / 倍率</TableColumn>
                           <TableColumn>收入</TableColumn>
                           <TableColumn>支出</TableColumn>
+                          <TableColumn>本站 1×</TableColumn>
+                          <TableColumn>上游 1×</TableColumn>
                           <TableColumn>1× 差异</TableColumn>
                           <TableColumn>利润</TableColumn>
                         </TableHeader>
                         <TableBody>
                           {data.paired.map((r) => {
                             const isUnbound = r.kind === "unbound_site";
+                            const profitNet = r.revenue - r.expense - r.diff; // 第一行：扣 1× 差异
+                            const profitGross = r.revenue - r.expense; // 第二行：粗利润
                             return (
                               <TableRow
                                 key={r.rowKey}
@@ -325,10 +336,40 @@ export default function DailyDetailModal({
                                 }
                               >
                                 <TableCell>
-                                  <div className="flex flex-col leading-tight">
-                                    <span className="font-medium text-sm">
-                                      {r.label}
-                                    </span>
+                                  <div className="flex flex-col leading-tight gap-0.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-medium text-sm">
+                                        {r.label}
+                                      </span>
+                                      {r.groupName && (
+                                        <Chip
+                                          size="sm"
+                                          variant="flat"
+                                          classNames={{
+                                            base: "h-5",
+                                            content: "text-[10px] px-1.5",
+                                          }}
+                                        >
+                                          {r.groupName}
+                                          {r.effectiveRate != null &&
+                                            ` ×${r.effectiveRate.toFixed(2)}`}
+                                        </Chip>
+                                      )}
+                                      {r.rechargeMultiplier != null &&
+                                        r.rechargeMultiplier !== 1 && (
+                                          <Chip
+                                            size="sm"
+                                            color="primary"
+                                            variant="flat"
+                                            classNames={{
+                                              base: "h-5",
+                                              content: "text-[10px] px-1.5",
+                                            }}
+                                          >
+                                            充值 ×{r.rechargeMultiplier.toFixed(2)}
+                                          </Chip>
+                                        )}
+                                    </div>
                                     {isUnbound && (
                                       <span className="text-[10px] text-warning font-medium">
                                         ⚠ 未绑定 upstream（不计支出）
@@ -343,22 +384,6 @@ export default function DailyDetailModal({
                                   </div>
                                 </TableCell>
                                 <TableCell>
-                                  <div className="flex flex-col leading-tight text-xs text-default-500">
-                                    <span>{r.groupName || "—"}</span>
-                                    <span className="text-default-400">
-                                      {r.effectiveRate != null && (
-                                        <>×{r.effectiveRate.toFixed(2)}</>
-                                      )}
-                                      {r.rechargeMultiplier != null &&
-                                        r.rechargeMultiplier !== 1 && (
-                                          <span className="text-primary ml-1">
-                                            充值 ×{r.rechargeMultiplier.toFixed(2)}
-                                          </span>
-                                        )}
-                                    </span>
-                                  </div>
-                                </TableCell>
-                                <TableCell>
                                   <span
                                     className="tabular-nums"
                                     title={fmtMoney(r.revenue)}
@@ -367,11 +392,22 @@ export default function DailyDetailModal({
                                   </span>
                                 </TableCell>
                                 <TableCell>
+                                  <ExpenseCell row={r} date={data.date} onChanged={reload} />
+                                </TableCell>
+                                <TableCell>
                                   <span
-                                    className="tabular-nums"
-                                    title={fmtMoney(r.expense)}
+                                    className="tabular-nums text-default-500"
+                                    title={fmtMoney(r.siteCostBase)}
                                   >
-                                    {fmtMoneyShort(r.expense)}
+                                    {fmtMoneyShort(r.siteCostBase)}
+                                  </span>
+                                </TableCell>
+                                <TableCell>
+                                  <span
+                                    className="tabular-nums text-default-500"
+                                    title={fmtMoney(r.upstreamCostBase)}
+                                  >
+                                    {fmtMoneyShort(r.upstreamCostBase)}
                                   </span>
                                 </TableCell>
                                 <TableCell>
@@ -387,18 +423,32 @@ export default function DailyDetailModal({
                                   </span>
                                 </TableCell>
                                 <TableCell>
-                                  <span
-                                    className={
-                                      r.profit > 0
-                                        ? "tabular-nums font-semibold text-success"
-                                        : r.profit < 0
-                                          ? "tabular-nums font-semibold text-danger"
-                                          : "tabular-nums font-medium"
-                                    }
-                                    title={fmtMoney(r.profit)}
-                                  >
-                                    {fmtMoneyShort(r.profit)}
-                                  </span>
+                                  <div className="flex flex-col leading-tight">
+                                    <span
+                                      className={
+                                        profitNet > 0
+                                          ? "tabular-nums font-semibold text-success"
+                                          : profitNet < 0
+                                            ? "tabular-nums font-semibold text-danger"
+                                            : "tabular-nums font-medium"
+                                      }
+                                      title={`扣 1× 差异: ${fmtMoney(profitNet)}`}
+                                    >
+                                      {fmtMoneyShort(profitNet)}
+                                    </span>
+                                    <span
+                                      className={
+                                        profitGross > 0
+                                          ? "tabular-nums text-[11px] text-success/70"
+                                          : profitGross < 0
+                                            ? "tabular-nums text-[11px] text-danger/70"
+                                            : "tabular-nums text-[11px] text-default-400"
+                                      }
+                                      title={`粗利润 (收入−支出): ${fmtMoney(profitGross)}`}
+                                    >
+                                      毛 {fmtMoneyShort(profitGross)}
+                                    </span>
+                                  </div>
                                 </TableCell>
                               </TableRow>
                             );
@@ -459,5 +509,136 @@ function Stat({
         {value}
       </span>
     </div>
+  );
+}
+
+function ExpenseCell({
+  row,
+  date,
+  onChanged,
+}: {
+  row: PairedRow;
+  date: string;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  const canEdit = row.upstreamKeyId != null;
+  const isManual = row.expenseIsManual === true;
+
+  async function save(clear: boolean) {
+    if (!row.upstreamKeyId) return;
+    const v = clear ? null : Number(draft);
+    if (!clear && (!Number.isFinite(v as number) || (v as number) < 0)) {
+      addToast({ title: "支出数值非法", color: "warning" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await fetch(
+        `/api/daily-profit/${date}/breakdown/upstream/${row.upstreamKeyId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ manualActualCost: v }),
+        },
+      );
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        addToast({ title: "保存失败", description: j.error, color: "danger" });
+        return;
+      }
+      addToast({
+        title: clear ? "已恢复同步值" : "已保存手动支出",
+        color: "success",
+      });
+      setOpen(false);
+      onChanged();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const displayValue = (
+    <span
+      className={isManual ? "tabular-nums text-primary font-medium" : "tabular-nums"}
+      title={
+        isManual && row.expenseSynced != null
+          ? `手动: ${fmtMoney(row.expense)} (同步值 ${fmtMoney(row.expenseSynced)})`
+          : fmtMoney(row.expense)
+      }
+    >
+      {fmtMoneyShort(row.expense)}
+      {isManual && <span className="ml-1 text-[10px] text-primary">✎</span>}
+    </span>
+  );
+
+  if (!canEdit) {
+    return <span className="tabular-nums text-default-400">{fmtMoneyShort(row.expense)}</span>;
+  }
+  return (
+    <Popover
+      isOpen={open}
+      onOpenChange={(v) => {
+        if (v) setDraft(String(row.expense));
+        setOpen(v);
+      }}
+      placement="bottom-start"
+    >
+      <PopoverTrigger>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 hover:bg-content2/60 rounded px-1 py-0.5"
+        >
+          {displayValue}
+          <Pencil size={11} className="text-default-400" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="p-3">
+        <div className="flex flex-col gap-2 w-64">
+          <div className="text-[11px] text-default-500">
+            {row.label}
+          </div>
+          <Input
+            type="number"
+            size="sm"
+            label="手动支出"
+            value={draft}
+            onValueChange={setDraft}
+            description={
+              row.expenseSynced != null
+                ? `同步值 ${fmtMoneyShort(row.expenseSynced)}`
+                : `当前同步值 ${fmtMoneyShort(row.expense)}`
+            }
+          />
+          <div className="flex justify-between gap-2">
+            <Button
+              size="sm"
+              variant="flat"
+              startContent={<RotateCcw size={12} />}
+              isLoading={saving}
+              isDisabled={!isManual}
+              onPress={() => save(true)}
+            >
+              恢复同步
+            </Button>
+            <div className="flex gap-1">
+              <Button size="sm" variant="flat" onPress={() => setOpen(false)}>
+                取消
+              </Button>
+              <Button
+                size="sm"
+                color="primary"
+                isLoading={saving}
+                onPress={() => save(false)}
+              >
+                保存
+              </Button>
+            </div>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

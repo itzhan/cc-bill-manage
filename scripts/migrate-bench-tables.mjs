@@ -144,5 +144,8 @@ await ensureColumn("Settings", "unboundExcludePrefixes", "TEXT");
 // UpstreamKey.apiKey — 2026-05  (raw key value for auto-match-binding)
 await ensureColumn("UpstreamKey", "apiKey", "TEXT");
 
+// DailyProfitBreakdown.manualActualCost — 2026-05 (user override)
+await ensureColumn("DailyProfitBreakdown", "manualActualCost", "REAL");
+
 console.log("bench tables migrated");
 await prisma.$disconnect();
