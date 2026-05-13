@@ -19,15 +19,33 @@ export const maxDuration = 120;
 // 4. 任何中途失败的 site 账号 → errors[]
 export async function POST() {
   // 1) 拉数据
-  const [siteAccounts, siteBound, upstreamKeys, allBindings] = await Promise.all([
-    prisma.siteAccount.findMany(),
-    prisma.siteBoundAccount.findMany({ include: { siteAccount: true } }),
-    prisma.upstreamKey.findMany({
-      where: { apiKey: { not: null } },
-      include: { upstreamAccount: true },
-    }),
-    prisma.binding.findMany(),
-  ]);
+  const [siteAccounts, siteBoundAll, upstreamKeys, allBindings, settings] =
+    await Promise.all([
+      prisma.siteAccount.findMany(),
+      prisma.siteBoundAccount.findMany({ include: { siteAccount: true } }),
+      prisma.upstreamKey.findMany({
+        where: { apiKey: { not: null } },
+        include: { upstreamAccount: true },
+      }),
+      prisma.binding.findMany(),
+      prisma.settings.findUnique({
+        where: { id: 1 },
+        select: { unboundExcludePrefixes: true },
+      }),
+    ]);
+
+  // 排除前缀（沿用"未绑定账号"那套设置）— 匹配的账号直接跳过，不算 misbound
+  // 不算 unmatched 也不计入 errors。
+  const excludePrefixes = (settings?.unboundExcludePrefixes ?? "")
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s && !s.startsWith("#"));
+  const isExcluded = (name: string) =>
+    excludePrefixes.some((p) =>
+      name.toLowerCase().startsWith(p.toLowerCase()),
+    );
+  const siteBound = siteBoundAll.filter((s) => !isExcluded(s.name));
+  const excludedCount = siteBoundAll.length - siteBound.length;
 
   // upstreamKey 索引
   const upByKey = new Map<
@@ -212,6 +230,7 @@ export async function POST() {
   return NextResponse.json({
     summary: {
       totalSite: siteBound.length,
+      excluded: excludedCount,
       totalUpstreamKey: upstreamKeys.length,
       newBindings: plan.proposed.length,
       misbound: plan.misbound.length,
@@ -219,6 +238,7 @@ export async function POST() {
       unmatched: plan.unmatched.length,
       errors: plan.errors.length,
     },
+    excludePrefixes,
     ...plan,
   });
 }

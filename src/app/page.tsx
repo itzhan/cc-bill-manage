@@ -1095,6 +1095,7 @@ interface UpstreamKeyOpt {
 interface AutoMatchPlan {
   summary: {
     totalSite: number;
+    excluded?: number;
     totalUpstreamKey: number;
     newBindings: number;
     misbound: number;
@@ -1102,6 +1103,7 @@ interface AutoMatchPlan {
     unmatched: number;
     errors: number;
   };
+  excludePrefixes?: string[];
   proposed: Array<{
     siteBoundAccountId: number;
     siteLabel: string;
@@ -1740,6 +1742,14 @@ function AutoMatchPlanDialog({
             通过对碰 sub2api admin account 的 credentials.api_key
             与 UpstreamKey.apiKey 来匹配
           </span>
+          {plan &&
+            plan.excludePrefixes &&
+            plan.excludePrefixes.length > 0 && (
+              <span className="text-[11px] text-warning font-normal">
+                已按前缀排除 {plan.summary.excluded ?? 0} 个账号:{" "}
+                {plan.excludePrefixes.join(", ")}
+              </span>
+            )}
         </ModalHeader>
         <ModalBody className="gap-3">
           {plan && (
