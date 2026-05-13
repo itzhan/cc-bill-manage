@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Card,
@@ -136,21 +136,28 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dailyView]);
 
+  // 请求序号 — 防止 30s 轮询的 in-flight 响应在 backfill 后晚到，把
+  // runBackfill 写入的新值再覆盖回旧值（典型 race）。
+  const loadSeqRef = useRef(0);
   async function loadAll(rangeArg: string = range) {
+    const mySeq = ++loadSeqRef.current;
     setLoading(true);
     try {
+      const ts = Date.now(); // 强制 cache-bust，绕过任何中间层缓存
       const [a, b, c, d] = await Promise.all([
-        fetch("/api/dashboard", { cache: "no-store" }).then((r) => r.json()),
-        fetch(`/api/dashboard/timeseries?range=${rangeArg}`, {
+        fetch(`/api/dashboard?_=${ts}`, { cache: "no-store" }).then((r) => r.json()),
+        fetch(`/api/dashboard/timeseries?range=${rangeArg}&_=${ts}`, {
           cache: "no-store",
         }).then((r) => r.json()),
-        fetch("/api/dashboard/top-expenses", { cache: "no-store" }).then((r) =>
+        fetch(`/api/dashboard/top-expenses?_=${ts}`, { cache: "no-store" }).then((r) =>
           r.json(),
         ),
-        fetch("/api/daily-profit?days=30", { cache: "no-store" }).then((r) =>
+        fetch(`/api/daily-profit?days=30&_=${ts}`, { cache: "no-store" }).then((r) =>
           r.json(),
         ),
       ]);
+      // 我若已过时（有人发起了更新的 loadAll），直接丢弃这一轮结果。
+      if (mySeq !== loadSeqRef.current) return;
       setData(a as DashboardSummary);
       setTrend((b.points || []) as TrendPoint[]);
       setTopExpense(
@@ -172,9 +179,10 @@ export default function DashboardPage() {
       );
       setDaily((d.items || []) as DailyProfitRow[]);
     } catch (e) {
+      if (mySeq !== loadSeqRef.current) return;
       addToast({ title: "加载失败", description: String(e), color: "danger" });
     } finally {
-      setLoading(false);
+      if (mySeq === loadSeqRef.current) setLoading(false);
     }
   }
 
@@ -257,10 +265,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadAll();
-    const t = setInterval(() => loadAll(), 30 * 1000);
+    // backfilling 期间暂停轮询，否则 30s tick 可能在 backfill 完成前
+    // 用旧 DB 值起飞 + 晚到，被序号守卫拦截但成本浪费。
+    const t = setInterval(() => {
+      if (backfilling) return;
+      loadAll();
+    }, 30 * 1000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [backfilling]);
 
   // Compare last vs first snapshot in selected range to compute trend deltas
   const trendDeltas = useMemo(() => {

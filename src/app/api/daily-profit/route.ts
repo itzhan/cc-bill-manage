@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
 export const runtime = "nodejs";
+// 不缓存 — backfill 完毕后前端会立刻重拉，必须看到 DB 的最新值。
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 // GET /api/daily-profit?days=30  → last N days, newest first
 export async function GET(req: Request) {
