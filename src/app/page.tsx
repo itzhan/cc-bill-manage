@@ -66,6 +66,26 @@ interface DailyProfitRow {
   updatedAt: string;
 }
 
+interface UnboundAccountRow {
+  id: number;
+  siteAccountId: number;
+  siteAccountName: string;
+  accountName: string;
+  rateMultiplier: number;
+  fixedCost: number | null;
+  revenue: number;
+  costBase: number;
+  profit: number;
+  hasFixedCost: boolean;
+}
+interface UnboundAccountsResp {
+  days: number;
+  totalRevenue: number;
+  totalCostBase: number;
+  totalProfit: number;
+  items: UnboundAccountRow[];
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
@@ -85,6 +105,27 @@ export default function DashboardPage() {
   const [backfilling, setBackfilling] = useState(false);
   const [showUnusedBindings, setShowUnusedBindings] = useState(false);
   const [detailDate, setDetailDate] = useState<string | null>(null);
+  // 每日利润卡片的视图切换：按日期 / 未绑定账号
+  const [dailyView, setDailyView] = useState<"by-date" | "unbound">("by-date");
+  const [unboundDays, setUnboundDays] = useState(30);
+  const [unbound, setUnbound] = useState<UnboundAccountsResp | null>(null);
+  const [unboundLoading, setUnboundLoading] = useState(false);
+  async function loadUnbound(d: number = unboundDays) {
+    setUnboundLoading(true);
+    try {
+      const r = await fetch(`/api/unbound-accounts?days=${d}`, {
+        cache: "no-store",
+      });
+      const j = (await r.json()) as UnboundAccountsResp;
+      setUnbound(j);
+    } finally {
+      setUnboundLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (dailyView === "unbound" && unbound == null) loadUnbound(unboundDays);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dailyView]);
 
   async function loadAll(rangeArg: string = range) {
     setLoading(true);
@@ -747,7 +788,8 @@ export default function DashboardPage() {
           )}
 
           <Card className="bg-content1 border border-divider/50 shadow-none mt-6">
-            <CardHeader className="flex justify-between items-start flex-wrap gap-3">
+            <CardHeader className="flex flex-col items-start gap-3">
+              <div className="flex justify-between items-start flex-wrap gap-3 w-full">
               <div>
                 <h2 className="font-semibold">每日利润</h2>
                 <p className="text-xs text-default-500 mt-0.5">
@@ -862,9 +904,51 @@ export default function DashboardPage() {
                   );
                 })()}
               </div>
+              </div>
+              <Tabs
+                size="sm"
+                selectedKey={dailyView}
+                onSelectionChange={(k) =>
+                  setDailyView(String(k) as "by-date" | "unbound")
+                }
+              >
+                <Tab key="by-date" title="按日期" />
+                <Tab
+                  key="unbound"
+                  title={
+                    <span className="flex items-center gap-1.5">
+                      未绑定账号
+                      {unbound && unbound.items.length > 0 && (
+                        <Chip
+                          size="sm"
+                          color="warning"
+                          variant="flat"
+                          classNames={{
+                            base: "h-4",
+                            content: "text-[10px] px-1",
+                          }}
+                        >
+                          {unbound.items.length}
+                        </Chip>
+                      )}
+                    </span>
+                  }
+                />
+              </Tabs>
             </CardHeader>
             <CardBody>
-              {daily.length === 0 ? (
+              {dailyView === "unbound" ? (
+                <UnboundView
+                  data={unbound}
+                  loading={unboundLoading}
+                  days={unboundDays}
+                  onDaysChange={(d) => {
+                    setUnboundDays(d);
+                    loadUnbound(d);
+                  }}
+                  onRefresh={() => loadUnbound(unboundDays)}
+                />
+              ) : daily.length === 0 ? (
                 <p className="text-default-500 text-sm">
                   暂无每日记录。每次同步会写入当天的累计值
                 </p>
@@ -984,5 +1068,186 @@ function Legend({ color, label }: { color: string; label: string }) {
       <span className={`inline-block w-2 h-2 rounded-full ${color}`} />
       {label}
     </span>
+  );
+}
+
+function UnboundView({
+  data,
+  loading,
+  days,
+  onDaysChange,
+  onRefresh,
+}: {
+  data: UnboundAccountsResp | null;
+  loading: boolean;
+  days: number;
+  onDaysChange: (d: number) => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-end gap-2 mb-3 flex-wrap">
+        <div className="text-xs text-default-500 flex-1 min-w-0">
+          所有"未绑定 upstream key"的 site 账号（含 AZ 渠道等），按近 {days} 天
+          <b>收入</b> 降序排。这些账号的支出无法从 binding 推出，绑定后利润才
+          算得准。fixedCost = AZ 一次性投入。
+        </div>
+        <Input
+          type="number"
+          size="sm"
+          label="近 N 天"
+          value={String(days)}
+          className="w-24"
+          min={1}
+          max={365}
+          onValueChange={(s) => {
+            const n = Math.max(1, Math.min(365, Number(s) || 30));
+            onDaysChange(n);
+          }}
+        />
+        <Button
+          size="sm"
+          variant="flat"
+          startContent={<RefreshCw size={14} />}
+          onPress={onRefresh}
+          isLoading={loading}
+        >
+          刷新
+        </Button>
+      </div>
+
+      {loading && !data && (
+        <div className="flex justify-center p-8">
+          <Spinner />
+        </div>
+      )}
+
+      {data && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-content2/40 rounded-xl p-3 mb-3">
+            <StatTile label="未绑定账号" value={String(data.items.length)} />
+            <StatTile
+              label={`近 ${data.days} 天收入`}
+              value={fmtMoneyShort(data.totalRevenue)}
+            />
+            <StatTile
+              label="1× 成本"
+              value={fmtMoneyShort(data.totalCostBase)}
+            />
+            <StatTile
+              label="估算利润"
+              value={fmtMoneyShort(data.totalProfit)}
+              valueClass={
+                data.totalProfit > 0
+                  ? "text-success"
+                  : data.totalProfit < 0
+                    ? "text-danger"
+                    : ""
+              }
+            />
+          </div>
+
+          {data.items.length === 0 ? (
+            <p className="text-default-500 text-sm py-6 text-center">
+              当前没有未绑定且有使用记录的账号
+            </p>
+          ) : (
+            <Table removeWrapper aria-label="unbound accounts">
+              <TableHeader>
+                <TableColumn>账号</TableColumn>
+                <TableColumn>所属站点</TableColumn>
+                <TableColumn>倍率</TableColumn>
+                <TableColumn>一次性投入</TableColumn>
+                <TableColumn>1× 成本</TableColumn>
+                <TableColumn>收入</TableColumn>
+                <TableColumn>估算利润</TableColumn>
+              </TableHeader>
+              <TableBody>
+                {data.items.map((r) => (
+                  <TableRow
+                    key={r.id}
+                    className="bg-warning-50/40 dark:bg-warning-950/20"
+                  >
+                    <TableCell>
+                      <span className="font-medium text-sm">{r.accountName}</span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-xs text-default-500">
+                        {r.siteAccountName}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm tabular-nums">
+                        ×{r.rateMultiplier.toFixed(2)}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      {r.fixedCost != null ? (
+                        <span
+                          className="tabular-nums text-primary"
+                          title={fmtMoney(r.fixedCost)}
+                        >
+                          {fmtMoneyShort(r.fixedCost)}
+                        </span>
+                      ) : (
+                        <span className="text-default-400">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <span className="tabular-nums" title={fmtMoney(r.costBase)}>
+                        {fmtMoneyShort(r.costBase)}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className="tabular-nums font-semibold text-warning"
+                        title={fmtMoney(r.revenue)}
+                      >
+                        {fmtMoneyShort(r.revenue)}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={
+                          r.profit > 0
+                            ? "tabular-nums font-semibold text-success"
+                            : r.profit < 0
+                              ? "tabular-nums font-semibold text-danger"
+                              : "tabular-nums"
+                        }
+                        title={fmtMoney(r.profit)}
+                      >
+                        {fmtMoneyShort(r.profit)}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+}) {
+  return (
+    <div className="flex flex-col leading-tight">
+      <span className="text-[11px] text-default-500">{label}</span>
+      <span
+        className={`text-lg font-semibold tabular-nums tracking-tight ${valueClass ?? ""}`}
+      >
+        {value}
+      </span>
+    </div>
   );
 }
