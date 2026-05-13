@@ -3824,9 +3824,15 @@ function TopUsersPanel({
             const concBar =
               concPct >= 90 ? "bg-danger" : concPct >= 70 ? "bg-warning" : "bg-primary";
             const rpm = rpmByUser[String(u.user_id)];
-            const perGroup = (rpm?.per_group ?? [])
-              .filter((g) => g.used > 0)
-              .sort((a, b) => b.used - a.used);
+            // 显示所有该用户的分组（不再过滤 used>0）——长连接 streaming 用户
+            // 的 current_in_use 可能>0 但近 1 分钟新请求数=0，过滤掉就什么都看
+            // 不到了。按 used desc 再按 limit desc 排序，活跃的自然排前面。
+            const perGroup = [...(rpm?.per_group ?? [])].sort(
+              (a, b) =>
+                b.used - a.used ||
+                (b.limit ?? 0) - (a.limit ?? 0) ||
+                a.group_id - b.group_id,
+            );
             return (
               <div
                 key={u.user_id}
@@ -3869,7 +3875,7 @@ function TopUsersPanel({
                 <div className="mt-1.5 flex flex-col gap-1">
                   {perGroup.length === 0 ? (
                     <span className="text-[11px] text-default-400">
-                      {rpm ? "本分钟无请求记录" : "加载中…"}
+                      {rpm ? "该用户暂无分组配置" : "加载中…"}
                     </span>
                   ) : (
                     perGroup.map((g) => {
