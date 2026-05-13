@@ -3691,11 +3691,16 @@ function TopUsersPanel({
   siteId: number | null;
 }) {
   const [topN, setTopN] = useState<number>(3);
+  // Top-K 分组数（每个用户卡片内显示几个分组）。默认 3，可调。
+  const [topGroups, setTopGroups] = useState<number>(3);
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("scheduling.topUsersN");
-      const n = Number(raw);
+      const rawN = localStorage.getItem("scheduling.topUsersN");
+      const n = Number(rawN);
       if (Number.isFinite(n) && n >= 1 && n <= 20) setTopN(n);
+      const rawG = localStorage.getItem("scheduling.topGroupsPerUser");
+      const g = Number(rawG);
+      if (Number.isFinite(g) && g >= 1 && g <= 20) setTopGroups(g);
     } catch {
       // ignore
     }
@@ -3704,6 +3709,14 @@ function TopUsersPanel({
     setTopN(n);
     try {
       localStorage.setItem("scheduling.topUsersN", String(n));
+    } catch {
+      // ignore
+    }
+  }
+  function persistTopGroups(g: number) {
+    setTopGroups(g);
+    try {
+      localStorage.setItem("scheduling.topGroupsPerUser", String(g));
     } catch {
       // ignore
     }
@@ -3777,23 +3790,43 @@ function TopUsersPanel({
         <span className="font-semibold text-sm">用户实时并发</span>
         <span className="text-[11px] text-default-400">每 2 秒刷新</span>
       </div>
-      <div className="flex items-center gap-1.5">
-        <span className="text-[11px] text-default-500">显示前</span>
-        <Input
-          type="number"
-          size="sm"
-          variant="bordered"
-          className="w-16"
-          classNames={{ inputWrapper: "h-7 min-h-7" }}
-          value={String(topN)}
-          min={1}
-          max={20}
-          onValueChange={(s) => {
-            const n = Math.max(1, Math.min(20, Number(s) || 1));
-            persistTopN(n);
-          }}
-        />
-        <span className="text-[11px] text-default-500">个</span>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-default-500">用户前</span>
+          <Input
+            type="number"
+            size="sm"
+            variant="bordered"
+            className="w-16"
+            classNames={{ inputWrapper: "h-7 min-h-7" }}
+            value={String(topN)}
+            min={1}
+            max={20}
+            onValueChange={(s) => {
+              const n = Math.max(1, Math.min(20, Number(s) || 1));
+              persistTopN(n);
+            }}
+          />
+          <span className="text-[11px] text-default-500">个</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-default-500">每人显示</span>
+          <Input
+            type="number"
+            size="sm"
+            variant="bordered"
+            className="w-16"
+            classNames={{ inputWrapper: "h-7 min-h-7" }}
+            value={String(topGroups)}
+            min={1}
+            max={20}
+            onValueChange={(s) => {
+              const n = Math.max(1, Math.min(20, Number(s) || 1));
+              persistTopGroups(n);
+            }}
+          />
+          <span className="text-[11px] text-default-500">个分组</span>
+        </div>
       </div>
     </CardHeader>
   );
@@ -3824,15 +3857,15 @@ function TopUsersPanel({
             const concBar =
               concPct >= 90 ? "bg-danger" : concPct >= 70 ? "bg-warning" : "bg-primary";
             const rpm = rpmByUser[String(u.user_id)];
-            // 显示所有该用户的分组（不再过滤 used>0）——长连接 streaming 用户
-            // 的 current_in_use 可能>0 但近 1 分钟新请求数=0，过滤掉就什么都看
-            // 不到了。按 used desc 再按 limit desc 排序，活跃的自然排前面。
-            const perGroup = [...(rpm?.per_group ?? [])].sort(
-              (a, b) =>
-                b.used - a.used ||
-                (b.limit ?? 0) - (a.limit ?? 0) ||
-                a.group_id - b.group_id,
-            );
+            // 按 used desc 取前 topGroups 个分组——用户在跑的分组排前面。
+            const perGroup = [...(rpm?.per_group ?? [])]
+              .sort(
+                (a, b) =>
+                  b.used - a.used ||
+                  (b.limit ?? 0) - (a.limit ?? 0) ||
+                  a.group_id - b.group_id,
+              )
+              .slice(0, topGroups);
             return (
               <div
                 key={u.user_id}
@@ -3860,59 +3893,31 @@ function TopUsersPanel({
                     />
                   </div>
                 )}
-                <div className="mt-2 flex items-center justify-between text-[11px] text-default-500">
-                  <span>近 1 分钟 RPM</span>
-                  <span className="tabular-nums">
-                    {rpm?.user_rpm_used ?? "—"}
-                    {rpm?.user_rpm_limit != null && rpm.user_rpm_limit > 0 && (
-                      <span className="text-default-400">
-                        {" "}
-                        / {rpm.user_rpm_limit}
-                      </span>
-                    )}
-                  </span>
-                </div>
-                <div className="mt-1.5 flex flex-col gap-1">
+                <div className="mt-2 flex flex-col gap-0.5">
                   {perGroup.length === 0 ? (
                     <span className="text-[11px] text-default-400">
                       {rpm ? "该用户暂无分组配置" : "加载中…"}
                     </span>
                   ) : (
-                    perGroup.map((g) => {
-                      const lim = g.limit ?? 0;
-                      const pct = lim > 0 ? Math.min(100, (g.used / lim) * 100) : 0;
-                      const barCol =
-                        pct >= 90
-                          ? "bg-danger"
-                          : pct >= 70
-                            ? "bg-warning"
-                            : "bg-primary/60";
-                      return (
-                        <div
-                          key={g.group_id}
-                          className="flex items-center gap-2 text-[11px]"
+                    perGroup.map((g) => (
+                      <div
+                        key={g.group_id}
+                        className="flex items-center justify-between text-[11px]"
+                      >
+                        <span
+                          className="truncate"
+                          title={g.group_name || `#${g.group_id}`}
                         >
-                          <span
-                            className="truncate w-24"
-                            title={g.group_name || `#${g.group_id}`}
-                          >
-                            {g.group_name || `#${g.group_id}`}
-                          </span>
-                          <div className="flex-1 h-1 rounded bg-default-100 overflow-hidden">
-                            <div
-                              className={`h-full ${barCol}`}
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                          <span className="tabular-nums w-16 text-right">
-                            {g.used}
-                            {lim > 0 && (
-                              <span className="text-default-400"> / {lim}</span>
-                            )}
-                          </span>
-                        </div>
-                      );
-                    })
+                          {g.group_name || `#${g.group_id}`}
+                        </span>
+                        <span className="tabular-nums text-default-500 shrink-0 ml-2">
+                          {g.used}
+                          {g.limit != null && g.limit > 0 && (
+                            <span className="text-default-400"> / {g.limit}</span>
+                          )}
+                        </span>
+                      </div>
+                    ))
                   )}
                 </div>
               </div>
