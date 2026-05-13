@@ -326,10 +326,16 @@ export async function backfillRange(
     row.diff = Math.abs(row.upstreamCostBase - row.siteCostBase);
   }
 
-  // 跳过任何捕获到错误的日期 — 部分失败的日期数据残缺，写入会覆盖之前
-  // 的好数据。让前端拿到 errors[] 决定重试。
-  const badDates = new Set(errors.map((e) => e.date));
-  const writable = [...perDate.values()].filter((r) => !badDates.has(r.date));
+  // 只在"该日期零成功"时跳过——避免在 sub2api 完全不可达时用零数据覆盖
+  // 历史好数据。但只要有任何成功结果，就写入：少数死渠道（如永久 404）
+  // 不应该让整天的回填作废，因为剩余 95%+ 的好数据才是用户真正想要的。
+  const successByDate = new Map<string, number>();
+  for (const r of results) {
+    successByDate.set(r.date, (successByDate.get(r.date) ?? 0) + 1);
+  }
+  const writable = [...perDate.values()].filter(
+    (r) => (successByDate.get(r.date) ?? 0) > 0,
+  );
   await prisma.$transaction(
     writable.map((row) =>
       prisma.dailyProfit.upsert({
@@ -340,8 +346,7 @@ export async function backfillRange(
     ),
   );
 
-  // Persist逐 key 明细快照（每个干净日期一份），为上游下线后留底。
-  // 跟 DailyProfit 同步：跳过有 fetch 错误的日期。
+  // Persist逐 key 明细快照（每个有成功数据的日期一份），为上游下线后留底。
   for (const date of writable.map((r) => r.date)) {
     const dateResults = results.filter((r) => r.date === date);
     await persistBreakdownForDate(date, dateResults, bindings, allSites);
