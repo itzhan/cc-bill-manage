@@ -84,6 +84,10 @@ model UpstreamKey {
   remoteKeyId              Int
   name                     String
   keyMasked                String
+  // 完整的 raw api key（从上游 sub2api /api/v1/keys 拉回时写入）。
+  // 用于"自动匹配绑定"——把 site 端 admin account 的 credentials.api_key
+  // 跟这里的 apiKey 对碰，相同就建议绑定。可能为空（旧行或上游返回 mask）。
+  apiKey                   String?
   groupId                  Int
   groupName                String
   // Group's default multiplier (for display/reference)

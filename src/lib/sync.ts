@@ -275,9 +275,14 @@ export async function refreshUpstreamAccount(id: number): Promise<void> {
             };
           }
         }
+        // k.key 是上游 /api/v1/keys 返回的 raw key 值。如果上游版本只回 mask，
+        // 字符串里会带 ***，我们就只保留 keyMasked，apiKey 留 null（不可用来匹配）。
+        const looksRaw =
+          typeof k.key === "string" && k.key.length > 0 && !k.key.includes("*");
         const data = {
           name: k.name,
           keyMasked: maskKey(k.key),
+          apiKey: looksRaw ? k.key : null,
           groupId: resolvedGroupId,
           groupName: k.group?.name || "",
           groupRateMultiplier: groupDefault,

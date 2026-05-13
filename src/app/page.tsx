@@ -1092,6 +1092,39 @@ interface UpstreamKeyOpt {
   upstreamAccountName: string;
 }
 
+interface AutoMatchPlan {
+  summary: {
+    totalSite: number;
+    totalUpstreamKey: number;
+    newBindings: number;
+    misbound: number;
+    alreadyCorrect: number;
+    unmatched: number;
+    errors: number;
+  };
+  proposed: Array<{
+    siteBoundAccountId: number;
+    siteLabel: string;
+    upstreamKeyId: number;
+    upstreamLabel: string;
+  }>;
+  misbound: Array<{
+    siteBoundAccountId: number;
+    siteLabel: string;
+    currentBindingId: number;
+    currentUpstreamKeyId: number;
+    currentUpstreamLabel: string;
+    correctUpstreamKeyId: number;
+    correctUpstreamLabel: string;
+  }>;
+  unmatched: Array<{
+    siteBoundAccountId: number;
+    siteLabel: string;
+    apiKeyMasked: string;
+  }>;
+  errors: Array<{ siteBoundAccountId: number; siteLabel: string; error: string }>;
+}
+
 function UnboundView({
   data,
   loading,
@@ -1115,6 +1148,61 @@ function UnboundView({
   const [optsLoading, setOptsLoading] = useState(false);
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
   const [binding, setBinding] = useState(false);
+
+  // 自动匹配状态
+  const [autoMatching, setAutoMatching] = useState(false);
+  const [autoPlan, setAutoPlan] = useState<AutoMatchPlan | null>(null);
+  const [autoApplying, setAutoApplying] = useState(false);
+  async function runAutoMatch() {
+    setAutoMatching(true);
+    setAutoPlan(null);
+    try {
+      const r = await fetch("/api/bindings/auto-match", { method: "POST" });
+      const j = (await r.json()) as AutoMatchPlan;
+      if (!r.ok) {
+        addToast({
+          title: "匹配失败",
+          description: (j as unknown as { error?: string }).error,
+          color: "danger",
+        });
+        return;
+      }
+      setAutoPlan(j);
+    } finally {
+      setAutoMatching(false);
+    }
+  }
+  async function applyAutoPlan() {
+    if (!autoPlan) return;
+    setAutoApplying(true);
+    try {
+      const r = await fetch("/api/bindings/auto-apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proposed: autoPlan.proposed,
+          misbound: autoPlan.misbound,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        addToast({
+          title: "执行失败",
+          description: j.error,
+          color: "danger",
+        });
+        return;
+      }
+      addToast({
+        title: `已执行 ${j.created} 条（含替换 ${j.replaced}）`,
+        color: "success",
+      });
+      setAutoPlan(null);
+      onRefresh();
+    } finally {
+      setAutoApplying(false);
+    }
+  }
 
   async function openBindDialog(row: UnboundAccountRow) {
     setBindTarget(row);
@@ -1213,6 +1301,15 @@ function UnboundView({
             </span>
           )}
         </div>
+        <Button
+          size="sm"
+          color="primary"
+          variant="flat"
+          onPress={runAutoMatch}
+          isLoading={autoMatching}
+        >
+          自动匹配绑定
+        </Button>
         <Button size="sm" variant="flat" onPress={openPrefixDialog}>
           排除前缀
           {data?.excludePrefixes && data.excludePrefixes.length > 0 && (
@@ -1386,6 +1483,13 @@ function UnboundView({
         binding={binding}
         onClose={() => setBindTarget(null)}
         onConfirm={doBind}
+      />
+
+      <AutoMatchPlanDialog
+        plan={autoPlan}
+        applying={autoApplying}
+        onClose={() => setAutoPlan(null)}
+        onApply={applyAutoPlan}
       />
     </div>
   );
@@ -1607,6 +1711,200 @@ function BindDialog({
             onPress={onConfirm}
           >
             确认绑定
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  );
+}
+
+function AutoMatchPlanDialog({
+  plan,
+  applying,
+  onClose,
+  onApply,
+}: {
+  plan: AutoMatchPlan | null;
+  applying: boolean;
+  onClose: () => void;
+  onApply: () => void;
+}) {
+  const hasChanges =
+    plan != null && (plan.proposed.length > 0 || plan.misbound.length > 0);
+  return (
+    <Modal isOpen={plan !== null} onClose={onClose} size="3xl" scrollBehavior="inside">
+      <ModalContent>
+        <ModalHeader className="flex flex-col items-start gap-0.5">
+          <span>自动匹配绑定 · 预览</span>
+          <span className="text-xs text-default-500 font-normal">
+            通过对碰 sub2api admin account 的 credentials.api_key
+            与 UpstreamKey.apiKey 来匹配
+          </span>
+        </ModalHeader>
+        <ModalBody className="gap-3">
+          {plan && (
+            <>
+              {/* 概览 */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-content2/40 rounded-xl p-3 text-xs">
+                <div>
+                  <div className="text-default-500">扫描账号</div>
+                  <div className="font-semibold tabular-nums">
+                    {plan.summary.totalSite}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-default-500">候选 key</div>
+                  <div className="font-semibold tabular-nums">
+                    {plan.summary.totalUpstreamKey}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-default-500">已正确</div>
+                  <div className="font-semibold tabular-nums text-success">
+                    {plan.summary.alreadyCorrect}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-default-500">错绑</div>
+                  <div className="font-semibold tabular-nums text-danger">
+                    {plan.summary.misbound}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-default-500">将新建绑定</div>
+                  <div className="font-semibold tabular-nums text-primary">
+                    {plan.summary.newBindings}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-default-500">匹配不到</div>
+                  <div className="font-semibold tabular-nums text-warning">
+                    {plan.summary.unmatched}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-default-500">错误</div>
+                  <div className="font-semibold tabular-nums text-danger">
+                    {plan.summary.errors}
+                  </div>
+                </div>
+              </div>
+
+              {plan.misbound.length > 0 && (
+                <section>
+                  <h4 className="text-sm font-semibold mb-1.5 text-danger flex items-center gap-1.5">
+                    <AlertTriangle size={14} /> 错绑修正 ({plan.misbound.length})
+                  </h4>
+                  <Table removeWrapper aria-label="misbound">
+                    <TableHeader>
+                      <TableColumn>站点账号</TableColumn>
+                      <TableColumn>当前（错）</TableColumn>
+                      <TableColumn>应改为</TableColumn>
+                    </TableHeader>
+                    <TableBody>
+                      {plan.misbound.map((m) => (
+                        <TableRow
+                          key={m.siteBoundAccountId}
+                          className="bg-danger-50/30 dark:bg-danger-950/20"
+                        >
+                          <TableCell>
+                            <span className="text-sm font-medium">{m.siteLabel}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-xs line-through text-default-500">
+                              {m.currentUpstreamLabel}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-xs font-medium text-success">
+                              {m.correctUpstreamLabel}
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </section>
+              )}
+
+              {plan.proposed.length > 0 && (
+                <section>
+                  <h4 className="text-sm font-semibold mb-1.5 text-primary">
+                    新建绑定 ({plan.proposed.length})
+                  </h4>
+                  <Table removeWrapper aria-label="proposed">
+                    <TableHeader>
+                      <TableColumn>站点账号</TableColumn>
+                      <TableColumn>要绑定的 upstream key</TableColumn>
+                    </TableHeader>
+                    <TableBody>
+                      {plan.proposed.map((p) => (
+                        <TableRow key={p.siteBoundAccountId}>
+                          <TableCell>
+                            <span className="text-sm font-medium">{p.siteLabel}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-xs">{p.upstreamLabel}</span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </section>
+              )}
+
+              {plan.unmatched.length > 0 && (
+                <section>
+                  <h4 className="text-sm font-semibold mb-1.5 text-warning">
+                    匹配不到 ({plan.unmatched.length})
+                  </h4>
+                  <p className="text-[11px] text-default-500 mb-1.5">
+                    这些站点账号的 credentials.api_key 在我们的 UpstreamKey 表里没找到——
+                    可能上游渠道还没同步过来，或者用的是别的渠道。先去渠道管理 sync 一下。
+                  </p>
+                  <ul className="text-xs text-default-600 max-h-40 overflow-auto space-y-0.5">
+                    {plan.unmatched.map((u) => (
+                      <li key={u.siteBoundAccountId} className="flex justify-between">
+                        <span>{u.siteLabel}</span>
+                        <span className="text-default-400 font-mono">
+                          {u.apiKeyMasked}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {plan.errors.length > 0 && (
+                <section>
+                  <h4 className="text-sm font-semibold mb-1.5 text-danger">
+                    抓取错误 ({plan.errors.length})
+                  </h4>
+                  <ul className="text-xs text-default-600 max-h-32 overflow-auto space-y-0.5">
+                    {plan.errors.slice(0, 30).map((e) => (
+                      <li key={e.siteBoundAccountId}>
+                        {e.siteLabel}: <span className="text-danger">{e.error}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="flat" onPress={onClose}>
+            取消
+          </Button>
+          <Button
+            color="primary"
+            isLoading={applying}
+            isDisabled={!hasChanges}
+            onPress={onApply}
+          >
+            {hasChanges
+              ? `执行 ${(plan?.proposed.length ?? 0) + (plan?.misbound.length ?? 0)} 条变更`
+              : "无变更可执行"}
           </Button>
         </ModalFooter>
       </ModalContent>

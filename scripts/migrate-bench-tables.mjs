@@ -141,5 +141,8 @@ await prisma.$executeRawUnsafe(
 // Settings.unboundExcludePrefixes — 2026-05
 await ensureColumn("Settings", "unboundExcludePrefixes", "TEXT");
 
+// UpstreamKey.apiKey — 2026-05  (raw key value for auto-match-binding)
+await ensureColumn("UpstreamKey", "apiKey", "TEXT");
+
 console.log("bench tables migrated");
 await prisma.$disconnect();
