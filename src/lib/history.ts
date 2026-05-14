@@ -706,13 +706,20 @@ async function loadPersistedBreakdown(date: string): Promise<PersistedBreakdown 
     where: { date },
   });
   if (rows.length === 0) return null;
+  // DB 里的 label 是已经拼好的 "${accountName} / ${keyName}" 字符串。
+  // buildPairedView 又会拼一次前缀，所以这里要剥掉前缀，只保留 bare key/account name。
+  function strip(label: string, prefix: string | null | undefined): string {
+    if (!prefix) return label;
+    const p = prefix + " / ";
+    return label.startsWith(p) ? label.slice(p.length) : label;
+  }
   const upstream: BreakdownUpstreamRow[] = [];
   const site: BreakdownSiteRow[] = [];
   for (const r of rows) {
     if (r.kind === "upstream") {
       upstream.push({
         keyId: r.refId,
-        keyName: r.label,
+        keyName: strip(r.label, r.upstreamAccountName),
         groupName: r.groupName ?? "",
         effectiveRate: r.effectiveRate ?? 1,
         rechargeMultiplier: r.rechargeMultiplier ?? 1,
@@ -726,7 +733,7 @@ async function loadPersistedBreakdown(date: string): Promise<PersistedBreakdown 
     } else {
       site.push({
         siteBoundAccountId: r.refId,
-        accountName: r.label,
+        accountName: strip(r.label, r.siteAccountName),
         siteAccountId: r.siteAccountId ?? 0,
         siteAccountName: r.siteAccountName ?? "",
         rateMultiplier: r.rateMultiplier ?? 1,
