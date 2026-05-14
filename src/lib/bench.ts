@@ -730,6 +730,75 @@ async function finalizeRun(runId: number, canceled: boolean) {
   });
 }
 
+// 把指定 task(必须 status=error)重置为 pending,然后重新触发引擎。供
+// "单题重试" / "重跑所有失败" 用 — 两个入口共用一份重置 + 重启逻辑,
+// 避免每个 API 路由各自拼一遍 SQL 漏字段。
+//
+// 安全约束: run 还在 queued/running 时拒绝 — executeRun 的 queue
+// 是在函数开头一次性 snapshot 的(bench.ts:596),正在跑的执行不会捡到
+// 中途新加入的 pending,这时候 retry 会被丢掉。先让用户取消等收尾。
+export async function retryTasks(
+  runId: number,
+  taskIds: number[],
+): Promise<{ restarted: number }> {
+  if (taskIds.length === 0) return { restarted: 0 };
+  const run = await prisma.benchRun.findUnique({ where: { id: runId } });
+  if (!run) throw new Error(`run ${runId} not found`);
+  if (run.status === "queued" || run.status === "running") {
+    throw new Error("run 还在执行中,先等它结束或取消再重试");
+  }
+  const targets = await prisma.benchTask.findMany({
+    where: { runId, id: { in: taskIds }, status: "error" },
+    select: { id: true },
+  });
+  if (targets.length === 0) return { restarted: 0 };
+  const ids = targets.map((t) => t.id);
+
+  await prisma.$transaction([
+    prisma.benchTask.updateMany({
+      where: { id: { in: ids } },
+      data: {
+        status: "pending",
+        errorText: null,
+        startedAt: null,
+        finishedAt: null,
+        mustGot: null,
+        mustTotal: null,
+        allGot: null,
+        allTotal: null,
+        resolved: null,
+        answerLatencyS: null,
+        judgeLatencyS: null,
+        answerInputTokens: null,
+        answerOutputTokens: null,
+        judgeInputTokens: null,
+        judgeOutputTokens: null,
+        thinkingChars: null,
+        hasSignature: null,
+        answerText: null,
+        judgeRawText: null,
+        judgeParsedJson: null,
+      },
+    }),
+    // failedCount 和 completedCount 当时是 error 完结时累计的;重置回
+    // pending 等于把那次失败"未发生过"。finalizeRun 末尾会重算这两个
+    // 值兜底,但这里也得先减下来不然 UI 进度条会卡在满格。
+    prisma.benchRun.update({
+      where: { id: runId },
+      data: {
+        status: "queued",
+        cancelRequested: false,
+        errorSummary: null,
+        finishedAt: null,
+        failedCount: { decrement: ids.length },
+        completedCount: { decrement: ids.length },
+      },
+    }),
+  ]);
+  startInBackground(runId);
+  return { restarted: ids.length };
+}
+
 // In-process registry of running benches so we don't double-spawn the engine
 // for the same run id (e.g. if the user accidentally hits "start" twice).
 const running = new Set<number>();

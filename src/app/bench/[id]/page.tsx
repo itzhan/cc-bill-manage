@@ -261,6 +261,35 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
     load();
   }
 
+  async function retryTask(taskId: string) {
+    const r = await fetch(
+      `/api/bench/runs/${id}/task/${encodeURIComponent(taskId)}/retry`,
+      { method: "POST" },
+    );
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      addToast({ title: "重试失败", description: j.error, color: "danger" });
+      return;
+    }
+    addToast({ title: "已重新排队", color: "success" });
+    load();
+  }
+
+  async function retryAllFailed() {
+    if (!run) return;
+    if (!confirm(`重跑 ${run.failedCount} 个失败的题?`)) return;
+    const r = await fetch(`/api/bench/runs/${id}/retry-failed`, {
+      method: "POST",
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      addToast({ title: "重跑失败", description: j.error, color: "danger" });
+      return;
+    }
+    addToast({ title: `已重新排队 ${j.restarted} 题`, color: "success" });
+    load();
+  }
+
   if (!run) {
     return (
       <Shell>
@@ -273,6 +302,7 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
 
   const isRunning = run.status === "running" || run.status === "queued";
   const showRestart = run.status === "canceled" || (run.status === "error" && run.failedCount < run.totalCount);
+  const showRetryFailed = !isRunning && run.failedCount > 0;
 
   return (
     <Shell>
@@ -289,6 +319,17 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
         {showRestart && (
           <Button size="sm" color="primary" variant="flat" startContent={<RefreshCw size={14} />} onPress={restart}>
             续跑
+          </Button>
+        )}
+        {showRetryFailed && (
+          <Button
+            size="sm"
+            color="danger"
+            variant="flat"
+            startContent={<RefreshCw size={14} />}
+            onPress={retryAllFailed}
+          >
+            重跑 {run.failedCount} 个失败
           </Button>
         )}
       </div>
@@ -470,7 +511,23 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
                       </div>
                     </TableCell>
                     <TableCell>
-                      <TaskStatusChip status={t.status} resolved={t.resolved} errorText={t.errorText} />
+                      <div className="flex items-center gap-1.5">
+                        <TaskStatusChip status={t.status} resolved={t.resolved} errorText={t.errorText} />
+                        {t.status === "error" && !isRunning && (
+                          <Button
+                            size="sm"
+                            variant="flat"
+                            color="danger"
+                            isIconOnly
+                            aria-label="retry"
+                            title="重试这一题"
+                            className="h-6 min-w-0 w-6"
+                            onPress={() => retryTask(t.taskId)}
+                          >
+                            <RefreshCw size={12} />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-xs">
                       {t.mustGot != null && t.mustTotal != null
