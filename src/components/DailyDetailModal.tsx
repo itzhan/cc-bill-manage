@@ -86,6 +86,8 @@ export default function DailyDetailModal({
   const [err, setErr] = useState<string | null>(null);
   const [view, setView] = useState<"paired" | "unbound">("paired");
   const [showRules, setShowRules] = useState(false);
+  // 把孤立 upstream key 归属给一个 site 账号 — 创建一条历史 binding 覆盖那天。
+  const [attachTarget, setAttachTarget] = useState<PairedRow | null>(null);
 
   // 未绑定 site 账号视图：只看 kind=unbound_site，按收入 (actualCost = revenue)
   // 倒序——花得多的排前面，方便优先去绑定补全利润计算。
@@ -334,6 +336,7 @@ export default function DailyDetailModal({
                         <TableBody>
                           {data.paired.map((r) => {
                             const isUnbound = r.kind === "unbound_site";
+                            const isOrphanUp = r.kind === "unbound_upstream";
                             const profitNet = r.revenue - r.expense - r.diff; // 第一行：扣 1× 差异
                             const profitGross = r.revenue - r.expense; // 第二行：粗利润
                             return (
@@ -342,7 +345,9 @@ export default function DailyDetailModal({
                                 className={
                                   isUnbound && !r.expenseSource
                                     ? "bg-warning-50 dark:bg-warning-950/30"
-                                    : ""
+                                    : isOrphanUp
+                                      ? "bg-danger-50/30 dark:bg-danger-950/20"
+                                      : ""
                                 }
                               >
                                 <TableCell>
@@ -394,6 +399,22 @@ export default function DailyDetailModal({
                                       <span className="text-[10px] text-primary font-medium">
                                         支出来自手动设置
                                       </span>
+                                    )}
+                                    {isOrphanUp && (
+                                      <div className="flex items-center gap-1.5 mt-0.5">
+                                        <span className="text-[10px] text-danger font-medium">
+                                          ⚠ 没绑站点账号 (孤立支出)
+                                        </span>
+                                        <Button
+                                          size="sm"
+                                          variant="flat"
+                                          color="primary"
+                                          className="h-5 min-w-0 px-1.5 text-[10px]"
+                                          onPress={() => setAttachTarget(r)}
+                                        >
+                                          归属给账号…
+                                        </Button>
+                                      </div>
                                     )}
                                     {r.siteAccounts &&
                                       r.siteAccounts.length > 1 && (
@@ -485,6 +506,15 @@ export default function DailyDetailModal({
               isOpen={showRules}
               onClose={() => setShowRules(false)}
               onChanged={reload}
+            />
+            <AttachUpstreamDialog
+              target={attachTarget}
+              date={date ?? ""}
+              onClose={() => setAttachTarget(null)}
+              onApplied={() => {
+                setAttachTarget(null);
+                reload();
+              }}
             />
           </>
         )}
@@ -901,6 +931,131 @@ function ExpenseRulesDialog({
               </TableBody>
             </Table>
           )}
+        </ModalBody>
+      </ModalContent>
+    </Modal>
+  );
+}
+
+interface SiteOpt {
+  id: number;
+  label: string;
+  name: string;
+  siteAccountName: string;
+}
+
+function AttachUpstreamDialog({
+  target,
+  date,
+  onClose,
+  onApplied,
+}: {
+  target: PairedRow | null;
+  date: string;
+  onClose: () => void;
+  onApplied: () => void;
+}) {
+  const [opts, setOpts] = useState<SiteOpt[]>([]);
+  const [loadingOpts, setLoadingOpts] = useState(false);
+  const [selectedSiteId, setSelectedSiteId] = useState<number | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  useEffect(() => {
+    if (!target) return;
+    setSelectedSiteId(null);
+    if (opts.length > 0) return;
+    setLoadingOpts(true);
+    fetch("/api/bindings/options", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => setOpts((j.siteBoundAccounts ?? []) as SiteOpt[]))
+      .finally(() => setLoadingOpts(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
+  async function apply() {
+    if (!target?.upstreamKeyId || !selectedSiteId) return;
+    setApplying(true);
+    try {
+      // 创建历史 binding: 覆盖该日期开始 → 昨天结束 (避免与当前 active binding 冲突)
+      // createdAt 设成 2000-01-01 表示"从一开始就生效", endedAt = 当前查看日期 23:59:59
+      // 这样这条 binding 只对 ≤ 该日期的历史数据生效, 今天的 active binding 不动。
+      const endedAt = `${date}T23:59:59.999+08:00`;
+      const r = await fetch("/api/bindings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          siteBoundAccountId: selectedSiteId,
+          upstreamKeyId: target.upstreamKeyId,
+          createdAt: "2000-01-01T00:00:00.000Z",
+          endedAt,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        addToast({ title: "归属失败", description: j.error, color: "danger" });
+        return;
+      }
+      addToast({ title: "已创建历史 binding", color: "success" });
+      onApplied();
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  return (
+    <Modal isOpen={target !== null} onClose={onClose} size="lg">
+      <ModalContent>
+        <ModalHeader className="flex flex-col items-start gap-0.5">
+          <span>归属孤立的 upstream key</span>
+          {target && (
+            <span className="text-xs text-default-500 font-normal">
+              {target.label}
+            </span>
+          )}
+        </ModalHeader>
+        <ModalBody className="gap-3">
+          <p className="text-xs text-default-500">
+            把这把 upstream key 历史上绑给一个 site 账号——会创建一条
+            <b> 历史 binding</b> （生效到 {date} 23:59）。今天起的 active
+            binding 不受影响。
+          </p>
+          <Input
+            type="text"
+            size="sm"
+            label="搜索 site 账号"
+            placeholder="过滤名称…"
+            isDisabled
+            value={loadingOpts ? "加载中…" : `${opts.length} 个候选`}
+          />
+          <div className="max-h-80 overflow-auto border border-divider/50 rounded-md">
+            {opts.map((o) => (
+              <label
+                key={o.id}
+                className="flex items-center gap-2 px-3 py-2 hover:bg-content2/60 cursor-pointer text-xs border-b border-divider/30 last:border-b-0"
+              >
+                <input
+                  type="radio"
+                  name="site"
+                  checked={selectedSiteId === o.id}
+                  onChange={() => setSelectedSiteId(o.id)}
+                />
+                <span>{o.label}</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="flat" onPress={onClose}>
+              取消
+            </Button>
+            <Button
+              color="primary"
+              isLoading={applying}
+              isDisabled={!selectedSiteId}
+              onPress={apply}
+            >
+              确认归属
+            </Button>
+          </div>
         </ModalBody>
       </ModalContent>
     </Modal>

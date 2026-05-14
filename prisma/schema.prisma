@@ -222,11 +222,15 @@ model Binding {
   // site channels is approaching upstream's tolerance. Not enforced here.
   maxConcurrency      Int?
   createdAt           DateTime @default(now())
+  // Soft-delete + 历史 binding。null = 当前仍生效。设了时间 = 历史 binding,
+  // 不再参与"今天"的配对, 但回看历史日期时 (createdAt ≤ 那天 ≤ endedAt)
+  // 仍会被用来配对收入和支出。
+  endedAt             DateTime?
 
   siteBoundAccount SiteBoundAccount @relation(fields: [siteBoundAccountId], references: [id], onDelete: Cascade)
   upstreamKey      UpstreamKey      @relation(fields: [upstreamKeyId], references: [id], onDelete: Cascade)
 
-  @@unique([siteBoundAccountId, upstreamKeyId])
+  @@index([siteBoundAccountId, upstreamKeyId])
 }
 
 // Reusable preset for "create channel" form on the scheduling page.

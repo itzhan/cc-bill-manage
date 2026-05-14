@@ -25,6 +25,10 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as Partial<{
     siteBoundAccountId: number;
     upstreamKeyId: number;
+    // 历史 binding 用——填写后该 binding 只对这段时间有效。
+    // createdAt 默认为现在 (sql default), endedAt 默认 null (= 当前生效)
+    createdAt: string | null;
+    endedAt: string | null;
   }>;
   const { siteBoundAccountId, upstreamKeyId } = body;
   if (!siteBoundAccountId || !upstreamKeyId) {
@@ -34,9 +38,21 @@ export async function POST(req: Request) {
     );
   }
   try {
-    const item = await prisma.binding.create({
-      data: { siteBoundAccountId, upstreamKeyId },
-    });
+    const data: {
+      siteBoundAccountId: number;
+      upstreamKeyId: number;
+      createdAt?: Date;
+      endedAt?: Date;
+    } = { siteBoundAccountId, upstreamKeyId };
+    if (body.createdAt) {
+      const d = new Date(body.createdAt);
+      if (!isNaN(d.getTime())) data.createdAt = d;
+    }
+    if (body.endedAt) {
+      const d = new Date(body.endedAt);
+      if (!isNaN(d.getTime())) data.endedAt = d;
+    }
+    const item = await prisma.binding.create({ data });
     return NextResponse.json({ item });
   } catch (e: unknown) {
     return NextResponse.json(

@@ -147,6 +147,17 @@ await ensureColumn("UpstreamKey", "apiKey", "TEXT");
 // DailyProfitBreakdown.manualActualCost — 2026-05 (user override)
 await ensureColumn("DailyProfitBreakdown", "manualActualCost", "REAL");
 
+// Binding.endedAt — 2026-05 (time-aware bindings)
+await ensureColumn("Binding", "endedAt", "DATETIME");
+// 同时丢掉旧的 unique 约束 (siteBoundAccountId, upstreamKeyId), 允许同一对
+// 站点-上游 有多个历史区段。SQLite 没法直接 drop unique，但 prisma db push
+// 会重建表; 这里只确保索引兼容。
+await prisma
+  .$executeRawUnsafe(
+    `CREATE INDEX IF NOT EXISTS "Binding_siteBoundAccountId_upstreamKeyId_idx" ON "Binding"("siteBoundAccountId", "upstreamKeyId")`,
+  )
+  .catch(() => {});
+
 // ExpenseRule — 2026-05 (prefix-based fixedCost rules)
 await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ExpenseRule" (
   "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

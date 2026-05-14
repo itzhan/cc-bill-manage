@@ -32,9 +32,12 @@ export async function POST(req: Request) {
 
   try {
     const ops = [
-      // 1) 删旧错绑
+      // 1) 软删旧错绑 (设 endedAt=now), 历史数据仍能配对
       ...misbound.map((m) =>
-        prisma.binding.delete({ where: { id: m.currentBindingId } }),
+        prisma.binding.update({
+          where: { id: m.currentBindingId },
+          data: { endedAt: new Date() },
+        }),
       ),
       // 2) 建新绑定（新的 + 替换的）
       ...proposed.map((p) =>

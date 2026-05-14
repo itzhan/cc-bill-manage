@@ -113,6 +113,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     prisma.upstreamKey.findMany(),
     prisma.siteBoundAccount.findMany(),
     prisma.binding.findMany({
+      where: { endedAt: null }, // 仪表盘是"当下"状态; 历史 binding 不参与
       include: {
         upstreamKey: { include: { upstreamAccount: true } },
         siteBoundAccount: { include: { siteAccount: true } },

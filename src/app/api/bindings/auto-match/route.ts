@@ -27,7 +27,7 @@ export async function POST() {
         where: { apiKey: { not: null } },
         include: { upstreamAccount: true },
       }),
-      prisma.binding.findMany(),
+      prisma.binding.findMany({ where: { endedAt: null } }),
       prisma.settings.findUnique({
         where: { id: 1 },
         select: { unboundExcludePrefixes: true },

@@ -122,6 +122,33 @@ async function loadBindings() {
   });
 }
 
+// 把 binding 按"那天有效"过滤。规则:
+//   createdAt 必须 ≤ 那天的结束 (= 那天 + 1 天的开始)
+//   endedAt 为 null 或 ≥ 那天的开始
+// 用 Asia/Shanghai 日期字符串比较, 避免时区错位。
+function shanghaiDateOf(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+function bindingsActiveOn<
+  T extends { createdAt: Date; endedAt: Date | null },
+>(bindings: T[], date: string): T[] {
+  return bindings.filter((b) => {
+    const created = shanghaiDateOf(b.createdAt);
+    if (created != null && created > date) return false;
+    if (b.endedAt != null) {
+      const ended = shanghaiDateOf(b.endedAt);
+      if (ended != null && ended < date) return false;
+    }
+    return true;
+  });
+}
+
 // 加载全部 siteBoundAccount（不依赖是否绑定 upstream key）——历史回填的
 // 收入侧曾经只迭代 binding，结果把 AZ 渠道、未绑定的散户号等全漏掉了
 // （线上观察：221 个 siteBoundAccount 但只有 36 个有 binding → 漏 185 个）。
@@ -530,7 +557,7 @@ export function resolveFixedCost(
 // 决定的固定支出（用户配的规则）。
 // 调用前提：breakdown 该日期已写过；否则全 0。
 export async function aggregateFromBreakdown(date: string): Promise<BackfillRow> {
-  const [rows, bindingsCnt, rules, accounts] = await Promise.all([
+  const [rows, allBindings, rules, accounts] = await Promise.all([
     prisma.dailyProfitBreakdown.findMany({
       where: { date },
       select: {
@@ -541,13 +568,17 @@ export async function aggregateFromBreakdown(date: string): Promise<BackfillRow>
         manualActualCost: true,
       },
     }),
-    prisma.binding.findMany({ select: { siteBoundAccountId: true } }),
+    prisma.binding.findMany({
+      select: { siteBoundAccountId: true, createdAt: true, endedAt: true },
+    }),
     prisma.expenseRule.findMany({ orderBy: { id: "asc" } }),
     prisma.siteBoundAccount.findMany({
       select: { id: true, name: true, fixedCost: true },
     }),
   ]);
-  const boundIds = new Set(bindingsCnt.map((b) => b.siteBoundAccountId));
+  // 按那天活跃的 binding 算 boundIds — 历史日期会复活已结束的 binding。
+  const activeBindings = bindingsActiveOn(allBindings, date);
+  const boundIds = new Set(activeBindings.map((b) => b.siteBoundAccountId));
   const accById = new Map(accounts.map((a) => [a.id, a]));
 
   const row: BackfillRow = {
@@ -1023,11 +1054,14 @@ export async function fetchDateBreakdown(
     throw new Error("invalid date");
   }
 
-  const [bindings, allSites, rules] = await Promise.all([
+  const [allBindings, allSites, rules] = await Promise.all([
     loadBindings(),
     loadAllSiteBoundAccounts(),
     prisma.expenseRule.findMany({ orderBy: { id: "asc" } }),
   ]);
+  // 只挑这一天 active 的 binding 用来配对——历史日期的"已结束"binding
+  // 会自动复活, 当前已删的"软删除"binding 不影响今天。
+  const bindings = bindingsActiveOn(allBindings, date);
   // 给 buildPairedView 用的上下文：所有 site 账号的 fixedCost + 全局规则
   const accountsById = new Map<number, { name: string; fixedCost: number | null }>();
   for (const a of allSites) {
