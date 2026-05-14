@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recomputeAllDailyProfits } from "@/lib/history";
 
 export const runtime = "nodejs";
 
@@ -53,6 +54,9 @@ export async function POST(req: Request) {
       if (!isNaN(d.getTime())) data.endedAt = d;
     }
     const item = await prisma.binding.create({ data });
+    await recomputeAllDailyProfits().catch((e) =>
+      console.error("[binding create recompute] failed:", e),
+    );
     return NextResponse.json({ item });
   } catch (e: unknown) {
     return NextResponse.json(

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recomputeAllDailyProfits } from "@/lib/history";
 
 export const runtime = "nodejs";
 
@@ -25,6 +26,9 @@ export async function PATCH(
   if (body.notes !== undefined) data.notes = body.notes;
   try {
     const item = await prisma.expenseRule.update({ where: { id: Number(id) }, data });
+    await recomputeAllDailyProfits().catch((e) =>
+      console.error("[expense-rule patch recompute] failed:", e),
+    );
     return NextResponse.json({ item });
   } catch (e) {
     return NextResponse.json(
@@ -41,6 +45,9 @@ export async function DELETE(
   const { id } = await ctx.params;
   try {
     await prisma.expenseRule.delete({ where: { id: Number(id) } });
+    await recomputeAllDailyProfits().catch((e) =>
+      console.error("[expense-rule delete recompute] failed:", e),
+    );
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json(

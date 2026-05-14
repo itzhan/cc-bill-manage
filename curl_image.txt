@@ -1,0 +1,11 @@
+curl -sS -X POST https://lsai.palm-h.com/v1/images/generations \
+  -H "Authorization: Bearer sk-b194bd3e567f28495cc752e9f05e39f548bfcb2b5dacbfb3dc7598d1df025307" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2",
+    "prompt": "hello world cat",
+    "n": 1,
+    "size": "2160x3840",
+    "quality": "low"
+  }' \
+  | jq -r '.data[0].b64_json' | base64 -D > out.png

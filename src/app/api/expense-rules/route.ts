@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recomputeAllDailyProfits } from "@/lib/history";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,9 @@ export async function POST(req: Request) {
     const item = await prisma.expenseRule.create({
       data: { prefix, fixedCost, notes: body.notes ?? null },
     });
+    await recomputeAllDailyProfits().catch((e) =>
+      console.error("[expense-rule create recompute] failed:", e),
+    );
     return NextResponse.json({ item });
   } catch (e) {
     return NextResponse.json(

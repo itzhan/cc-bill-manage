@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recomputeDailyProfitForDate } from "@/lib/history";
 
 export const runtime = "nodejs";
 
@@ -47,6 +48,7 @@ export async function PATCH(
       data,
       select: { actualCost: true, manualActualCost: true, cost: true, manualCost: true },
     });
+    await recomputeDailyProfitForDate(date);
     return NextResponse.json({ ok: true, row });
   } catch (e) {
     return NextResponse.json(

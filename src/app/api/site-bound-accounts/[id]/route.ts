@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recomputeAllDailyProfits } from "@/lib/history";
 
 export const runtime = "nodejs";
 
@@ -44,6 +45,12 @@ export async function PATCH(
     where: { id: Number(id) },
     data,
   });
+  // fixedCost 影响每天的"未绑定账号支出"计算 → 全量重算 DailyProfit
+  if ("fixedCost" in data) {
+    await recomputeAllDailyProfits().catch((e) =>
+      console.error("[site-bound recompute] failed:", e),
+    );
+  }
   return NextResponse.json({
     item: { ...item, todayTokens: item.todayTokens.toString() },
   });

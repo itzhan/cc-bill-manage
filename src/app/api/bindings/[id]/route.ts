@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recomputeAllDailyProfits } from "@/lib/history";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,9 @@ export async function DELETE(
       data: { endedAt: new Date() },
     });
   }
+  await recomputeAllDailyProfits().catch((e) =>
+    console.error("[binding delete recompute] failed:", e),
+  );
   return NextResponse.json({ ok: true });
 }
 
@@ -59,5 +63,8 @@ export async function PATCH(
     where: { id: Number(id) },
     data,
   });
+  await recomputeAllDailyProfits().catch((e) =>
+    console.error("[binding patch recompute] failed:", e),
+  );
   return NextResponse.json({ item });
 }

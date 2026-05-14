@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { recomputeAllDailyProfits } from "@/lib/history";
 
 export const runtime = "nodejs";
 
@@ -40,7 +41,10 @@ export async function POST(req: Request) {
     );
   try {
     const created = await prisma.$transaction(ops);
-    return NextResponse.json({ created: created.length });
+    // 新增的历史 binding 会影响过去任意日期的 paired 计算; 全量重算 DailyProfit
+    // 保证 UI 表格立即反映。
+    const { updated } = await recomputeAllDailyProfits();
+    return NextResponse.json({ created: created.length, recomputed: updated });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : String(e) },

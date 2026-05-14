@@ -539,6 +539,44 @@ async function persistBreakdownForDate(
   await Promise.all(writes);
 }
 
+// 用 aggregateFromBreakdown 重算某日 DailyProfit. 任何会影响该日 breakdown
+// 计算的操作 (manual edit / 扫描修复 / fixedCost / rule 变更) 跑完都要调一下,
+// 保证 UI 表格和 modal 数字始终一致。
+export async function recomputeDailyProfitForDate(date: string): Promise<void> {
+  const agg = await aggregateFromBreakdown(date);
+  await prisma.dailyProfit.upsert({
+    where: { date },
+    create: { ...agg },
+    update: {
+      revenue: agg.revenue,
+      expense: agg.expense,
+      profit: agg.profit,
+      siteCostBase: agg.siteCostBase,
+      upstreamCostBase: agg.upstreamCostBase,
+      diff: agg.diff,
+    },
+  });
+}
+
+// 重算所有有 breakdown 数据的日期. 用于大范围影响的操作 (改 fixedCost 或
+// expense rule, apply 历史绑定建议等)。
+export async function recomputeAllDailyProfits(): Promise<{ updated: number }> {
+  const dates = await prisma.dailyProfitBreakdown.findMany({
+    select: { date: true },
+    distinct: ["date"],
+  });
+  let updated = 0;
+  for (const { date } of dates) {
+    try {
+      await recomputeDailyProfitForDate(date);
+      updated++;
+    } catch (e) {
+      console.error(`[recomputeAll ${date}] failed:`, e);
+    }
+  }
+  return { updated };
+}
+
 // 给定一个 site 账号名 + per-account fixedCost + 全局规则，
 // 返回该账号的固定支出（每天一份）。null 表示没规则也没 override。
 // 优先级：账号自己的 fixedCost > 第一个匹配的前缀规则。
