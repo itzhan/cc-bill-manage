@@ -86,6 +86,7 @@ export default function DailyDetailModal({
   const [err, setErr] = useState<string | null>(null);
   const [view, setView] = useState<"paired" | "unbound">("paired");
   const [showRules, setShowRules] = useState(false);
+  const [showScanFix, setShowScanFix] = useState(false);
   // 把孤立 upstream key 归属给一个 site 账号 — 创建一条历史 binding 覆盖那天。
   const [attachTarget, setAttachTarget] = useState<PairedRow | null>(null);
 
@@ -170,6 +171,14 @@ export default function DailyDetailModal({
                   onPress={() => setShowRules(true)}
                 >
                   支出规则
+                </Button>
+                <Button
+                  size="sm"
+                  color="warning"
+                  variant="flat"
+                  onPress={() => setShowScanFix(true)}
+                >
+                  扫描修复孤立支出
                 </Button>
               </div>
               <p className="text-xs text-default-500 font-normal">
@@ -513,6 +522,14 @@ export default function DailyDetailModal({
               onClose={() => setAttachTarget(null)}
               onApplied={() => {
                 setAttachTarget(null);
+                reload();
+              }}
+            />
+            <ScanFixDialog
+              isOpen={showScanFix}
+              onClose={() => setShowScanFix(false)}
+              onApplied={() => {
+                setShowScanFix(false);
                 reload();
               }}
             />
@@ -1054,6 +1071,260 @@ function AttachUpstreamDialog({
               onPress={apply}
             >
               确认归属
+            </Button>
+          </div>
+        </ModalBody>
+      </ModalContent>
+    </Modal>
+  );
+}
+
+interface ScanSuggestion {
+  date: string;
+  siteBoundAccountId: number;
+  siteLabel: string;
+  pairedUpstreamKeyId: number;
+  pairedUpstreamLabel: string;
+  orphanUpstreamKeyId: number;
+  orphanUpstreamLabel: string;
+  groupName: string;
+  effectiveRate: number;
+  revenue: number;
+  orphanExpense: number;
+  reason: string;
+  dates: string[];
+  totalRevenue: number;
+  totalOrphanExpense: number;
+  latestDate: string;
+}
+interface ScanResult {
+  scannedDays: number;
+  suggestionCount: number;
+  items: ScanSuggestion[];
+}
+
+function ScanFixDialog({
+  isOpen,
+  onClose,
+  onApplied,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onApplied: () => void;
+}) {
+  const [days, setDays] = useState(60);
+  const [scanning, setScanning] = useState(false);
+  const [result, setResult] = useState<ScanResult | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [applying, setApplying] = useState(false);
+
+  function keyOf(s: ScanSuggestion): string {
+    return `${s.siteBoundAccountId}:${s.orphanUpstreamKeyId}`;
+  }
+
+  async function scan() {
+    setScanning(true);
+    setResult(null);
+    try {
+      const r = await fetch(`/api/bindings/auto-suggest-history?days=${days}`, {
+        cache: "no-store",
+      });
+      const j = (await r.json()) as ScanResult;
+      setResult(j);
+      // 默认全选
+      setSelected(new Set(j.items.map(keyOf)));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  useEffect(() => {
+    if (isOpen) scan();
+    else {
+      setResult(null);
+      setSelected(new Set());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  async function apply() {
+    if (!result) return;
+    const toApply = result.items.filter((s) => selected.has(keyOf(s)));
+    if (toApply.length === 0) {
+      addToast({ title: "没有勾选任何条目", color: "warning" });
+      return;
+    }
+    setApplying(true);
+    try {
+      const r = await fetch("/api/bindings/apply-history-suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: toApply.map((s) => ({
+            siteBoundAccountId: s.siteBoundAccountId,
+            orphanUpstreamKeyId: s.orphanUpstreamKeyId,
+            latestDate: s.latestDate,
+          })),
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        addToast({ title: "应用失败", description: j.error, color: "danger" });
+        return;
+      }
+      addToast({ title: `已创建 ${j.created} 条历史 binding`, color: "success" });
+      onApplied();
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="5xl" scrollBehavior="inside">
+      <ModalContent>
+        <ModalHeader className="flex flex-col items-start gap-0.5">
+          <span>扫描并修复孤立支出</span>
+          <span className="text-xs text-default-500 font-normal">
+            找出"绑定了的 key 当天 0 流量 + 同组同倍率有另一把 key 在跑"的情况，建议把
+            孤立 key 归属给当前 paired 行那个 site 账号。同组 + 同倍率 = 同一逻辑渠道
+            (新旧迁移产物)。
+          </span>
+        </ModalHeader>
+        <ModalBody className="gap-3">
+          <div className="flex items-end gap-2">
+            <Input
+              type="number"
+              size="sm"
+              label="扫描近 N 天"
+              value={String(days)}
+              onValueChange={(v) =>
+                setDays(Math.max(1, Math.min(365, Number(v) || 60)))
+              }
+              className="w-32"
+            />
+            <Button color="primary" isLoading={scanning} onPress={scan}>
+              重新扫描
+            </Button>
+            <span className="text-xs text-default-400 ml-2">
+              {result
+                ? `扫描了 ${result.scannedDays} 天 · 发现 ${result.suggestionCount} 条建议`
+                : ""}
+            </span>
+          </div>
+
+          {scanning && (
+            <div className="flex justify-center p-4">
+              <Spinner label="扫描中…" />
+            </div>
+          )}
+
+          {result && result.items.length === 0 && !scanning && (
+            <p className="text-default-500 text-sm py-3">
+              没有发现需要修复的孤立支出。
+            </p>
+          )}
+
+          {result && result.items.length > 0 && (
+            <Table aria-label="suggestions" removeWrapper>
+              <TableHeader>
+                <TableColumn>
+                  <input
+                    type="checkbox"
+                    checked={selected.size === result.items.length}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelected(new Set(result.items.map(keyOf)));
+                      } else {
+                        setSelected(new Set());
+                      }
+                    }}
+                  />
+                </TableColumn>
+                <TableColumn>覆盖天数</TableColumn>
+                <TableColumn>站点账号</TableColumn>
+                <TableColumn>当前 paired (0 支出)</TableColumn>
+                <TableColumn>孤立 key (有支出)</TableColumn>
+                <TableColumn>累计孤立支出</TableColumn>
+              </TableHeader>
+              <TableBody>
+                {result.items.map((s) => {
+                  const k = keyOf(s);
+                  const checked = selected.has(k);
+                  return (
+                    <TableRow key={k}>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = new Set(selected);
+                            if (e.target.checked) next.add(k);
+                            else next.delete(k);
+                            setSelected(next);
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col leading-tight">
+                          <span className="text-xs tabular-nums">{s.dates.length} 天</span>
+                          <span className="text-[10px] text-default-400">
+                            截至 {s.latestDate}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-sm">{s.siteLabel}</span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col leading-tight">
+                          <span className="text-xs line-through text-default-500">
+                            {s.pairedUpstreamLabel}
+                          </span>
+                          <Chip
+                            size="sm"
+                            variant="flat"
+                            classNames={{ base: "h-4", content: "text-[10px] px-1" }}
+                          >
+                            {s.groupName} ×{s.effectiveRate.toFixed(2)}
+                          </Chip>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col leading-tight">
+                          <span className="text-xs font-medium text-success">
+                            {s.orphanUpstreamLabel}
+                          </span>
+                          <span className="text-[10px] text-default-400">
+                            {s.reason}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className="tabular-nums font-medium text-warning"
+                          title={fmtMoney(s.totalOrphanExpense)}
+                        >
+                          {fmtMoneyShort(s.totalOrphanExpense)}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="flat" onPress={onClose}>
+              取消
+            </Button>
+            <Button
+              color="primary"
+              isLoading={applying}
+              isDisabled={selected.size === 0}
+              onPress={apply}
+            >
+              应用 {selected.size} 条
             </Button>
           </div>
         </ModalBody>
