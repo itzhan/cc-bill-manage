@@ -1134,6 +1134,121 @@ function buildPairedView(
   return rows;
 }
 
+// 每日明细的唯一总计来源 = 各 paired 行求和。modal 顶部 / dashboard
+// 每日利润列表共用这个,避免出现"总计跟逐行加起来对不上"。
+function totalsFromPaired(
+  paired: PairedBreakdownRow[],
+): DateBreakdown["totals"] {
+  const t = {
+    revenue: 0,
+    expense: 0,
+    profit: 0,
+    siteCostBase: 0,
+    upstreamCostBase: 0,
+    diff: 0,
+  };
+  for (const r of paired) {
+    t.revenue += r.revenue;
+    t.expense += r.expense;
+    t.siteCostBase += r.siteCostBase;
+    t.upstreamCostBase += r.upstreamCostBase;
+    t.diff += r.diff;
+  }
+  t.profit = t.revenue - t.expense;
+  return t;
+}
+
+// 批量按 paired view 推理每天的 totals — 给 /api/daily-profit 列表用,
+// 不再读 DailyProfit 表。返回顺序跟入参 dates 一致;某天 breakdown 空 → 全 0。
+export async function aggregateManyFromPaired(
+  dates: string[],
+): Promise<BackfillRow[]> {
+  if (dates.length === 0) return [];
+  const [allBindings, rules, allSites, allRows] = await Promise.all([
+    loadBindings(),
+    prisma.expenseRule.findMany({ orderBy: { id: "asc" } }),
+    loadAllSiteBoundAccounts(),
+    prisma.dailyProfitBreakdown.findMany({ where: { date: { in: dates } } }),
+  ]);
+  const accountsById = new Map<
+    number,
+    { name: string; fixedCost: number | null }
+  >();
+  for (const a of allSites) {
+    accountsById.set(a.id, { name: a.name, fixedCost: a.fixedCost ?? null });
+  }
+  const ctx = { rules, accountsById };
+  const byDate = new Map<string, typeof allRows>();
+  for (const r of allRows) {
+    const list = byDate.get(r.date) ?? [];
+    list.push(r);
+    byDate.set(r.date, list);
+  }
+  function strip(label: string, prefix: string | null | undefined): string {
+    if (!prefix) return label;
+    const p = prefix + " / ";
+    return label.startsWith(p) ? label.slice(p.length) : label;
+  }
+  return dates.map((date) => {
+    const rows = byDate.get(date) ?? [];
+    if (rows.length === 0) {
+      return {
+        date,
+        revenue: 0,
+        expense: 0,
+        profit: 0,
+        siteCostBase: 0,
+        upstreamCostBase: 0,
+        diff: 0,
+      };
+    }
+    const upstream: BreakdownUpstreamRow[] = [];
+    const site: BreakdownSiteRow[] = [];
+    for (const r of rows) {
+      if (r.kind === "upstream") {
+        upstream.push({
+          keyId: r.refId,
+          keyName: strip(r.label, r.upstreamAccountName),
+          groupName: r.groupName ?? "",
+          effectiveRate: r.effectiveRate ?? 1,
+          rechargeMultiplier: r.rechargeMultiplier ?? 1,
+          upstreamAccountId: r.upstreamAccountId ?? 0,
+          upstreamAccountName: r.upstreamAccountName ?? "",
+          upstreamType: r.upstreamType ?? "",
+          cost: r.cost,
+          actualCost: r.actualCost,
+          manualActualCost: r.manualActualCost ?? null,
+          manualCost: r.manualCost ?? null,
+        });
+      } else {
+        site.push({
+          siteBoundAccountId: r.refId,
+          accountName: strip(r.label, r.siteAccountName),
+          siteAccountId: r.siteAccountId ?? 0,
+          siteAccountName: r.siteAccountName ?? "",
+          rateMultiplier: r.rateMultiplier ?? 1,
+          cost: r.cost,
+          actualCost: r.actualCost,
+          manualActualCost: r.manualActualCost ?? null,
+          manualCost: r.manualCost ?? null,
+        });
+      }
+    }
+    const dayBindings = bindingsActiveOn(allBindings, date);
+    const paired = buildPairedView(upstream, site, dayBindings, ctx);
+    const t = totalsFromPaired(paired);
+    return {
+      date,
+      revenue: t.revenue,
+      expense: t.expense,
+      profit: t.profit,
+      siteCostBase: t.siteCostBase,
+      upstreamCostBase: t.upstreamCostBase,
+      diff: t.diff,
+    };
+  });
+}
+
 export async function fetchDateBreakdown(
   date: string,
   opts: { forceRefresh?: boolean } = {},
@@ -1166,10 +1281,13 @@ export async function fetchDateBreakdown(
   if (!opts.forceRefresh) {
     const cached = await loadPersistedBreakdown(date);
     if (cached) {
-      return {
-        ...cached,
-        paired: buildPairedView(cached.upstream, cached.site, bindings, pairedCtx),
-      };
+      const paired = buildPairedView(
+        cached.upstream,
+        cached.site,
+        bindings,
+        pairedCtx,
+      );
+      return { ...cached, paired, totals: totalsFromPaired(paired) };
     }
     // 缓存为空时 fall through 到 live fetch + write-through。
   }
@@ -1251,10 +1369,13 @@ export async function fetchDateBreakdown(
   if (results.length === 0 && errors.length > 0) {
     const cached = await loadPersistedBreakdown(date);
     if (cached) {
-      return {
-        ...cached,
-        paired: buildPairedView(cached.upstream, cached.site, bindings, pairedCtx),
-      };
+      const paired = buildPairedView(
+        cached.upstream,
+        cached.site,
+        bindings,
+        pairedCtx,
+      );
+      return { ...cached, paired, totals: totalsFromPaired(paired) };
     }
     // 缓存也没有 → 把 errors 暴露出去，前端能看到。
   }
@@ -1296,17 +1417,6 @@ export async function fetchDateBreakdown(
   // Sort largest contribution first — easier to scan.
   upstream.sort((a, b) => b.actualCost - a.actualCost);
   site.sort((a, b) => b.actualCost - a.actualCost);
-
-  const totals = {
-    revenue: site.reduce((s, r) => s + r.actualCost, 0),
-    expense: upstream.reduce((s, r) => s + r.actualCost, 0),
-    profit: 0,
-    siteCostBase: site.reduce((s, r) => s + r.cost, 0),
-    upstreamCostBase: upstream.reduce((s, r) => s + r.cost, 0),
-    diff: 0,
-  };
-  totals.profit = totals.revenue - totals.expense;
-  totals.diff = Math.abs(totals.upstreamCostBase - totals.siteCostBase);
 
   // Write-through: 拿到了实时数据就趁机留底。下次上游挂了就有兜底。
   // 错误不阻塞返回 — 失败时只是少了缓存，不影响本次响应。
@@ -1357,5 +1467,12 @@ export async function fetchDateBreakdown(
   }
 
   const paired = buildPairedView(upstream, site, bindings, pairedCtx);
-  return { date, upstream, site, paired, totals, errors };
+  return {
+    date,
+    upstream,
+    site,
+    paired,
+    totals: totalsFromPaired(paired),
+    errors,
+  };
 }
