@@ -139,12 +139,16 @@ function bindingsActiveOn<
   T extends { createdAt: Date; endedAt: Date | null },
 >(bindings: T[], date: string): T[] {
   return bindings.filter((b) => {
+    if (b.endedAt == null) {
+      // 当前 active binding —— 追溯生效到所有日期。
+      // 用户在 5-13 绑了一条 binding, 也希望它能配对 4-29 的历史数据。
+      return true;
+    }
+    // 历史 binding (endedAt 已设): 仅在 [createdAt, endedAt] 区间内生效。
+    const ended = shanghaiDateOf(b.endedAt);
+    if (ended != null && ended < date) return false;
     const created = shanghaiDateOf(b.createdAt);
     if (created != null && created > date) return false;
-    if (b.endedAt != null) {
-      const ended = shanghaiDateOf(b.endedAt);
-      if (ended != null && ended < date) return false;
-    }
     return true;
   });
 }
@@ -907,6 +911,8 @@ function buildPairedView(
   }
 
   const rows: PairedBreakdownRow[] = [];
+  // 实际成功"配对"的 keyId 集合 — 不含那些被降级为 unbound_upstream 的
+  const pairedKeyIds = new Set<number>();
 
   // ── paired 行：每把 upstream key 一行，聚合其绑定的 site 账号。
   for (const [keyId, siteIds] of bySiteByKey.entries()) {
@@ -934,6 +940,10 @@ function buildPairedView(
     const expense = manual ?? synced;
     const upstreamCostBase = upRow?.cost ?? 0;
     if (revenue === 0 && expense === 0 && synced === 0) continue; // 当天没用
+    // 所有绑定的 site 当天 0 收入 → 不算 paired, 让 upstream 落到 unbound_upstream
+    // 这样支出依旧显示, 但不会跟 0 收入的 site 凑成一对误导用户。
+    if (revenue === 0 && (expense > 0 || synced > 0)) continue;
+    pairedKeyIds.add(keyId);
     rows.push({
       rowKey: `paired:${keyId}`,
       kind: "paired",
@@ -1010,11 +1020,13 @@ function buildPairedView(
     });
   }
 
-  // ── unbound_upstream 行：upstream key 有流量但没在任何 binding 里 — 不应
-  //    发生但还是兜底显示。
-  const boundKeyIds = new Set(bySiteByKey.keys());
+  // ── unbound_upstream 行：upstream key 有流量但当天没成功配对到 site 行。
+  // 包含两种情况:
+  //   1) 这把 key 没有任何 binding
+  //   2) 有 binding, 但绑的 site 当天 0 收入, paired row 已被降级
+  // 用 pairedKeyIds (实际成功配对的) 判断, 不是 bySiteByKey (所有绑的)。
   for (const u of upstream) {
-    if (boundKeyIds.has(u.keyId)) continue;
+    if (pairedKeyIds.has(u.keyId)) continue;
     const manual = u.manualActualCost ?? null;
     const expense = manual ?? u.actualCost;
     if (expense === 0 && u.actualCost === 0 && u.cost === 0) continue;
