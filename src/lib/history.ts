@@ -570,6 +570,7 @@ export async function aggregateFromBreakdown(date: string): Promise<BackfillRow>
         cost: true,
         actualCost: true,
         manualActualCost: true,
+        manualCost: true,
       },
     }),
     prisma.binding.findMany({
@@ -595,11 +596,13 @@ export async function aggregateFromBreakdown(date: string): Promise<BackfillRow>
     diff: 0,
   };
   for (const r of rows) {
+    const effActual = r.manualActualCost ?? r.actualCost;
+    const effCost = r.manualCost ?? r.cost;
     if (r.kind === "site") {
-      row.revenue += r.actualCost;
-      row.siteCostBase += r.cost;
+      row.revenue += effActual;
+      row.siteCostBase += effCost;
       // 未绑定 + 有规则/fixedCost → 加上固定支出
-      if (!boundIds.has(r.refId) && r.actualCost > 0) {
+      if (!boundIds.has(r.refId) && effActual > 0) {
         const a = accById.get(r.refId);
         if (a) {
           const fc = resolveFixedCost(a.name, a.fixedCost ?? null, rules);
@@ -607,8 +610,8 @@ export async function aggregateFromBreakdown(date: string): Promise<BackfillRow>
         }
       }
     } else {
-      row.expense += r.manualActualCost ?? r.actualCost;
-      row.upstreamCostBase += r.cost;
+      row.expense += effActual;
+      row.upstreamCostBase += effCost;
     }
   }
   row.profit = row.revenue - row.expense;
@@ -764,6 +767,7 @@ async function loadPersistedBreakdown(date: string): Promise<PersistedBreakdown 
         cost: r.cost,
         actualCost: r.actualCost,
         manualActualCost: r.manualActualCost ?? null,
+        manualCost: r.manualCost ?? null,
       });
     } else {
       site.push({
@@ -774,6 +778,8 @@ async function loadPersistedBreakdown(date: string): Promise<PersistedBreakdown 
         rateMultiplier: r.rateMultiplier ?? 1,
         cost: r.cost,
         actualCost: r.actualCost,
+        manualActualCost: r.manualActualCost ?? null,
+        manualCost: r.manualCost ?? null,
       });
     }
   }
@@ -811,10 +817,10 @@ export interface BreakdownUpstreamRow {
   upstreamAccountId: number;
   upstreamAccountName: string;
   upstreamType: string;
-  cost: number; // 1×
+  cost: number; // 1× (synced)
   actualCost: number; // × effectiveRate × rechargeMultiplier (= expense contribution, synced)
-  // 用户手动改写过的支出。非 null 时 buildPairedView 优先用这个。
   manualActualCost?: number | null;
+  manualCost?: number | null;
 }
 
 export interface BreakdownSiteRow {
@@ -823,8 +829,10 @@ export interface BreakdownSiteRow {
   siteAccountId: number;
   siteAccountName: string;
   rateMultiplier: number;
-  cost: number; // 1×
-  actualCost: number; // revenue contribution
+  cost: number; // 1× (synced)
+  actualCost: number; // revenue contribution (synced)
+  manualActualCost?: number | null;
+  manualCost?: number | null;
 }
 
 // Per-row in the unified daily breakdown view. Each row pairs one upstream
@@ -850,14 +858,20 @@ export interface PairedBreakdownRow {
     actualCost: number;
   }>;
   // Metrics (in display currency = same scale across paired/unbound)
-  revenue: number; // sum of paired site actualCost (or own for unbound site)
+  revenue: number; // sum of paired site actualCost (or own for unbound site) — manual 优先
+  revenueSynced?: number; // 同步值（仅有 manual 时填）
+  revenueIsManual?: boolean;
   expense: number; // effective expense（手动值优先；否则同步值/规则）
-  expenseSynced?: number; // 原同步值（仅有手动 override 时才填，用于显示对照）
-  expenseIsManual?: boolean; // true = expense 来自用户手动改写
-  expenseSource?: "synced" | "manual" | "rule" | "account_fixed"; // 支出来源
-  expenseRulePrefix?: string; // 命中的规则前缀（仅 source=rule 时）
-  siteCostBase: number;
-  upstreamCostBase: number;
+  expenseSynced?: number;
+  expenseIsManual?: boolean;
+  expenseSource?: "synced" | "manual" | "rule" | "account_fixed";
+  expenseRulePrefix?: string;
+  siteCostBase: number; // 本站 1× (manual 优先)
+  siteCostBaseSynced?: number;
+  siteCostBaseIsManual?: boolean;
+  upstreamCostBase: number; // 上游 1× (manual 优先)
+  upstreamCostBaseSynced?: number;
+  upstreamCostBaseIsManual?: boolean;
   diff: number; // max(0, upstreamCostBase - siteCostBase)
   profit: number; // revenue - expense
 }
@@ -920,29 +934,40 @@ function buildPairedView(
     if (!upRow && siteIds.every((sid) => !siteRowByAccId.has(sid))) continue;
     const sites: NonNullable<PairedBreakdownRow["siteAccounts"]> = [];
     let revenue = 0;
+    let revenueSynced = 0;
     let siteCostBase = 0;
+    let siteCostBaseSynced = 0;
+    let anyRevManual = false;
+    let anyCostManual = false;
     for (const sid of siteIds) {
       const sr = siteRowByAccId.get(sid);
       if (!sr) continue;
+      const eAc = sr.manualActualCost ?? sr.actualCost;
+      const eC = sr.manualCost ?? sr.cost;
       sites.push({
         siteBoundAccountId: sr.siteBoundAccountId,
         accountName: sr.accountName,
         siteAccountName: sr.siteAccountName,
         rateMultiplier: sr.rateMultiplier,
-        cost: sr.cost,
-        actualCost: sr.actualCost,
+        cost: eC,
+        actualCost: eAc,
       });
-      revenue += sr.actualCost;
-      siteCostBase += sr.cost;
+      revenue += eAc;
+      revenueSynced += sr.actualCost;
+      siteCostBase += eC;
+      siteCostBaseSynced += sr.cost;
+      if (sr.manualActualCost != null) anyRevManual = true;
+      if (sr.manualCost != null) anyCostManual = true;
     }
-    const synced = upRow?.actualCost ?? 0;
-    const manual = upRow?.manualActualCost ?? null;
-    const expense = manual ?? synced;
-    const upstreamCostBase = upRow?.cost ?? 0;
-    if (revenue === 0 && expense === 0 && synced === 0) continue; // 当天没用
+    const expSynced = upRow?.actualCost ?? 0;
+    const expManual = upRow?.manualActualCost ?? null;
+    const expense = expManual ?? expSynced;
+    const upSynced = upRow?.cost ?? 0;
+    const upManual = upRow?.manualCost ?? null;
+    const upstreamCostBase = upManual ?? upSynced;
+    if (revenue === 0 && expense === 0 && expSynced === 0) continue; // 当天没用
     // 所有绑定的 site 当天 0 收入 → 不算 paired, 让 upstream 落到 unbound_upstream
-    // 这样支出依旧显示, 但不会跟 0 收入的 site 凑成一对误导用户。
-    if (revenue === 0 && (expense > 0 || synced > 0)) continue;
+    if (revenue === 0 && (expense > 0 || expSynced > 0)) continue;
     pairedKeyIds.add(keyId);
     rows.push({
       rowKey: `paired:${keyId}`,
@@ -958,11 +983,17 @@ function buildPairedView(
       rechargeMultiplier: upRow?.rechargeMultiplier,
       siteAccounts: sites,
       revenue,
+      revenueSynced: anyRevManual ? revenueSynced : undefined,
+      revenueIsManual: anyRevManual,
       expense,
-      expenseSynced: manual != null ? synced : undefined,
-      expenseIsManual: manual != null,
+      expenseSynced: expManual != null ? expSynced : undefined,
+      expenseIsManual: expManual != null,
       siteCostBase,
+      siteCostBaseSynced: anyCostManual ? siteCostBaseSynced : undefined,
+      siteCostBaseIsManual: anyCostManual,
       upstreamCostBase,
+      upstreamCostBaseSynced: upManual != null ? upSynced : undefined,
+      upstreamCostBaseIsManual: upManual != null,
       diff: Math.max(0, upstreamCostBase - siteCostBase),
       profit: revenue - expense,
     });
@@ -995,6 +1026,8 @@ function buildPairedView(
         }
       }
     }
+    const sRev = s.manualActualCost ?? s.actualCost;
+    const sCost = s.manualCost ?? s.cost;
     rows.push({
       rowKey: `unbound_site:${s.siteBoundAccountId}`,
       kind: "unbound_site",
@@ -1005,18 +1038,22 @@ function buildPairedView(
           accountName: s.accountName,
           siteAccountName: s.siteAccountName,
           rateMultiplier: s.rateMultiplier,
-          cost: s.cost,
-          actualCost: s.actualCost,
+          cost: sCost,
+          actualCost: sRev,
         },
       ],
-      revenue: s.actualCost,
+      revenue: sRev,
+      revenueSynced: s.manualActualCost != null ? s.actualCost : undefined,
+      revenueIsManual: s.manualActualCost != null,
       expense,
       expenseSource,
       expenseRulePrefix,
-      siteCostBase: s.cost,
+      siteCostBase: sCost,
+      siteCostBaseSynced: s.manualCost != null ? s.cost : undefined,
+      siteCostBaseIsManual: s.manualCost != null,
       upstreamCostBase: 0,
       diff: 0,
-      profit: s.actualCost - expense,
+      profit: sRev - expense,
     });
   }
 
@@ -1029,6 +1066,7 @@ function buildPairedView(
     if (pairedKeyIds.has(u.keyId)) continue;
     const manual = u.manualActualCost ?? null;
     const expense = manual ?? u.actualCost;
+    const upCost = u.manualCost ?? u.cost;
     if (expense === 0 && u.actualCost === 0 && u.cost === 0) continue;
     rows.push({
       rowKey: `unbound_upstream:${u.keyId}`,
@@ -1045,8 +1083,10 @@ function buildPairedView(
       expenseSynced: manual != null ? u.actualCost : undefined,
       expenseIsManual: manual != null,
       siteCostBase: 0,
-      upstreamCostBase: u.cost,
-      diff: u.cost,
+      upstreamCostBase: upCost,
+      upstreamCostBaseSynced: u.manualCost != null ? u.cost : undefined,
+      upstreamCostBaseIsManual: u.manualCost != null,
+      diff: upCost,
       profit: -expense,
     });
   }
@@ -1238,16 +1278,43 @@ export async function fetchDateBreakdown(
     });
   }
 
-  // 合并 DB 里 upstream 侧的 manualActualCost（live fetch 不携带，要从 DB 取）
+  // 合并 DB 里的 manualActualCost / manualCost（live fetch 不携带，要从 DB 取）
   const manualOverrides = await prisma.dailyProfitBreakdown.findMany({
-    where: { date, kind: "upstream", manualActualCost: { not: null } },
-    select: { refId: true, manualActualCost: true },
+    where: {
+      date,
+      OR: [{ manualActualCost: { not: null } }, { manualCost: { not: null } }],
+    },
+    select: {
+      kind: true,
+      refId: true,
+      manualActualCost: true,
+      manualCost: true,
+    },
   });
   if (manualOverrides.length > 0) {
-    const byId = new Map(manualOverrides.map((m) => [m.refId, m.manualActualCost]));
+    const upMap = new Map(
+      manualOverrides
+        .filter((m) => m.kind === "upstream")
+        .map((m) => [m.refId, m]),
+    );
+    const siteMap = new Map(
+      manualOverrides
+        .filter((m) => m.kind === "site")
+        .map((m) => [m.refId, m]),
+    );
     for (const u of upstream) {
-      const v = byId.get(u.keyId);
-      if (v != null) u.manualActualCost = v;
+      const m = upMap.get(u.keyId);
+      if (m) {
+        if (m.manualActualCost != null) u.manualActualCost = m.manualActualCost;
+        if (m.manualCost != null) u.manualCost = m.manualCost;
+      }
+    }
+    for (const s of site) {
+      const m = siteMap.get(s.siteBoundAccountId);
+      if (m) {
+        if (m.manualActualCost != null) s.manualActualCost = m.manualActualCost;
+        if (m.manualCost != null) s.manualCost = m.manualCost;
+      }
     }
   }
 

@@ -477,8 +477,9 @@ model DailyProfitBreakdown {
   cost                Float               // 1× 基础（face value）
   actualCost          Float               // 应用倍率后（贡献给 revenue 或 expense）
   // 用户手动改写过的 actualCost。非 null 时优先于 actualCost。
-  // 回填/同步**不动**这个字段（只更新 actualCost 同步值），保证手动改的不被覆盖。
+  // 回填/同步**不动**这两个字段（只更新 cost/actualCost 同步值），保证手动改的不被覆盖。
   manualActualCost    Float?
+  manualCost          Float?
   capturedAt          DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

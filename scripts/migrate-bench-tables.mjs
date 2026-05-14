@@ -146,6 +146,8 @@ await ensureColumn("UpstreamKey", "apiKey", "TEXT");
 
 // DailyProfitBreakdown.manualActualCost — 2026-05 (user override)
 await ensureColumn("DailyProfitBreakdown", "manualActualCost", "REAL");
+// DailyProfitBreakdown.manualCost — 2026-05 (user override 1× cost too)
+await ensureColumn("DailyProfitBreakdown", "manualCost", "REAL");
 
 // Binding.endedAt — 2026-05 (time-aware bindings)
 await ensureColumn("Binding", "endedAt", "DATETIME");

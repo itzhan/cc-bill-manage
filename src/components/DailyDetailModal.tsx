@@ -44,13 +44,19 @@ interface PairedRow {
     actualCost: number;
   }>;
   revenue: number;
+  revenueSynced?: number;
+  revenueIsManual?: boolean;
   expense: number;
   expenseSynced?: number;
   expenseIsManual?: boolean;
   expenseSource?: "synced" | "manual" | "rule" | "account_fixed";
   expenseRulePrefix?: string;
   siteCostBase: number;
+  siteCostBaseSynced?: number;
+  siteCostBaseIsManual?: boolean;
   upstreamCostBase: number;
+  upstreamCostBaseSynced?: number;
+  upstreamCostBaseIsManual?: boolean;
   diff: number;
   profit: number;
 }
@@ -434,31 +440,36 @@ export default function DailyDetailModal({
                                   </div>
                                 </TableCell>
                                 <TableCell>
-                                  <span
-                                    className="tabular-nums"
-                                    title={fmtMoney(r.revenue)}
-                                  >
-                                    {fmtMoneyShort(r.revenue)}
-                                  </span>
+                                  <ManualCell
+                                    field="revenue"
+                                    row={r}
+                                    date={data.date}
+                                    onChanged={reload}
+                                  />
                                 </TableCell>
                                 <TableCell>
-                                  <ExpenseCell row={r} date={data.date} onChanged={reload} />
+                                  <ManualCell
+                                    field="expense"
+                                    row={r}
+                                    date={data.date}
+                                    onChanged={reload}
+                                  />
                                 </TableCell>
                                 <TableCell>
-                                  <span
-                                    className="tabular-nums text-default-500"
-                                    title={fmtMoney(r.siteCostBase)}
-                                  >
-                                    {fmtMoneyShort(r.siteCostBase)}
-                                  </span>
+                                  <ManualCell
+                                    field="siteCostBase"
+                                    row={r}
+                                    date={data.date}
+                                    onChanged={reload}
+                                  />
                                 </TableCell>
                                 <TableCell>
-                                  <span
-                                    className="tabular-nums text-default-500"
-                                    title={fmtMoney(r.upstreamCostBase)}
-                                  >
-                                    {fmtMoneyShort(r.upstreamCostBase)}
-                                  </span>
+                                  <ManualCell
+                                    field="upstreamCostBase"
+                                    row={r}
+                                    date={data.date}
+                                    onChanged={reload}
+                                  />
                                 </TableCell>
                                 <TableCell>
                                   <span
@@ -584,11 +595,22 @@ function Stat({
   );
 }
 
-function ExpenseCell({
+type ManualField = "revenue" | "expense" | "siteCostBase" | "upstreamCostBase";
+
+// 把 paired row 的 4 个数字字段全部做成可编辑 popover. 写到 DailyProfitBreakdown
+// 表的 manualActualCost / manualCost 字段:
+//   revenue (site.actualCost)         → site/[refId] PATCH manualActualCost
+//   expense (upstream.actualCost)     → upstream/[refId] PATCH manualActualCost
+//   siteCostBase (site.cost)          → site/[refId] PATCH manualCost
+//   upstreamCostBase (upstream.cost)  → upstream/[refId] PATCH manualCost
+// 多 site 绑定的 paired 行: 无法分摊到具体 site, 暂禁用编辑。
+function ManualCell({
+  field,
   row,
   date,
   onChanged,
 }: {
+  field: ManualField;
   row: PairedRow;
   date: string;
   onChanged: () => void;
@@ -596,35 +618,91 @@ function ExpenseCell({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string>("");
   const [saving, setSaving] = useState(false);
-  // 两种可编辑情况：
-  // 1) paired/unbound_upstream 行有 upstreamKeyId → 写 DailyProfitBreakdown.manualActualCost (per-day)
-  // 2) unbound_site 行有 siteBoundAccountId → 写 SiteBoundAccount.fixedCost (per-account 永久)
-  const sbaId =
-    row.kind === "unbound_site" ? row.siteAccounts?.[0]?.siteBoundAccountId ?? null : null;
-  const canEdit = row.upstreamKeyId != null || sbaId != null;
-  const isManual = row.expenseIsManual === true;
-  const isRule = row.expenseSource === "rule";
-  const isAccountFixed = row.expenseSource === "account_fixed";
+
+  const meta = (() => {
+    switch (field) {
+      case "revenue":
+        return {
+          value: row.revenue,
+          synced: row.revenueSynced,
+          isManual: row.revenueIsManual === true,
+          label: "手动收入",
+          // 写到 site refId. paired/unbound_site 都有 siteAccounts; 多个时不让编辑。
+          target:
+            row.siteAccounts && row.siteAccounts.length === 1
+              ? { kind: "site" as const, id: row.siteAccounts[0].siteBoundAccountId, body: "manualActualCost" }
+              : null,
+          allowZero: false,
+        };
+      case "expense":
+        return {
+          value: row.expense,
+          synced: row.expenseSynced,
+          isManual: row.expenseIsManual === true,
+          isRule: row.expenseSource === "rule",
+          isAccountFixed: row.expenseSource === "account_fixed",
+          label: "手动支出",
+          target:
+            row.upstreamKeyId != null
+              ? { kind: "upstream" as const, id: row.upstreamKeyId, body: "manualActualCost" }
+              : row.siteAccounts && row.siteAccounts.length === 1 && row.kind === "unbound_site"
+                ? { kind: "site_fixedcost" as const, id: row.siteAccounts[0].siteBoundAccountId, body: "fixedCost" }
+                : null,
+          allowZero: false,
+        };
+      case "siteCostBase":
+        return {
+          value: row.siteCostBase,
+          synced: row.siteCostBaseSynced,
+          isManual: row.siteCostBaseIsManual === true,
+          label: "手动 本站 1×",
+          target:
+            row.siteAccounts && row.siteAccounts.length === 1
+              ? { kind: "site" as const, id: row.siteAccounts[0].siteBoundAccountId, body: "manualCost" }
+              : null,
+          allowZero: false,
+        };
+      case "upstreamCostBase":
+        return {
+          value: row.upstreamCostBase,
+          synced: row.upstreamCostBaseSynced,
+          isManual: row.upstreamCostBaseIsManual === true,
+          label: "手动 上游 1×",
+          target:
+            row.upstreamKeyId != null
+              ? { kind: "upstream" as const, id: row.upstreamKeyId, body: "manualCost" }
+              : null,
+          allowZero: false,
+        };
+    }
+  })();
+
+  const tinted =
+    meta.isManual ||
+    ("isRule" in meta && meta.isRule) ||
+    ("isAccountFixed" in meta && meta.isAccountFixed);
+  const canEdit = meta.target != null;
 
   async function save(clear: boolean) {
+    if (!meta.target) return;
     const v = clear ? null : Number(draft);
     if (!clear && (!Number.isFinite(v as number) || (v as number) < 0)) {
-      addToast({ title: "支出数值非法", color: "warning" });
+      addToast({ title: "数值非法", color: "warning" });
       return;
     }
     setSaving(true);
     try {
       let url: string;
       let body: Record<string, unknown>;
-      if (row.upstreamKeyId != null) {
-        url = `/api/daily-profit/${date}/breakdown/upstream/${row.upstreamKeyId}`;
-        body = { manualActualCost: v };
-      } else if (sbaId != null) {
-        url = `/api/site-bound-accounts/${sbaId}`;
-        body = { fixedCost: v };
+      if (meta.target.kind === "upstream") {
+        url = `/api/daily-profit/${date}/breakdown/upstream/${meta.target.id}`;
+        body = { [meta.target.body]: v };
+      } else if (meta.target.kind === "site") {
+        url = `/api/daily-profit/${date}/breakdown/site/${meta.target.id}`;
+        body = { [meta.target.body]: v };
       } else {
-        setSaving(false);
-        return;
+        url = `/api/site-bound-accounts/${meta.target.id}`;
+        body = { [meta.target.body]: v };
       }
       const r = await fetch(url, {
         method: "PATCH",
@@ -636,10 +714,7 @@ function ExpenseCell({
         addToast({ title: "保存失败", description: j.error, color: "danger" });
         return;
       }
-      addToast({
-        title: clear ? "已清除手动支出" : "已保存手动支出",
-        color: "success",
-      });
+      addToast({ title: clear ? "已清除手动值" : "已保存手动值", color: "success" });
       setOpen(false);
       onChanged();
     } finally {
@@ -647,34 +722,19 @@ function ExpenseCell({
     }
   }
 
-  // 显示样式：手动/规则 = 蓝色；纯同步 = 默认
-  const tinted = isManual || isAccountFixed || isRule;
-  const displayValue = (
-    <span
-      className={tinted ? "tabular-nums text-primary font-medium" : "tabular-nums"}
-      title={
-        isManual && row.expenseSynced != null
-          ? `手动: ${fmtMoney(row.expense)} (同步值 ${fmtMoney(row.expenseSynced)})`
-          : isRule
-            ? `规则 ${row.expenseRulePrefix} → ${fmtMoney(row.expense)}`
-            : isAccountFixed
-              ? `账号 fixedCost: ${fmtMoney(row.expense)}`
-              : fmtMoney(row.expense)
-      }
-    >
-      {fmtMoneyShort(row.expense)}
-      {tinted && <span className="ml-1 text-[10px] text-primary">✎</span>}
-    </span>
-  );
-
   if (!canEdit) {
-    return <span className="tabular-nums text-default-400">{fmtMoneyShort(row.expense)}</span>;
+    return (
+      <span className="tabular-nums text-default-400" title={fmtMoney(meta.value)}>
+        {fmtMoneyShort(meta.value)}
+      </span>
+    );
   }
+
   return (
     <Popover
       isOpen={open}
       onOpenChange={(v) => {
-        if (v) setDraft(String(row.expense));
+        if (v) setDraft(String(meta.value));
         setOpen(v);
       }}
       placement="bottom-start"
@@ -684,25 +744,37 @@ function ExpenseCell({
           type="button"
           className="inline-flex items-center gap-1 hover:bg-content2/60 rounded px-1 py-0.5"
         >
-          {displayValue}
+          <span
+            className={tinted ? "tabular-nums text-primary font-medium" : "tabular-nums"}
+            title={
+              meta.isManual && meta.synced != null
+                ? `手动: ${fmtMoney(meta.value)} (同步值 ${fmtMoney(meta.synced)})`
+                : "isRule" in meta && meta.isRule
+                  ? `规则: ${fmtMoney(meta.value)}`
+                  : "isAccountFixed" in meta && meta.isAccountFixed
+                    ? `账号 fixedCost: ${fmtMoney(meta.value)}`
+                    : fmtMoney(meta.value)
+            }
+          >
+            {fmtMoneyShort(meta.value)}
+            {tinted && <span className="ml-1 text-[10px] text-primary">✎</span>}
+          </span>
           <Pencil size={11} className="text-default-400" />
         </button>
       </PopoverTrigger>
       <PopoverContent className="p-3">
         <div className="flex flex-col gap-2 w-64">
-          <div className="text-[11px] text-default-500">
-            {row.label}
-          </div>
+          <div className="text-[11px] text-default-500">{row.label}</div>
           <Input
             type="number"
             size="sm"
-            label="手动支出"
+            label={meta.label}
             value={draft}
             onValueChange={setDraft}
             description={
-              row.expenseSynced != null
-                ? `同步值 ${fmtMoneyShort(row.expenseSynced)}`
-                : `当前同步值 ${fmtMoneyShort(row.expense)}`
+              meta.synced != null
+                ? `同步值 ${fmtMoneyShort(meta.synced)}`
+                : `当前同步值 ${fmtMoneyShort(meta.value)}`
             }
           />
           <div className="flex justify-between gap-2">
@@ -711,7 +783,7 @@ function ExpenseCell({
               variant="flat"
               startContent={<RotateCcw size={12} />}
               isLoading={saving}
-              isDisabled={!isManual}
+              isDisabled={!meta.isManual}
               onPress={() => save(true)}
             >
               恢复同步

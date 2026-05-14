@@ -3,12 +3,10 @@ import { prisma } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-// 设置 / 清除某天某 upstream key 的"手动支出"/ "手动 1× 上游"。
+// 设置 / 清除某天某 site 账号的"手动收入"/ "手动 1× 本站"。
 // PATCH body: { manualActualCost?: number | null, manualCost?: number | null }
 //   number → 设手动值；后续 sync/backfill 不会再覆盖
 //   null   → 清除手动值，恢复 synced
-//
-// 行必须已经存在（至少同步/回填过一次）。不存在时返回 404。
 export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ date: string; refId: string }> },
@@ -45,7 +43,7 @@ export async function PATCH(
   }
   try {
     const row = await prisma.dailyProfitBreakdown.update({
-      where: { date_kind_refId: { date, kind: "upstream", refId: id } },
+      where: { date_kind_refId: { date, kind: "site", refId: id } },
       data,
       select: { actualCost: true, manualActualCost: true, cost: true, manualCost: true },
     });

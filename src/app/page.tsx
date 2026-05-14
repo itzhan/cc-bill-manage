@@ -109,10 +109,10 @@ export default function DashboardPage() {
   const [range, setRange] = useState<string>("24h");
   const [view, setView] = useState<string>("overview");
   const today = new Date().toISOString().slice(0, 10);
-  const sevenAgo = new Date(Date.now() - 7 * 86400_000)
+  const monthAgo = new Date(Date.now() - 30 * 86400_000)
     .toISOString()
     .slice(0, 10);
-  const [backfillStart, setBackfillStart] = useState<string>(sevenAgo);
+  const [backfillStart, setBackfillStart] = useState<string>(monthAgo);
   const [backfillEnd, setBackfillEnd] = useState<string>(today);
   const [backfilling, setBackfilling] = useState(false);
   const [showUnusedBindings, setShowUnusedBindings] = useState(false);
