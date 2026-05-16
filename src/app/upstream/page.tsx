@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
+  Autocomplete,
+  AutocompleteItem,
   Button,
   Card,
   CardBody,
@@ -30,6 +32,8 @@ import {
   useDisclosure,
 } from "@heroui/react";
 import {
+  Building2,
+  ChevronDown,
   Copy,
   Eye,
   EyeOff,
@@ -59,6 +63,7 @@ interface UpstreamAccount {
   name: string;
   type: string;
   category: string;
+  supplier: string | null;
   baseUrl: string;
   email: string;
   password?: string;
@@ -128,6 +133,7 @@ export default function UpstreamPage() {
     name: "",
     type: "sub2api",
     category: "claude",
+    supplier: "",
     baseUrl: "",
     email: "",
     password: "",
@@ -135,6 +141,10 @@ export default function UpstreamPage() {
     notes: "",
     inventory: [] as InventoryItem[],
   });
+  // 折叠状态: 默认所有 supplier 展开;用户可点 header 收起。
+  const [collapsedSuppliers, setCollapsedSuppliers] = useState<Set<string>>(
+    new Set(),
+  );
   // Tab 默认 claude — 历史渠道 db push 时自动落到 claude, 一上来就能看见。
   const [categoryFilter, setCategoryFilter] = useState<string>("claude");
   const [invDraft, setInvDraft] = useState<InventoryItem>({
@@ -269,6 +279,7 @@ export default function UpstreamPage() {
       type: "sub2api",
       // 新建时默认填当前 Tab 的 category(用户在 openai tab 点新建 → 默认 openai)
       category: categoryFilter === "__all" ? "claude" : categoryFilter,
+      supplier: "",
       baseUrl: "",
       email: "",
       password: "",
@@ -286,6 +297,7 @@ export default function UpstreamPage() {
       name: a.name,
       type: a.type,
       category: a.category ?? "claude",
+      supplier: a.supplier ?? "",
       baseUrl: a.baseUrl,
       email: a.email,
       password: "",
@@ -342,6 +354,7 @@ export default function UpstreamPage() {
       name: form.name,
       type: form.type,
       category: form.category,
+      supplier: form.supplier?.trim() || null,
       baseUrl: form.baseUrl,
       email: form.email,
       password: form.password,
@@ -379,6 +392,7 @@ export default function UpstreamPage() {
     const payload: Record<string, unknown> = {
       name: form.name,
       category: form.category,
+      supplier: form.supplier?.trim() || null,
       baseUrl: form.baseUrl,
       email: form.email,
       notes: form.notes || null,
@@ -466,6 +480,47 @@ export default function UpstreamPage() {
     load();
   }, []);
 
+  // 当前 category 过滤后的渠道集 — supplier 分组和散卡都用它(避免在两处
+  // 重复写 categoryFilter 判断)。
+  const filteredAccounts = accounts.filter((a) =>
+    categoryFilter === "__all"
+      ? true
+      : (a.category ?? "claude") === categoryFilter,
+  );
+  // 按 supplier 分组(null = 散户), 顺序按字母 + 散户最后。
+  const grouped = (() => {
+    const bySupplier = new Map<string, UpstreamAccount[]>();
+    const ungrouped: UpstreamAccount[] = [];
+    for (const a of filteredAccounts) {
+      if (a.supplier) {
+        const list = bySupplier.get(a.supplier) ?? [];
+        list.push(a);
+        bySupplier.set(a.supplier, list);
+      } else {
+        ungrouped.push(a);
+      }
+    }
+    const suppliers = [...bySupplier.entries()].sort((x, y) =>
+      x[0].localeCompare(y[0]),
+    );
+    return { suppliers, ungrouped };
+  })();
+  // 全局 supplier 候选(不受 category 过滤,新建渠道时所有 supplier 都该可选)
+  const supplierOptions = [
+    ...new Set(
+      accounts.map((a) => a.supplier).filter((s): s is string => !!s),
+    ),
+  ].sort();
+
+  function toggleSupplier(name: string) {
+    setCollapsedSuppliers((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
   return (
     <Shell>
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
@@ -531,21 +586,125 @@ export default function UpstreamPage() {
           <CardBody className="text-default-500">暂无上游账号</CardBody>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {accounts
-            .filter((a) =>
-              categoryFilter === "__all"
-                ? true
-                : (a.category ?? "claude") === categoryFilter,
-            )
-            .map((a) => {
-            const inv = parseInventory(a.inventory);
-            const isRevealed = revealed.has(a.id);
-            return (
-              <Card
-                key={a.id}
-                className="bg-content1 border border-divider/50 shadow-none"
-              >
+        <div className="space-y-6">
+          {/* 上游分组卡 — 同 supplier 的渠道聚成一张父卡, 每个渠道一行紧凑视图 */}
+          {grouped.suppliers.length > 0 && (
+            <div className="space-y-4">
+              {grouped.suppliers.map(([sName, channels]) => {
+                const collapsed = collapsedSuppliers.has(sName);
+                const totalBalance = channels.reduce(
+                  (s, c) => s + (c.balance ?? 0),
+                  0,
+                );
+                const totalToday = channels.reduce(
+                  (s, c) => s + (c.todayCost ?? 0),
+                  0,
+                );
+                const hasBalance = channels.some((c) => c.balance != null);
+                const anyError = channels.some((c) => c.lastSyncError);
+                return (
+                  <Card
+                    key={`sup:${sName}`}
+                    className="bg-content1 border border-divider/50 shadow-none"
+                  >
+                    <CardHeader
+                      className="flex justify-between items-center gap-2 pb-2 cursor-pointer"
+                      onClick={() => toggleSupplier(sName)}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Building2
+                          size={16}
+                          className="text-default-500 shrink-0"
+                        />
+                        <h3 className="font-semibold text-base truncate">
+                          {sName}
+                        </h3>
+                        <Chip size="sm" variant="flat">
+                          {channels.length} 渠道
+                        </Chip>
+                        {anyError && (
+                          <Chip size="sm" color="danger" variant="flat">
+                            部分同步失败
+                          </Chip>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 shrink-0 text-xs">
+                        <div className="flex flex-col items-end leading-tight">
+                          <span className="text-default-500">今日合计</span>
+                          <span
+                            className={`font-bold ${
+                              totalToday > 0
+                                ? "text-foreground"
+                                : "text-default-400"
+                            }`}
+                          >
+                            ${fmtMoneyShort(totalToday)}
+                          </span>
+                        </div>
+                        <div className="flex flex-col items-end leading-tight">
+                          <span className="flex items-center gap-1 text-default-500">
+                            <Wallet size={11} /> 余额合计
+                          </span>
+                          <span
+                            className={`font-bold ${
+                              !hasBalance
+                                ? "text-default-400"
+                                : totalBalance > 0
+                                  ? "text-success"
+                                  : "text-warning"
+                            }`}
+                          >
+                            {hasBalance
+                              ? `$${fmtMoneyShort(totalBalance)}`
+                              : "—"}
+                          </span>
+                        </div>
+                        <ChevronDown
+                          size={16}
+                          className={`text-default-400 transition-transform ${
+                            collapsed ? "" : "rotate-180"
+                          }`}
+                        />
+                      </div>
+                    </CardHeader>
+                    {!collapsed && (
+                      <CardBody className="pt-0 gap-1.5">
+                        {channels.map((a) => (
+                          <ChannelRow
+                            key={a.id}
+                            a={a}
+                            busy={busy === a.id || busyRefresh === a.id}
+                            onClickKeys={() => openKeys(a)}
+                            onRefresh={() => refreshOne(a.id)}
+                            onEdit={() => openEdit(a)}
+                            onRemove={() => remove(a.id)}
+                          />
+                        ))}
+                      </CardBody>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 未分组渠道 — 按现状大卡片展示, 跟现在一模一样 */}
+          {grouped.ungrouped.length > 0 && (
+            <div>
+              {grouped.suppliers.length > 0 && (
+                <h2 className="text-sm font-semibold text-default-600 mb-3">
+                  未分组渠道 ({grouped.ungrouped.length})
+                </h2>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {grouped.ungrouped.map((a) => {
+                  const inv = parseInventory(a.inventory);
+                  const isRevealed = revealed.has(a.id);
+                  return (
+                    <Card
+                      key={a.id}
+                      className="bg-content1 border border-divider/50 shadow-none"
+                    >
                 <CardHeader className="flex justify-between items-start gap-2 pb-2">
                   <div className="flex flex-col leading-tight min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -756,8 +915,11 @@ export default function UpstreamPage() {
                   </div>
                 </CardFooter>
               </Card>
-            );
-          })}
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -781,6 +943,7 @@ export default function UpstreamPage() {
               addInventoryDraft={addInventoryDraft}
               removeInventory={removeInventory}
               isNew
+              supplierOptions={supplierOptions}
             />
           </ModalBody>
           <ModalFooter>
@@ -813,6 +976,7 @@ export default function UpstreamPage() {
               addInventoryDraft={addInventoryDraft}
               removeInventory={removeInventory}
               isNew={false}
+              supplierOptions={supplierOptions}
             />
           </ModalBody>
           <ModalFooter>
@@ -1038,6 +1202,124 @@ export default function UpstreamPage() {
   );
 }
 
+// 上游分组卡里的一行紧凑渠道. 点行打开 keys 弹窗(最常见操作);
+// 右侧 icon 按钮 stopPropagation 不冒泡到行 onClick。
+function ChannelRow({
+  a,
+  busy,
+  onClickKeys,
+  onRefresh,
+  onEdit,
+  onRemove,
+}: {
+  a: UpstreamAccount;
+  busy: boolean;
+  onClickKeys: () => void;
+  onRefresh: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  const cat = a.category ?? "claude";
+  return (
+    <div
+      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-content2/60 cursor-pointer border border-divider/30"
+      onClick={onClickKeys}
+    >
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <span className="font-medium text-sm truncate">{a.name}</span>
+        <Chip size="sm" variant="flat" classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}>
+          {a.type}
+        </Chip>
+        <Chip
+          size="sm"
+          variant="flat"
+          color={cat === "claude" ? "warning" : cat === "openai" ? "success" : "default"}
+          classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}
+        >
+          {cat}
+        </Chip>
+        {a.lastSyncError && (
+          <Chip
+            size="sm"
+            color="danger"
+            variant="flat"
+            classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}
+            title={a.lastSyncError}
+          >
+            ⚠ 同步失败
+          </Chip>
+        )}
+      </div>
+      <div className="flex items-center gap-4 shrink-0 text-xs">
+        <div className="flex flex-col items-end leading-tight w-16">
+          <span className="text-default-400">今日</span>
+          <span
+            className={
+              (a.todayCost ?? 0) > 0 ? "font-semibold tabular-nums" : "text-default-400 tabular-nums"
+            }
+          >
+            ${fmtMoneyShort(a.todayCost ?? 0)}
+          </span>
+        </div>
+        <div className="flex flex-col items-end leading-tight w-20">
+          <span className="text-default-400">余额</span>
+          <span
+            className={`font-semibold tabular-nums ${
+              a.balance == null
+                ? "text-default-400"
+                : a.balance > 0
+                  ? "text-success"
+                  : "text-warning"
+            }`}
+          >
+            {a.balance == null ? "—" : `$${fmtMoneyShort(a.balance)}`}
+          </span>
+        </div>
+        <span className="text-default-400 hidden md:inline">
+          {a._count?.keys ?? 0} keys
+        </span>
+        <div
+          className="flex gap-0.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Button
+            size="sm"
+            variant="light"
+            isIconOnly
+            className="h-7 min-w-7"
+            onPress={onRefresh}
+            isLoading={busy}
+            title="刷新+同步"
+          >
+            <RefreshCw size={13} />
+          </Button>
+          <Button
+            size="sm"
+            variant="light"
+            isIconOnly
+            className="h-7 min-w-7"
+            onPress={onEdit}
+            title="编辑"
+          >
+            <Pencil size={13} />
+          </Button>
+          <Button
+            size="sm"
+            variant="light"
+            isIconOnly
+            color="danger"
+            className="h-7 min-w-7"
+            onPress={onRemove}
+            title="删除"
+          >
+            <Trash2 size={13} />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RechargeMultiplierEditor({
   keyId,
   initial,
@@ -1147,6 +1429,7 @@ function AccountFormTabs({
   addInventoryDraft,
   removeInventory,
   isNew,
+  supplierOptions,
 }: {
   tab: string;
   setTab: (v: string) => void;
@@ -1154,6 +1437,7 @@ function AccountFormTabs({
     name: string;
     type: string;
     category: string;
+    supplier: string;
     baseUrl: string;
     email: string;
     password: string;
@@ -1166,6 +1450,7 @@ function AccountFormTabs({
       name: string;
       type: string;
       category: string;
+      supplier: string;
       baseUrl: string;
       email: string;
       password: string;
@@ -1176,6 +1461,7 @@ function AccountFormTabs({
       name: string;
       type: string;
       category: string;
+      supplier: string;
       baseUrl: string;
       email: string;
       password: string;
@@ -1184,6 +1470,7 @@ function AccountFormTabs({
       inventory: InventoryItem[];
     },
   ) => void;
+  supplierOptions: string[];
   invDraft: InventoryItem;
   setInvDraft: (v: InventoryItem) => void;
   addInventoryDraft: () => void;
@@ -1332,6 +1619,23 @@ function AccountFormTabs({
               <SelectItem key={c}>{c}</SelectItem>
             ))}
           </Select>
+          <Autocomplete
+            label="上游/货源 (可选)"
+            description="同名 supplier 在管理页会聚成一张卡。留空 = 散户渠道。已有的可从下拉选,也可手填新名。"
+            allowsCustomValue
+            // 控制为受控: defaultItems + onInputChange/onSelectionChange 配合
+            // (heroui Autocomplete 在 selectedKey + 自定义 value 模式下容易状态打架,
+            // 这里只用 inputValue + 推荐 items, 写 form.supplier 由 onInputChange 统一处理)
+            inputValue={form.supplier}
+            onInputChange={(v) =>
+              setForm((f) => ({ ...f, supplier: v }))
+            }
+            defaultItems={supplierOptions.map((s) => ({ key: s, label: s }))}
+          >
+            {(item) => (
+              <AutocompleteItem key={item.key}>{item.label}</AutocompleteItem>
+            )}
+          </Autocomplete>
           <Input
             label="Base URL"
             placeholder="http://1.2.3.4:8080"

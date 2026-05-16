@@ -26,6 +26,7 @@ export async function PATCH(
   const body = (await req.json().catch(() => ({}))) as Partial<{
     name: string;
     category: string;
+    supplier: string | null;
     baseUrl: string;
     email: string;
     password: string;
@@ -36,6 +37,11 @@ export async function PATCH(
   const data: Record<string, unknown> = {};
   if (body.name != null) data.name = body.name;
   if (body.category != null) data.category = body.category;
+  if (body.supplier !== undefined) {
+    // 显式传 supplier (含 null / 空串) → 写入; 空字符串归一为 null = 无分组
+    const v = typeof body.supplier === "string" ? body.supplier.trim() : null;
+    data.supplier = v || null;
+  }
   if (body.baseUrl != null) data.baseUrl = body.baseUrl;
   if (body.email != null) data.email = body.email;
   if (body.password != null) {

@@ -40,6 +40,7 @@ export async function POST(req: Request) {
     name: string;
     type: string;
     category: string;
+    supplier: string | null;
     baseUrl: string;
     email: string;
     password: string;
@@ -49,6 +50,7 @@ export async function POST(req: Request) {
     name,
     type = "sub2api",
     category = "claude",
+    supplier,
     baseUrl,
     email = "",
     password = "",
@@ -72,6 +74,8 @@ export async function POST(req: Request) {
       name,
       type,
       category,
+      // 空字符串当成"无分组" — 跟客户端 Autocomplete "清空" 的 UX 对齐
+      supplier: supplier?.trim() ? supplier.trim() : null,
       baseUrl,
       email,
       password,

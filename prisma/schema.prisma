@@ -61,6 +61,9 @@ model UpstreamAccount {
   // 模型族分类: claude | openai | gemini | ...(自由字符串,UI 限 select)
   // 用来在渠道管理页分 Tab 显示;不参与定价/同步逻辑。
   category         String    @default("claude")
+  // 上游/货源分组: 同名 supplier 的渠道在管理页聚成一张父卡。null = 散户
+  // 渠道(按现状大卡片单独显示)。绑定/计费完全不看这个字段。
+  supplier         String?
   baseUrl          String
   email            String
   password         String
