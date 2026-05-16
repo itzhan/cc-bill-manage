@@ -1258,8 +1258,30 @@ function buildPairedView(
     });
   }
 
-  // 按利润降序：盈利的排前面，亏损（profit<0）排最后。
-  rows.sort((a, b) => b.profit - a.profit);
+  // 按"上游账号"分组排序: 同一 upstream account 的行连在一起, 方便记账
+  // 时按渠道核对。组与组之间按组内最大利润降序, 组内按利润降序。无
+  // 上游账号的行(unbound_site, 例如 AZ) 归到 "(无)" 组排最后。
+  const groupKey = (r: PairedBreakdownRow) =>
+    r.upstreamAccountName || "\uFFFF(无)"; // U+FFFF 字符序确保排最后
+  const groupMaxProfit = new Map<string, number>();
+  for (const r of rows) {
+    const k = groupKey(r);
+    const cur = groupMaxProfit.get(k);
+    if (cur == null || r.profit > cur) groupMaxProfit.set(k, r.profit);
+  }
+  rows.sort((a, b) => {
+    const ka = groupKey(a);
+    const kb = groupKey(b);
+    if (ka !== kb) {
+      // 组与组按组内最大利润降序
+      const ma = groupMaxProfit.get(ka) ?? 0;
+      const mb = groupMaxProfit.get(kb) ?? 0;
+      if (ma !== mb) return mb - ma;
+      return ka.localeCompare(kb); // 利润并列时按组名稳定排序
+    }
+    // 同组内按利润降序
+    return b.profit - a.profit;
+  });
   return rows;
 }
 
