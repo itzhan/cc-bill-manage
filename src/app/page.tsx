@@ -52,7 +52,9 @@ import ExpenseBarChart, {
 } from "@/components/ExpenseBarChart";
 import { type TrendPoint } from "@/components/TrendLineChart";
 import DailyRevenueChart from "@/components/DailyRevenueChart";
-import DailyDetailModal from "@/components/DailyDetailModal";
+import DailyDetailModal, {
+  ExpenseRulesDialog,
+} from "@/components/DailyDetailModal";
 import { fmtDate, fmtMoney, fmtMoneyShort } from "@/lib/format";
 import type { DashboardSummary } from "@/lib/dashboard";
 
@@ -1159,6 +1161,8 @@ function UnboundView({
   const [editingPrefix, setEditingPrefix] = useState(false);
   const [prefixDraft, setPrefixDraft] = useState("");
   const [savingPrefix, setSavingPrefix] = useState(false);
+  // "支出规则" 弹窗 — 跟每日明细 modal 里的 ExpenseRulesDialog 共用
+  const [editingRules, setEditingRules] = useState(false);
 
   // 绑定弹窗状态
   const [bindTarget, setBindTarget] = useState<UnboundAccountRow | null>(null);
@@ -1369,6 +1373,13 @@ function UnboundView({
             </span>
           )}
         </Button>
+        <Button
+          size="sm"
+          variant="flat"
+          onPress={() => setEditingRules(true)}
+        >
+          支出规则
+        </Button>
         <Input
           type="number"
           size="sm"
@@ -1392,6 +1403,12 @@ function UnboundView({
           刷新
         </Button>
       </div>
+
+      <ExpenseRulesDialog
+        isOpen={editingRules}
+        onClose={() => setEditingRules(false)}
+        onChanged={onRefresh}
+      />
 
       <PrefixDialog
         isOpen={editingPrefix}

@@ -49,7 +49,12 @@ interface PairedRow {
   expense: number;
   expenseSynced?: number;
   expenseIsManual?: boolean;
-  expenseSource?: "synced" | "manual" | "rule" | "account_fixed";
+  expenseSource?:
+    | "synced"
+    | "manual"
+    | "rule"
+    | "account_fixed"
+    | "site_1x"; // 兜底:没人设过支出 → 用 site 1×
   expenseRulePrefix?: string;
   // 此 site 本来有 active binding, 但对应 upstream 当日 0 流量 → binding 异常
   bindingMismatch?: {
@@ -430,6 +435,14 @@ export default function DailyDetailModal({
                                     {isUnbound && r.expenseSource === "account_fixed" && (
                                       <span className="text-[10px] text-primary font-medium">
                                         支出来自手动设置
+                                      </span>
+                                    )}
+                                    {isUnbound && r.expenseSource === "site_1x" && (
+                                      <span
+                                        className="text-[10px] text-default-500"
+                                        title="未匹配任何规则也未设 fixedCost; 默认按本站 1× 计支出"
+                                      >
+                                        默认 本站 1×
                                       </span>
                                     )}
                                     {isOrphanUp && (
@@ -833,13 +846,14 @@ function ManualCell({
 interface ExpenseRule {
   id: number;
   prefix: string;
+  suffix?: string | null;
   fixedCost: number;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-function ExpenseRulesDialog({
+export function ExpenseRulesDialog({
   isOpen,
   onClose,
   onChanged,
@@ -851,6 +865,7 @@ function ExpenseRulesDialog({
   const [items, setItems] = useState<ExpenseRule[]>([]);
   const [loading, setLoading] = useState(false);
   const [newPrefix, setNewPrefix] = useState("");
+  const [newSuffix, setNewSuffix] = useState("");
   const [newCost, setNewCost] = useState("");
   const [saving, setSaving] = useState(false);
   // 每行的草稿 + busy 状态 — 用 Map 维护，避免给每个 row 起 sub-component
@@ -879,9 +894,14 @@ function ExpenseRulesDialog({
 
   async function addRule() {
     const prefix = newPrefix.trim();
+    const suffix = newSuffix.trim();
     const cost = Number(newCost);
-    if (!prefix || !Number.isFinite(cost) || cost < 0) {
-      addToast({ title: "前缀和金额必填", color: "warning" });
+    if (!prefix && !suffix) {
+      addToast({ title: "前缀或后缀至少填一个", color: "warning" });
+      return;
+    }
+    if (!Number.isFinite(cost) || cost < 0) {
+      addToast({ title: "金额非法", color: "warning" });
       return;
     }
     setSaving(true);
@@ -889,7 +909,11 @@ function ExpenseRulesDialog({
       const r = await fetch("/api/expense-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prefix, fixedCost: cost }),
+        body: JSON.stringify({
+          prefix: prefix || "",
+          suffix: suffix || null,
+          fixedCost: cost,
+        }),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -897,6 +921,7 @@ function ExpenseRulesDialog({
         return;
       }
       setNewPrefix("");
+      setNewSuffix("");
       setNewCost("");
       await load();
       onChanged();
@@ -953,18 +978,27 @@ function ExpenseRulesDialog({
         <ModalHeader className="flex flex-col items-start gap-0.5">
           <span>支出规则</span>
           <span className="text-xs text-default-500 font-normal">
-            按账号名前缀给一类账号设固定支出。例如 az- → 500，所有 az- 前缀
-            的未绑定账号都按 500 计每日支出。优先级低于账号自身的 fixedCost。
+            按账号名前缀或后缀给一类账号设固定支出。例如 az- 前缀 → 500;
+            -o总 后缀 → 800。两者任一命中即套用。优先级低于账号自身的
+            fixedCost,高于"默认本站 1×"兜底。
           </span>
         </ModalHeader>
         <ModalBody className="gap-3">
           <div className="flex items-end gap-2">
             <Input
               size="sm"
-              label="前缀"
+              label="前缀 (可选)"
               placeholder="az-"
               value={newPrefix}
               onValueChange={setNewPrefix}
+              className="flex-1"
+            />
+            <Input
+              size="sm"
+              label="后缀 (可选)"
+              placeholder="-o总"
+              value={newSuffix}
+              onValueChange={setNewSuffix}
               className="flex-1"
             />
             <Input
@@ -989,6 +1023,7 @@ function ExpenseRulesDialog({
             <Table aria-label="rules" removeWrapper>
               <TableHeader>
                 <TableColumn>前缀</TableColumn>
+                <TableColumn>后缀</TableColumn>
                 <TableColumn>固定支出</TableColumn>
                 <TableColumn>操作</TableColumn>
               </TableHeader>
@@ -1000,7 +1035,18 @@ function ExpenseRulesDialog({
                   return (
                     <TableRow key={r.id}>
                       <TableCell>
-                        <span className="font-mono text-sm">{r.prefix}</span>
+                        <span className="font-mono text-sm">
+                          {r.prefix || (
+                            <span className="text-default-400">—</span>
+                          )}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-mono text-sm">
+                          {r.suffix || (
+                            <span className="text-default-400">—</span>
+                          )}
+                        </span>
                       </TableCell>
                       <TableCell>
                         <Input

@@ -579,16 +579,20 @@ export async function recomputeAllDailyProfits(): Promise<{ updated: number }> {
 
 // 给定一个 site 账号名 + per-account fixedCost + 全局规则，
 // 返回该账号的固定支出（每天一份）。null 表示没规则也没 override。
-// 优先级：账号自己的 fixedCost > 第一个匹配的前缀规则。
+// 优先级:账号自己的 fixedCost > 第一个匹配的规则 (prefix 或 suffix 任一命中)。
 export function resolveFixedCost(
   name: string,
   ownFixedCost: number | null,
-  rules: { prefix: string; fixedCost: number }[],
+  rules: { prefix: string; suffix?: string | null; fixedCost: number }[],
 ): number | null {
   if (ownFixedCost != null) return ownFixedCost;
   const n = name.toLowerCase();
   for (const r of rules) {
-    if (n.startsWith(r.prefix.toLowerCase())) return r.fixedCost;
+    const p = (r.prefix ?? "").toLowerCase();
+    const s = (r.suffix ?? "").toLowerCase();
+    const pHit = p && n.startsWith(p);
+    const sHit = s && n.endsWith(s);
+    if (pHit || sHit) return r.fixedCost;
   }
   return null;
 }
@@ -640,16 +644,17 @@ export async function aggregateFromBreakdown(date: string): Promise<BackfillRow>
     if (r.kind === "site") {
       row.revenue += effActual;
       row.siteCostBase += effCost;
-      // 未绑定行的支出: per-day manualExpense > per-account fixedCost > 规则
+      // 未绑定行的支出: manualExpense > per-account fixedCost > 规则 > site 1×
       if (!boundIds.has(r.refId) && effActual > 0) {
         if (r.manualExpense != null) {
           row.expense += r.manualExpense;
         } else {
           const a = accById.get(r.refId);
-          if (a) {
-            const fc = resolveFixedCost(a.name, a.fixedCost ?? null, rules);
-            if (fc != null) row.expense += fc;
-          }
+          const fc = a
+            ? resolveFixedCost(a.name, a.fixedCost ?? null, rules)
+            : null;
+          if (fc != null) row.expense += fc;
+          else row.expense += effCost; // 兜底用 site 1× — 跟 paired view 行为对齐
         }
       }
     } else {
@@ -911,7 +916,12 @@ export interface PairedBreakdownRow {
   expense: number; // effective expense（手动值优先；否则同步值/规则）
   expenseSynced?: number;
   expenseIsManual?: boolean;
-  expenseSource?: "synced" | "manual" | "rule" | "account_fixed";
+  expenseSource?:
+    | "synced"
+    | "manual"
+    | "rule"
+    | "account_fixed"
+    | "site_1x"; // 默认值: 没人设过支出 → 用 site 1× 当兜底, 比 0 合理
   expenseRulePrefix?: string;
   // unbound_site 行的"binding 异常"标识: 此 site 本来有 active binding,
   // 但绑定的 upstream key 当天 0 流量(典型: 旧 key 已轮换/删除,新 key
@@ -962,7 +972,7 @@ function buildPairedView(
   bindings: BindingFull[],
   // 当 ctx 提供时，未绑定 site 行会按 rules / per-account fixedCost 计算支出。
   ctx?: {
-    rules: { prefix: string; fixedCost: number }[];
+    rules: { prefix: string; suffix?: string | null; fixedCost: number }[];
     accountsById: Map<number, { name: string; fixedCost: number | null }>;
   },
 ): PairedBreakdownRow[] {
@@ -1085,7 +1095,8 @@ function buildPairedView(
     const mismatch = demotedBindingBySite.get(s.siteBoundAccountId);
     if (boundSiteIds.has(s.siteBoundAccountId) && !mismatch) continue;
     if (s.actualCost === 0 && s.cost === 0) continue;
-    // 先算 fallback(没填 per-day 手动支出时的值): fixedCost > 规则 > 0
+    // 先算 fallback(没填 per-day 手动支出时的值):
+    //   fixedCost > 规则 (prefix/suffix) > site 1× 兜底 > 0
     let fallbackExpense = 0;
     let fallbackSource: PairedBreakdownRow["expenseSource"] = undefined;
     let fallbackRulePrefix: string | undefined = undefined;
@@ -1097,13 +1108,25 @@ function buildPairedView(
           fallbackSource = "account_fixed";
         } else {
           const n = acc.name.toLowerCase();
-          const r = ctx.rules.find((rr) => n.startsWith(rr.prefix.toLowerCase()));
+          const r = ctx.rules.find((rr) => {
+            const p = (rr.prefix ?? "").toLowerCase();
+            const sf = (rr.suffix ?? "").toLowerCase();
+            return (p && n.startsWith(p)) || (sf && n.endsWith(sf));
+          });
           if (r) {
             fallbackExpense = r.fixedCost;
             fallbackSource = "rule";
-            fallbackRulePrefix = r.prefix;
+            fallbackRulePrefix = r.prefix || `*${r.suffix ?? ""}`;
           }
         }
+      }
+    }
+    // 还没命中任何规则 → 兜底用 site 1×, 不像 0 那样把所有收入当净利润
+    if (fallbackSource === undefined) {
+      const oneTimes = s.manualCost ?? s.cost;
+      if (oneTimes > 0) {
+        fallbackExpense = oneTimes;
+        fallbackSource = "site_1x";
       }
     }
     // per-day manualExpense 最高优先级

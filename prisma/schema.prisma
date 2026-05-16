@@ -446,12 +446,19 @@ model DailyProfit {
   updatedAt        DateTime @updatedAt
 }
 
-// 全局支出规则——按账号名前缀给一类账号设固定支出。
+// 全局支出规则——按账号名前缀或后缀给一类账号设固定支出。
 // 典型场景：所有 az- 前缀的账号都算 500 块/天，不需要绑 upstream key。
+// 或者所有 -o总 后缀的账号都算 X。prefix / suffix 至少有一个;两个都填
+// 则两者任一命中即匹配。
 // 优先级低于 SiteBoundAccount.fixedCost (后者是 per-账号 override)。
 model ExpenseRule {
   id        Int      @id @default(autoincrement())
-  prefix    String   @unique // 大小写不敏感匹配
+  // 大小写不敏感匹配; 空串 = 不按前缀匹配 (这时必须有 suffix)
+  // 不再 @unique — 加 suffix 后允许 prefix 空的纯后缀规则, 同时不应限制
+  // 同一个 prefix 只能配一个 suffix。重复 admin 自行管理。
+  prefix    String
+  // 按账号名后缀匹配 (例如 "-o总"). 空/null = 不按后缀匹配。
+  suffix    String?
   fixedCost Float
   notes     String?
   createdAt DateTime @default(now())

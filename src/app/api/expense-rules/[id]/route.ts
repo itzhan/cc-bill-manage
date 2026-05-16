@@ -11,11 +11,16 @@ export async function PATCH(
   const { id } = await ctx.params;
   const body = (await req.json().catch(() => ({}))) as Partial<{
     prefix: string;
+    suffix: string | null;
     fixedCost: number;
     notes: string | null;
   }>;
   const data: Record<string, unknown> = {};
-  if (typeof body.prefix === "string" && body.prefix.trim()) data.prefix = body.prefix.trim();
+  if (typeof body.prefix === "string") data.prefix = body.prefix.trim();
+  if ("suffix" in body) {
+    const v = typeof body.suffix === "string" ? body.suffix.trim() : null;
+    data.suffix = v || null;
+  }
   if (body.fixedCost != null) {
     const v = Number(body.fixedCost);
     if (!Number.isFinite(v) || v < 0) {
