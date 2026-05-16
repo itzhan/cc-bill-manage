@@ -658,12 +658,21 @@ function ManualCell({
           isManual: row.expenseIsManual === true,
           isRule: row.expenseSource === "rule",
           isAccountFixed: row.expenseSource === "account_fixed",
-          label: "手动支出",
+          label: "手动支出（仅当日）",
+          // unbound_site (含 binding 异常) → per-day site.manualExpense, 只影响该日
+          // paired → upstream key 的 per-day manualActualCost, 也是只影响该日
+          // 都不写 SiteBoundAccount.fixedCost 那种全局字段, 避免改一天牵动所有
           target:
-            row.upstreamKeyId != null
-              ? { kind: "upstream" as const, id: row.upstreamKeyId, body: "manualActualCost" }
-              : row.siteAccounts && row.siteAccounts.length === 1 && row.kind === "unbound_site"
-                ? { kind: "site_fixedcost" as const, id: row.siteAccounts[0].siteBoundAccountId, body: "fixedCost" }
+            row.kind === "unbound_site" &&
+            row.siteAccounts &&
+            row.siteAccounts.length === 1
+              ? {
+                  kind: "site" as const,
+                  id: row.siteAccounts[0].siteBoundAccountId,
+                  body: "manualExpense",
+                }
+              : row.upstreamKeyId != null
+                ? { kind: "upstream" as const, id: row.upstreamKeyId, body: "manualActualCost" }
                 : null,
           allowZero: false,
         };
@@ -709,18 +718,14 @@ function ManualCell({
     }
     setSaving(true);
     try {
-      let url: string;
-      let body: Record<string, unknown>;
-      if (meta.target.kind === "upstream") {
-        url = `/api/daily-profit/${date}/breakdown/upstream/${meta.target.id}`;
-        body = { [meta.target.body]: v };
-      } else if (meta.target.kind === "site") {
-        url = `/api/daily-profit/${date}/breakdown/site/${meta.target.id}`;
-        body = { [meta.target.body]: v };
-      } else {
-        url = `/api/site-bound-accounts/${meta.target.id}`;
-        body = { [meta.target.body]: v };
-      }
+      // 所有写都走 per-day 的 DailyProfitBreakdown 表, 不再写 SiteBoundAccount.fixedCost
+      // 那种全局字段, 改一天不会牵动其他天的账。
+      const base =
+        meta.target.kind === "upstream"
+          ? `/api/daily-profit/${date}/breakdown/upstream/${meta.target.id}`
+          : `/api/daily-profit/${date}/breakdown/site/${meta.target.id}`;
+      const url = base;
+      const body: Record<string, unknown> = { [meta.target.body]: v };
       const r = await fetch(url, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },

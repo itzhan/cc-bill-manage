@@ -609,6 +609,7 @@ export async function aggregateFromBreakdown(date: string): Promise<BackfillRow>
         actualCost: true,
         manualActualCost: true,
         manualCost: true,
+        manualExpense: true,
       },
     }),
     prisma.binding.findMany({
@@ -639,12 +640,16 @@ export async function aggregateFromBreakdown(date: string): Promise<BackfillRow>
     if (r.kind === "site") {
       row.revenue += effActual;
       row.siteCostBase += effCost;
-      // 未绑定 + 有规则/fixedCost → 加上固定支出
+      // 未绑定行的支出: per-day manualExpense > per-account fixedCost > 规则
       if (!boundIds.has(r.refId) && effActual > 0) {
-        const a = accById.get(r.refId);
-        if (a) {
-          const fc = resolveFixedCost(a.name, a.fixedCost ?? null, rules);
-          if (fc != null) row.expense += fc;
+        if (r.manualExpense != null) {
+          row.expense += r.manualExpense;
+        } else {
+          const a = accById.get(r.refId);
+          if (a) {
+            const fc = resolveFixedCost(a.name, a.fixedCost ?? null, rules);
+            if (fc != null) row.expense += fc;
+          }
         }
       }
     } else {
@@ -818,6 +823,7 @@ async function loadPersistedBreakdown(date: string): Promise<PersistedBreakdown 
         actualCost: r.actualCost,
         manualActualCost: r.manualActualCost ?? null,
         manualCost: r.manualCost ?? null,
+        manualExpense: r.manualExpense ?? null,
       });
     }
   }
@@ -871,6 +877,9 @@ export interface BreakdownSiteRow {
   actualCost: number; // revenue contribution (synced)
   manualActualCost?: number | null;
   manualCost?: number | null;
+  // 仅 unbound_site 使用 — 用户在每日明细 modal 手填的当日支出。
+  // 优先级:manualExpense > fixedCost > ExpenseRule prefix
+  manualExpense?: number | null;
 }
 
 // Per-row in the unified daily breakdown view. Each row pairs one upstream
@@ -1076,27 +1085,35 @@ function buildPairedView(
     const mismatch = demotedBindingBySite.get(s.siteBoundAccountId);
     if (boundSiteIds.has(s.siteBoundAccountId) && !mismatch) continue;
     if (s.actualCost === 0 && s.cost === 0) continue;
-    // 计算未绑定行的支出：per-account fixedCost > 规则 > 0
-    let expense = 0;
-    let expenseSource: PairedBreakdownRow["expenseSource"] = undefined;
-    let expenseRulePrefix: string | undefined = undefined;
+    // 先算 fallback(没填 per-day 手动支出时的值): fixedCost > 规则 > 0
+    let fallbackExpense = 0;
+    let fallbackSource: PairedBreakdownRow["expenseSource"] = undefined;
+    let fallbackRulePrefix: string | undefined = undefined;
     if (ctx) {
       const acc = ctx.accountsById.get(s.siteBoundAccountId);
       if (acc) {
         if (acc.fixedCost != null) {
-          expense = acc.fixedCost;
-          expenseSource = "account_fixed";
+          fallbackExpense = acc.fixedCost;
+          fallbackSource = "account_fixed";
         } else {
           const n = acc.name.toLowerCase();
           const r = ctx.rules.find((rr) => n.startsWith(rr.prefix.toLowerCase()));
           if (r) {
-            expense = r.fixedCost;
-            expenseSource = "rule";
-            expenseRulePrefix = r.prefix;
+            fallbackExpense = r.fixedCost;
+            fallbackSource = "rule";
+            fallbackRulePrefix = r.prefix;
           }
         }
       }
     }
+    // per-day manualExpense 最高优先级
+    const hasManualExp = s.manualExpense != null;
+    const expense = hasManualExp ? s.manualExpense! : fallbackExpense;
+    const expenseSource: PairedBreakdownRow["expenseSource"] = hasManualExp
+      ? "manual"
+      : fallbackSource;
+    const expenseRulePrefix = hasManualExp ? undefined : fallbackRulePrefix;
+    const expenseSynced = hasManualExp ? fallbackExpense : undefined;
     const sRev = s.manualActualCost ?? s.actualCost;
     const sCost = s.manualCost ?? s.cost;
     rows.push({
@@ -1122,6 +1139,8 @@ function buildPairedView(
       revenueSynced: s.manualActualCost != null ? s.actualCost : undefined,
       revenueIsManual: s.manualActualCost != null,
       expense,
+      expenseSynced,
+      expenseIsManual: hasManualExp,
       expenseSource,
       expenseRulePrefix,
       siteCostBase: sCost,
@@ -1270,6 +1289,7 @@ export async function aggregateManyFromPaired(
           actualCost: r.actualCost,
           manualActualCost: r.manualActualCost ?? null,
           manualCost: r.manualCost ?? null,
+          manualExpense: r.manualExpense ?? null,
         });
       }
     }
@@ -1465,17 +1485,23 @@ export async function fetchDateBreakdown(
     });
   }
 
-  // 合并 DB 里的 manualActualCost / manualCost（live fetch 不携带，要从 DB 取）
+  // 合并 DB 里的 manualActualCost / manualCost / manualExpense
+  // (live fetch 不携带, 要从 DB 取)
   const manualOverrides = await prisma.dailyProfitBreakdown.findMany({
     where: {
       date,
-      OR: [{ manualActualCost: { not: null } }, { manualCost: { not: null } }],
+      OR: [
+        { manualActualCost: { not: null } },
+        { manualCost: { not: null } },
+        { manualExpense: { not: null } },
+      ],
     },
     select: {
       kind: true,
       refId: true,
       manualActualCost: true,
       manualCost: true,
+      manualExpense: true,
     },
   });
   if (manualOverrides.length > 0) {
@@ -1501,6 +1527,7 @@ export async function fetchDateBreakdown(
       if (m) {
         if (m.manualActualCost != null) s.manualActualCost = m.manualActualCost;
         if (m.manualCost != null) s.manualCost = m.manualCost;
+        if (m.manualExpense != null) s.manualExpense = m.manualExpense;
       }
     }
   }

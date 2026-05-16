@@ -486,6 +486,10 @@ model DailyProfitBreakdown {
   // 回填/同步**不动**这两个字段（只更新 cost/actualCost 同步值），保证手动改的不被覆盖。
   manualActualCost    Float?
   manualCost          Float?
+  // 仅 site 行使用: 该日该 site 的"支出"手动值。优先级最高(高于 fixedCost
+  // 和 ExpenseRule)。这样在每日明细 modal 改 unbound_site 的支出只影响
+  // 该日, 不像 SiteBoundAccount.fixedCost 是全局的会影响每一天。
+  manualExpense       Float?
   capturedAt          DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
