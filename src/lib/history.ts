@@ -1103,6 +1103,11 @@ function buildPairedView(
       rowKey: `unbound_site:${s.siteBoundAccountId}`,
       kind: "unbound_site",
       label: `${s.siteAccountName} / ${s.accountName}`,
+      // binding 异常行透传 upstreamKeyId, 让前端 ManualCell 能写 per-day
+      // 的 upstream manualActualCost(只影响该日, 不像 fixedCost 是全局)。
+      upstreamKeyId: mismatch?.upstreamKeyId,
+      upstreamKeyName: mismatch?.upstreamKeyName,
+      upstreamAccountName: mismatch?.upstreamAccountName,
       siteAccounts: [
         {
           siteBoundAccountId: s.siteBoundAccountId,
