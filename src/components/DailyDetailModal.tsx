@@ -51,6 +51,12 @@ interface PairedRow {
   expenseIsManual?: boolean;
   expenseSource?: "synced" | "manual" | "rule" | "account_fixed";
   expenseRulePrefix?: string;
+  // 此 site 本来有 active binding, 但对应 upstream 当日 0 流量 → binding 异常
+  bindingMismatch?: {
+    upstreamKeyId: number;
+    upstreamKeyName: string;
+    upstreamAccountName: string;
+  };
   siteCostBase: number;
   siteCostBaseSynced?: number;
   siteCostBaseIsManual?: boolean;
@@ -352,17 +358,20 @@ export default function DailyDetailModal({
                           {data.paired.map((r) => {
                             const isUnbound = r.kind === "unbound_site";
                             const isOrphanUp = r.kind === "unbound_upstream";
+                            const isBindingError = !!r.bindingMismatch;
                             const profitNet = r.revenue - r.expense - r.diff; // 第一行：扣 1× 差异
                             const profitGross = r.revenue - r.expense; // 第二行：粗利润
                             return (
                               <TableRow
                                 key={r.rowKey}
                                 className={
-                                  isUnbound && !r.expenseSource
-                                    ? "bg-warning-50 dark:bg-warning-950/30"
-                                    : isOrphanUp
-                                      ? "bg-danger-50/30 dark:bg-danger-950/20"
-                                      : ""
+                                  isBindingError
+                                    ? "bg-danger-50/40 dark:bg-danger-950/30"
+                                    : isUnbound && !r.expenseSource
+                                      ? "bg-warning-50 dark:bg-warning-950/30"
+                                      : isOrphanUp
+                                        ? "bg-danger-50/30 dark:bg-danger-950/20"
+                                        : ""
                                 }
                               >
                                 <TableCell>
@@ -400,7 +409,15 @@ export default function DailyDetailModal({
                                           </Chip>
                                         )}
                                     </div>
-                                    {isUnbound && !r.expenseSource && (
+                                    {isBindingError && r.bindingMismatch && (
+                                      <span
+                                        className="text-[10px] text-danger font-medium"
+                                        title={`此 site 绑定到 ${r.bindingMismatch.upstreamAccountName} / ${r.bindingMismatch.upstreamKeyName}, 但该 key 当日 0 流量。binding 可能指向了已轮换的新 key — 用上面"扫描修复孤立支出"找当日真正的 upstream。`}
+                                      >
+                                        ⚠ binding 异常:绑定的 upstream {r.bindingMismatch.upstreamKeyName} 当日无流量
+                                      </span>
+                                    )}
+                                    {isUnbound && !isBindingError && !r.expenseSource && (
                                       <span className="text-[10px] text-warning font-medium">
                                         ⚠ 未绑定 upstream（不计支出）
                                       </span>
