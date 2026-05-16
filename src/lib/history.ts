@@ -433,6 +433,12 @@ export async function backfillRange(
 // Metadata is captured at write time (rate, group name, account label) so a
 // future reader sees the rate that was IN EFFECT that day, even if it later
 // got changed in UpstreamKey.
+//
+// **关键不变量**: update 数据里**绝不**包含 manualActualCost / manualCost /
+// manualExpense — 这些是用户手填的, 必须穿越 sync/回填/write-through 都
+// 不丢。同步/回填只刷新同步来的 cost/actualCost + 元信息。Prisma upsert 的
+// update 只会更新指定字段, 不在 data 里的字段保留旧值, 所以 manual* 安全。
+// 任何新加进 data 的字段都要先 review 是否破坏这个保证。
 async function persistBreakdownForDate(
   date: string,
   dateResults: FetchResult[],
@@ -482,12 +488,30 @@ async function persistBreakdownForDate(
     });
   }
 
+  // 同步写入字段白名单 — 不含任何 manual* 字段, 防止以后被改坏。
+  // 任何想加新字段到 sync 写入的人必须在这里显式列出, 看到注释就知道
+  // 不该往里塞 manualActualCost / manualCost / manualExpense。
+  type SyncWriteFields = {
+    label: string;
+    groupName: string | null;
+    effectiveRate: number | null;
+    rechargeMultiplier: number | null;
+    upstreamAccountId: number | null;
+    upstreamAccountName: string | null;
+    upstreamType: string | null;
+    siteAccountId: number | null;
+    siteAccountName: string | null;
+    rateMultiplier: number | null;
+    cost: number;
+    actualCost: number;
+  };
+
   const writes: Promise<unknown>[] = [];
   for (const r of dateResults) {
     if (r.kind === "upstream") {
       const meta = upKeyMeta.get(r.id);
       if (!meta) continue;
-      const data = {
+      const data: SyncWriteFields = {
         label: meta.label,
         groupName: meta.groupName,
         effectiveRate: meta.effectiveRate,
@@ -513,7 +537,7 @@ async function persistBreakdownForDate(
     } else {
       const meta = siteAccMeta.get(r.id);
       if (!meta) continue;
-      const data = {
+      const data: SyncWriteFields = {
         label: meta.label,
         groupName: null,
         effectiveRate: null,
