@@ -965,6 +965,12 @@ function buildPairedView(
   const rows: PairedBreakdownRow[] = [];
   // 实际成功"配对"的 keyId 集合 — 不含那些被降级为 unbound_upstream 的
   const pairedKeyIds = new Set<number>();
+  // site 当天有收入, 但绑定的 upstream key 当天 0 流量 → 这条 binding 在
+  // 当天形同虚设(典型场景:用户后来才建的绑定指向新 key,但那天用的是旧
+  // key)。把这种 site 放到 unbound_site 段, 避免配对视图出现"赚了 10w
+  // 上游花了 0"的怪行。bySiteByKey 是当天活跃的所有 binding, 任何被降级
+  // 的 site 都收到这个 set 里, 下面 unbound_site 循环会判一下放行。
+  const demotedSiteIds = new Set<number>();
 
   // ── paired 行：每把 upstream key 一行，聚合其绑定的 site 账号。
   for (const [keyId, siteIds] of bySiteByKey.entries()) {
@@ -1006,6 +1012,13 @@ function buildPairedView(
     if (revenue === 0 && expense === 0 && expSynced === 0) continue; // 当天没用
     // 所有绑定的 site 当天 0 收入 → 不算 paired, 让 upstream 落到 unbound_upstream
     if (revenue === 0 && (expense > 0 || expSynced > 0)) continue;
+    // 对称: site 有收入但绑定的 upstream 当天 0 支出 → 不算 paired,
+    // 把 site 降级到 unbound_site (历史日期上 binding 指向后来才换的 key
+    // 时,常出现这种"幻影配对"。让 site 走 unbound 段更直观)。
+    if (revenue > 0 && expense === 0 && expSynced === 0) {
+      for (const sid of siteIds) demotedSiteIds.add(sid);
+      continue;
+    }
     pairedKeyIds.add(keyId);
     rows.push({
       rowKey: `paired:${keyId}`,
@@ -1038,10 +1051,17 @@ function buildPairedView(
   }
 
   // ── unbound_site 行：site 账号未参与任何 binding → 高亮显示。
+  // 包含两种情况:
+  //   1) 真无绑定的 site (boundSiteIds 不含)
+  //   2) 有绑定但 binding 的 upstream 当天 0 流量被降级的 (demotedSiteIds)
   const boundSiteIds = new Set<number>();
   for (const list of bySiteByKey.values()) for (const sid of list) boundSiteIds.add(sid);
   for (const s of site) {
-    if (boundSiteIds.has(s.siteBoundAccountId)) continue;
+    if (
+      boundSiteIds.has(s.siteBoundAccountId) &&
+      !demotedSiteIds.has(s.siteBoundAccountId)
+    )
+      continue;
     if (s.actualCost === 0 && s.cost === 0) continue;
     // 计算未绑定行的支出：per-account fixedCost > 规则 > 0
     let expense = 0;
