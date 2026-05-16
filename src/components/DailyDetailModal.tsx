@@ -515,11 +515,25 @@ export default function DailyDetailModal({
                                         </Button>
                                       </div>
                                     )}
-                                    {r.siteAccounts &&
-                                      r.siteAccounts.length > 1 && (
-                                        <span className="text-[10px] text-default-400">
-                                          含 {r.siteAccounts.length} 个绑定账号
-                                        </span>
+                                    {/* paired 行下方列出所有绑定的 site 账号 —
+                                        unbound_site / unbound_upstream 的 label 本身
+                                        已含 site/account 信息, 不重复显示 */}
+                                    {r.kind === "paired" &&
+                                      r.siteAccounts &&
+                                      r.siteAccounts.length > 0 && (
+                                        <div className="flex items-start gap-1 text-[10px] text-default-500 mt-0.5">
+                                          <span className="text-default-400 shrink-0">
+                                            ↳ 绑定:
+                                          </span>
+                                          <span className="break-all">
+                                            {r.siteAccounts
+                                              .map(
+                                                (sa) =>
+                                                  `${sa.siteAccountName} / ${sa.accountName}`,
+                                              )
+                                              .join("  ·  ")}
+                                          </span>
+                                        </div>
                                       )}
                                   </div>
                                 </TableCell>
