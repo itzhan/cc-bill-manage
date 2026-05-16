@@ -58,6 +58,7 @@ interface UpstreamAccount {
   id: number;
   name: string;
   type: string;
+  category: string;
   baseUrl: string;
   email: string;
   password?: string;
@@ -72,6 +73,13 @@ interface UpstreamAccount {
   _count?: { keys: number };
 }
 
+const CATEGORY_OPTIONS = ["claude", "openai"] as const;
+const CATEGORY_TABS = [
+  { key: "claude", label: "Claude" },
+  { key: "openai", label: "OpenAI" },
+  { key: "__all", label: "全部" },
+] as const;
+
 interface UpstreamKey {
   id: number;
   remoteKeyId: number;
@@ -85,6 +93,7 @@ interface UpstreamKey {
   totalActualCost: number;
   rechargeMultiplier: number;
   lastUpdatedAt: string | null;
+  isStale?: boolean;
 }
 
 function parseInventory(raw: string | null): InventoryItem[] {
@@ -118,6 +127,7 @@ export default function UpstreamPage() {
   const [form, setForm] = useState({
     name: "",
     type: "sub2api",
+    category: "claude",
     baseUrl: "",
     email: "",
     password: "",
@@ -125,6 +135,8 @@ export default function UpstreamPage() {
     notes: "",
     inventory: [] as InventoryItem[],
   });
+  // Tab 默认 claude — 历史渠道 db push 时自动落到 claude, 一上来就能看见。
+  const [categoryFilter, setCategoryFilter] = useState<string>("claude");
   const [invDraft, setInvDraft] = useState<InventoryItem>({
     name: "",
     price: "",
@@ -255,6 +267,8 @@ export default function UpstreamPage() {
     setForm({
       name: "",
       type: "sub2api",
+      // 新建时默认填当前 Tab 的 category(用户在 openai tab 点新建 → 默认 openai)
+      category: categoryFilter === "__all" ? "claude" : categoryFilter,
       baseUrl: "",
       email: "",
       password: "",
@@ -271,6 +285,7 @@ export default function UpstreamPage() {
     setForm({
       name: a.name,
       type: a.type,
+      category: a.category ?? "claude",
       baseUrl: a.baseUrl,
       email: a.email,
       password: "",
@@ -326,6 +341,7 @@ export default function UpstreamPage() {
     const payload = {
       name: form.name,
       type: form.type,
+      category: form.category,
       baseUrl: form.baseUrl,
       email: form.email,
       password: form.password,
@@ -362,6 +378,7 @@ export default function UpstreamPage() {
     const inv = flushedInventory();
     const payload: Record<string, unknown> = {
       name: form.name,
+      category: form.category,
       baseUrl: form.baseUrl,
       email: form.email,
       notes: form.notes || null,
@@ -473,6 +490,38 @@ export default function UpstreamPage() {
         </div>
       </div>
 
+      <Tabs
+        aria-label="category filter"
+        radius="full"
+        size="sm"
+        variant="solid"
+        selectedKey={categoryFilter}
+        onSelectionChange={(k) => setCategoryFilter(String(k))}
+        classNames={{
+          base: "mb-4",
+          tabList: "bg-content2 p-1",
+          cursor: "bg-content1 shadow-sm",
+        }}
+      >
+        {CATEGORY_TABS.map((t) => {
+          const count =
+            t.key === "__all"
+              ? accounts.length
+              : accounts.filter((a) => (a.category ?? "claude") === t.key).length;
+          return (
+            <Tab
+              key={t.key}
+              title={
+                <span className="flex items-center gap-1.5">
+                  {t.label}
+                  <span className="text-[10px] text-default-400">{count}</span>
+                </span>
+              }
+            />
+          );
+        })}
+      </Tabs>
+
       {loading && !accounts.length ? (
         <div className="flex justify-center p-12">
           <Spinner />
@@ -483,7 +532,13 @@ export default function UpstreamPage() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {accounts.map((a) => {
+          {accounts
+            .filter((a) =>
+              categoryFilter === "__all"
+                ? true
+                : (a.category ?? "claude") === categoryFilter,
+            )
+            .map((a) => {
             const inv = parseInventory(a.inventory);
             const isRevealed = revealed.has(a.id);
             return (
@@ -499,6 +554,19 @@ export default function UpstreamPage() {
                       </h3>
                       <Chip size="sm" variant="flat">
                         {a.type}
+                      </Chip>
+                      <Chip
+                        size="sm"
+                        variant="flat"
+                        color={
+                          (a.category ?? "claude") === "claude"
+                            ? "warning"
+                            : (a.category ?? "claude") === "openai"
+                              ? "success"
+                              : "default"
+                        }
+                      >
+                        {a.category ?? "claude"}
                       </Chip>
                       {a.lastSyncError && (
                         <Chip size="sm" color="danger" variant="flat">
@@ -779,11 +847,16 @@ export default function UpstreamPage() {
             ) : (
               (() => {
                 const all = keys[keysModalAccount.id];
+                // stale 的 key 它的 todayActualCost 是上次成功的旧值,
+                // 不能再认为是今天的消费 → 当 0 处理。
+                function effToday(k: UpstreamKey): number {
+                  return k.isStale ? 0 : k.todayActualCost;
+                }
                 const base = showZero
                   ? all
-                  : all.filter((k) => k.todayActualCost > 0);
+                  : all.filter((k) => effToday(k) > 0);
                 const filtered = [...base].sort(
-                  (x, y) => y.todayActualCost - x.todayActualCost,
+                  (x, y) => effToday(y) - effToday(x),
                 );
                 const hidden = all.length - filtered.length;
                 return (
@@ -874,14 +947,23 @@ export default function UpstreamPage() {
                               </TableCell>
                               <TableCell>
                                 <div className="flex flex-col leading-tight">
-                                  <span className="font-medium">
-                                    {fmtMoneyShort(k.todayActualCost * rm)}
+                                  <span
+                                    className={`font-medium ${k.isStale ? "text-default-400" : ""}`}
+                                  >
+                                    {fmtMoneyShort(effToday(k) * rm)}
                                   </span>
-                                  {rm !== 1 && (
+                                  {k.isStale ? (
+                                    <span
+                                      className="text-[10px] text-warning"
+                                      title={`上次同步 ${k.lastUpdatedAt ? new Date(k.lastUpdatedAt).toLocaleString("zh-CN") : "—"} 时为 ${fmtMoneyShort(k.todayActualCost * rm)}`}
+                                    >
+                                      ⚠ 数据过期(同步失败)
+                                    </span>
+                                  ) : rm !== 1 ? (
                                     <span className="text-[10px] text-default-400">
                                       面值 {fmtMoneyShort(k.todayActualCost)}
                                     </span>
-                                  )}
+                                  ) : null}
                                 </div>
                               </TableCell>
                               <TableCell>
@@ -1071,6 +1153,7 @@ function AccountFormTabs({
   form: {
     name: string;
     type: string;
+    category: string;
     baseUrl: string;
     email: string;
     password: string;
@@ -1082,6 +1165,7 @@ function AccountFormTabs({
     f: (prev: {
       name: string;
       type: string;
+      category: string;
       baseUrl: string;
       email: string;
       password: string;
@@ -1091,6 +1175,7 @@ function AccountFormTabs({
     }) => {
       name: string;
       type: string;
+      category: string;
       baseUrl: string;
       email: string;
       password: string;
@@ -1232,6 +1317,21 @@ function AccountFormTabs({
               <SelectItem key="newapi">newapi</SelectItem>
             </Select>
           )}
+          <Select
+            label="分类"
+            description="决定渠道在管理页归到哪个 Tab; 不影响定价/同步"
+            selectedKeys={new Set([form.category])}
+            onSelectionChange={(k) =>
+              setForm((f) => ({
+                ...f,
+                category: Array.from(k as Set<string>)[0] ?? "claude",
+              }))
+            }
+          >
+            {CATEGORY_OPTIONS.map((c) => (
+              <SelectItem key={c}>{c}</SelectItem>
+            ))}
+          </Select>
           <Input
             label="Base URL"
             placeholder="http://1.2.3.4:8080"

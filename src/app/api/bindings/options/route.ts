@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import {
+  freshTodayActualCost,
+  freshTodayCostBase,
+  freshTodayUserCost,
+} from "@/lib/freshness";
 
 export const runtime = "nodejs";
 
@@ -30,7 +35,9 @@ export async function GET() {
         keyMasked: k.keyMasked,
         upstreamAccountId: k.upstreamAccountId,
         upstreamAccountName: k.upstreamAccount.name,
-        todayActualCost: k.todayActualCost,
+        // sync 失败时这里要 0, 否则 binding 下拉里那个"今日"金额会指着
+        // 上次成功的旧值, 用户看着以为它今天在跑 → 误绑。
+        todayActualCost: freshTodayActualCost(k),
       };
     }),
     siteBoundAccounts: siteBound.map((a) => ({
@@ -40,8 +47,8 @@ export async function GET() {
       siteAccountId: a.siteAccountId,
       siteAccountName: a.siteAccount.name,
       rateMultiplier: a.rateMultiplier,
-      todayCost: a.todayCost,
-      todayUserCost: a.todayUserCost,
+      todayCost: freshTodayCostBase(a),
+      todayUserCost: freshTodayUserCost(a),
     })),
   });
 }

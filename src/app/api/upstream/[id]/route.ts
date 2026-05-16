@@ -25,6 +25,7 @@ export async function PATCH(
   const numId = Number(id);
   const body = (await req.json().catch(() => ({}))) as Partial<{
     name: string;
+    category: string;
     baseUrl: string;
     email: string;
     password: string;
@@ -34,6 +35,7 @@ export async function PATCH(
   }>;
   const data: Record<string, unknown> = {};
   if (body.name != null) data.name = body.name;
+  if (body.category != null) data.category = body.category;
   if (body.baseUrl != null) data.baseUrl = body.baseUrl;
   if (body.email != null) data.email = body.email;
   if (body.password != null) {

@@ -8,30 +8,30 @@ datasource db {
 }
 
 model Settings {
-  id                  Int    @id @default(1)
-  adminPasswordHash   String
-  diffThreshold       Float  @default(10)
-  syncIntervalMinutes Int    @default(5)
-  emailAlertEnabled   Boolean @default(false)
+  id                        Int       @id @default(1)
+  adminPasswordHash         String
+  diffThreshold             Float     @default(10)
+  syncIntervalMinutes       Int       @default(5)
+  emailAlertEnabled         Boolean   @default(false)
   // Email sender configuration (aifun-style email API)
-  emailEndpoint       String  @default("https://aifun.edu.kg/api/email/send")
-  emailAuthToken      String?
-  emailSenderEmail    String?
-  emailSenderName     String?
-  emailSenderAccountId Int?
-  emailReceivers      String? // comma-separated emails
-  emailSubject        String  @default("xxx上游差异通知")
+  emailEndpoint             String    @default("https://aifun.edu.kg/api/email/send")
+  emailAuthToken            String?
+  emailSenderEmail          String?
+  emailSenderName           String?
+  emailSenderAccountId      Int?
+  emailReceivers            String? // comma-separated emails
+  emailSubject              String    @default("xxx上游差异通知")
   // cooldown: don't send another alert within this many minutes
-  emailCooldownMinutes Int    @default(30)
-  emailLastSentAt     DateTime?
-  emailLastSentDigest String? // hash-ish key to dedupe identical alerts
+  emailCooldownMinutes      Int       @default(30)
+  emailLastSentAt           DateTime?
+  emailLastSentDigest       String? // hash-ish key to dedupe identical alerts
   // ── Error-rate alert (sub2api site request_error_rate) ──
   // Reuses the same email config (endpoint/sender/receivers) as the diff
   // alert above; just a separate trigger + cooldown.
-  errorRateAlertEnabled    Boolean   @default(false)
-  errorRateThreshold       Float     @default(0.04)   // 0.04 = 4%
-  errorRateCooldownMinutes Int       @default(30)
-  errorRateLastSentAt      DateTime?
+  errorRateAlertEnabled     Boolean   @default(false)
+  errorRateThreshold        Float     @default(0.04) // 0.04 = 4%
+  errorRateCooldownMinutes  Int       @default(30)
+  errorRateLastSentAt       DateTime?
   // Shared scheduling-page filter — newline-separated name prefixes.
   // Persisted server-side (was localStorage) so the same exclusion
   // applies for every operator.
@@ -41,75 +41,78 @@ model Settings {
   // 计算，不需要再去补 upstream binding。
   unboundExcludePrefixes    String?
   // Preferred site account for the az batch tool. Quick-pick on page load.
-  defaultAzSiteAccountId Int?
+  defaultAzSiteAccountId    Int?
 }
 
 model AzPreset {
-  id             Int       @id @default(autoincrement())
-  siteAccountId  Int       @unique
+  id            Int      @id @default(autoincrement())
+  siteAccountId Int      @unique
   // JSON blob — see lib/az.ts AzConfig type for schema
-  config         String
-  updatedAt      DateTime  @updatedAt
+  config        String
+  updatedAt     DateTime @updatedAt
 
-  siteAccount    SiteAccount @relation(fields: [siteAccountId], references: [id], onDelete: Cascade)
+  siteAccount SiteAccount @relation(fields: [siteAccountId], references: [id], onDelete: Cascade)
 }
 
 model UpstreamAccount {
-  id              Int       @id @default(autoincrement())
-  name            String
-  type            String    @default("sub2api")
-  baseUrl         String
-  email           String
-  password        String
-  accessToken     String?
-  refreshToken    String?
-  tokenExpiresAt  DateTime?
-  remoteUserId    Int?
-  lastSyncAt      DateTime?
-  lastSyncError   String?
-  balance         Float?
+  id               Int       @id @default(autoincrement())
+  name             String
+  type             String    @default("sub2api")
+  // 模型族分类: claude | openai | gemini | ...(自由字符串,UI 限 select)
+  // 用来在渠道管理页分 Tab 显示;不参与定价/同步逻辑。
+  category         String    @default("claude")
+  baseUrl          String
+  email            String
+  password         String
+  accessToken      String?
+  refreshToken     String?
+  tokenExpiresAt   DateTime?
+  remoteUserId     Int?
+  lastSyncAt       DateTime?
+  lastSyncError    String?
+  balance          Float?
   balanceUpdatedAt DateTime?
   // Manually-curated supply info ("货源情况").
   // notes: free-form remarks; inventory: JSON list [{name,price,concurrency,note}]
-  notes           String?
-  inventory       String?
-  createdAt       DateTime  @default(now())
+  notes            String?
+  inventory        String?
+  createdAt        DateTime  @default(now())
 
   keys UpstreamKey[]
 }
 
 model UpstreamKey {
-  id                       Int      @id @default(autoincrement())
-  upstreamAccountId        Int
-  remoteKeyId              Int
-  name                     String
-  keyMasked                String
+  id                              Int       @id @default(autoincrement())
+  upstreamAccountId               Int
+  remoteKeyId                     Int
+  name                            String
+  keyMasked                       String
   // 完整的 raw api key（从上游 sub2api /api/v1/keys 拉回时写入）。
   // 用于"自动匹配绑定"——把 site 端 admin account 的 credentials.api_key
   // 跟这里的 apiKey 对碰，相同就建议绑定。可能为空（旧行或上游返回 mask）。
-  apiKey                   String?
-  groupId                  Int
-  groupName                String
+  apiKey                          String?
+  groupId                         Int
+  groupName                       String
   // Group's default multiplier (for display/reference)
-  groupRateMultiplier      Float
+  groupRateMultiplier             Float
   // Effective multiplier for THIS user. If sub2api returns a per-user
   // override in /api/v1/groups/rates, that value is used; otherwise this
   // equals groupRateMultiplier. ALL cost normalization uses this field.
-  effectiveRateMultiplier  Float    @default(1)
-  hasExclusiveRate         Boolean  @default(false)
+  effectiveRateMultiplier         Float     @default(1)
+  hasExclusiveRate                Boolean   @default(false)
   // When the rate changes mid-day, snapshot the previous rate and the
   // accumulated cost AT the moment of change. Cost up to that snapshot
   // is normalized with the previous rate; cost after with the current rate.
   previousEffectiveRateMultiplier Float?
   costAtRateChange                Float?
   rateChangedAt                   DateTime?
-  todayActualCost          Float    @default(0)
-  totalActualCost          Float    @default(0)
+  todayActualCost                 Float     @default(0)
+  totalActualCost                 Float     @default(0)
   // 充值倍率：我们买这条 key 余额时实际付了几折钱。例如 0.5 = 半价充值。
   // 在 sync 时把上游报告的成本×这个倍率写入 todayActualCost/totalActualCost，
   // 反映"我们真金白银花了多少"。默认 1（按面值计）。
-  rechargeMultiplier       Float    @default(1)
-  lastUpdatedAt            DateTime?
+  rechargeMultiplier              Float     @default(1)
+  lastUpdatedAt                   DateTime?
 
   upstreamAccount UpstreamAccount @relation(fields: [upstreamAccountId], references: [id], onDelete: Cascade)
   bindings        Binding[]
@@ -118,22 +121,22 @@ model UpstreamKey {
 }
 
 model SiteAccount {
-  id              Int       @id @default(autoincrement())
-  name            String
-  type            String    @default("sub2api")
-  baseUrl         String
+  id             Int       @id @default(autoincrement())
+  name           String
+  type           String    @default("sub2api")
+  baseUrl        String
   // For sub2api: admin api key (sent as x-api-key). Preferred over email/password.
   // When non-null, login flow is skipped entirely. email/password become record-only.
-  apiKey          String?
-  email           String
-  password        String
-  accessToken     String?
-  refreshToken    String?
-  tokenExpiresAt  DateTime?
-  remoteUserId    Int?
-  lastSyncAt      DateTime?
-  lastSyncError   String?
-  createdAt       DateTime  @default(now())
+  apiKey         String?
+  email          String
+  password       String
+  accessToken    String?
+  refreshToken   String?
+  tokenExpiresAt DateTime?
+  remoteUserId   Int?
+  lastSyncAt     DateTime?
+  lastSyncError  String?
+  createdAt      DateTime  @default(now())
 
   accounts SiteBoundAccount[]
   users    SiteUser[]
@@ -151,8 +154,8 @@ model SiteUser {
   balance                Float     @default(0)
   totalRecharged         Float     @default(0)
   // Today's spend (Asia/Shanghai). Pulled from /admin/usage/stats per sync.
-  todayCost              Float     @default(0)  // 1× base
-  todayActualCost        Float     @default(0)  // × user's effective rate
+  todayCost              Float     @default(0) // 1× base
+  todayActualCost        Float     @default(0) // × user's effective rate
   todayStatsAt           DateTime?
   // Manual multiplier applied when computing this user's effective spend.
   // null = use 1.0 (charge them as billed). Useful for VIP discounts.
@@ -174,7 +177,7 @@ model SiteUser {
 model SettlementPayment {
   id         Int      @id @default(autoincrement())
   siteUserId Int
-  amount     Float    // positive = client paid us
+  amount     Float // positive = client paid us
   paidAt     DateTime @default(now())
   notes      String?
   createdAt  DateTime @default(now())
@@ -185,11 +188,11 @@ model SettlementPayment {
 }
 
 model SiteBoundAccount {
-  id                Int       @id @default(autoincrement())
-  siteAccountId     Int
-  remoteAccountId   Int
-  name              String
-  rateMultiplier    Float     @default(1) // synced from upstream account.rate_multiplier
+  id                     Int       @id @default(autoincrement())
+  siteAccountId          Int
+  remoteAccountId        Int
+  name                   String
+  rateMultiplier         Float     @default(1) // synced from upstream account.rate_multiplier
   // Manual override for revenue calculation. When set, dashboard computes
   // user_cost = todayCost × rateMultiplierOverride instead of trusting the
   // upstream-supplied todayUserCost. Useful when the synced rate
@@ -199,13 +202,13 @@ model SiteBoundAccount {
   // When non-null, dashboard uses this instead of the synced todayCost
   // for profit math — az channels are flat-fee, not per-token billed.
   fixedCost              Float?
-  groupSummary      String?   // JSON string with group_id+name+multiplier list
-  todayRequests     Int       @default(0)
-  todayTokens       BigInt    @default(0)
-  todayCost         Float     @default(0) // 1x base
-  todayStandardCost Float     @default(0)
-  todayUserCost     Float     @default(0) // revenue (synced)
-  lastUpdatedAt     DateTime?
+  groupSummary           String? // JSON string with group_id+name+multiplier list
+  todayRequests          Int       @default(0)
+  todayTokens            BigInt    @default(0)
+  todayCost              Float     @default(0) // 1x base
+  todayStandardCost      Float     @default(0)
+  todayUserCost          Float     @default(0) // revenue (synced)
+  lastUpdatedAt          DateTime?
 
   siteAccount SiteAccount @relation(fields: [siteAccountId], references: [id], onDelete: Cascade)
   bindings    Binding[]
@@ -214,18 +217,18 @@ model SiteBoundAccount {
 }
 
 model Binding {
-  id                  Int @id @default(autoincrement())
-  siteBoundAccountId  Int
-  upstreamKeyId       Int
+  id                 Int       @id @default(autoincrement())
+  siteBoundAccountId Int
+  upstreamKeyId      Int
   // Capacity hint: total concurrency the upstream key can safely accept.
   // Surfaced in /scheduling so user can see if total in-flight across bound
   // site channels is approaching upstream's tolerance. Not enforced here.
-  maxConcurrency      Int?
-  createdAt           DateTime @default(now())
+  maxConcurrency     Int?
+  createdAt          DateTime  @default(now())
   // Soft-delete + 历史 binding。null = 当前仍生效。设了时间 = 历史 binding,
   // 不再参与"今天"的配对, 但回看历史日期时 (createdAt ≤ 那天 ≤ endedAt)
   // 仍会被用来配对收入和支出。
-  endedAt             DateTime?
+  endedAt            DateTime?
 
   siteBoundAccount SiteBoundAccount @relation(fields: [siteBoundAccountId], references: [id], onDelete: Cascade)
   upstreamKey      UpstreamKey      @relation(fields: [upstreamKeyId], references: [id], onDelete: Cascade)
@@ -236,36 +239,36 @@ model Binding {
 // Reusable preset for "create channel" form on the scheduling page.
 // Stores type / platform / group_ids / model_mapping defaults.
 model SchedulingTemplate {
-  id                       Int      @id @default(autoincrement())
-  name                     String
+  id                      Int      @id @default(autoincrement())
+  name                    String
   // null = available across all sub2api site accounts
-  siteAccountId            Int?
-  platform                 String   @default("anthropic")
-  type                     String   @default("apikey")
-  rateMultiplier           Float    @default(1)
+  siteAccountId           Int?
+  platform                String   @default("anthropic")
+  type                    String   @default("apikey")
+  rateMultiplier          Float    @default(1)
   // JSON arrays
-  groupIds                 String   // [int]
-  modelList                String   // [string] — model ids (for whitelist / mapping defaults)
-  confirmMixedChannelRisk  Boolean  @default(true)
-  notes                    String?
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  groupIds                String // [int]
+  modelList               String // [string] — model ids (for whitelist / mapping defaults)
+  confirmMixedChannelRisk Boolean  @default(true)
+  notes                   String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 // Time-series snapshot persisted once per syncAll (or manual sync) so we can
 // chart trends over time. Today-only data wouldn't give us a line otherwise.
 model Snapshot {
-  id                 Int      @id @default(autoincrement())
-  takenAt            DateTime @default(now())
-  totalRevenue       Float
-  totalExpense       Float
-  totalProfit        Float
-  totalSiteCostBase  Float
+  id                    Int      @id @default(autoincrement())
+  takenAt               DateTime @default(now())
+  totalRevenue          Float
+  totalExpense          Float
+  totalProfit           Float
+  totalSiteCostBase     Float
   totalUpstreamCostBase Float
-  totalDiff          Float
-  upstreamKeyCount   Int
-  siteBoundCount     Int
-  bindingCount       Int
+  totalDiff             Float
+  upstreamKeyCount      Int
+  siteBoundCount        Int
+  bindingCount          Int
 
   @@index([takenAt])
 }
@@ -274,26 +277,26 @@ model Snapshot {
 // 入口分发不同的 key（不同会员/不同试用），把它们聚到一起看更直观，也方便
 // 同时点测多把 key、横比哪一把状态最干净。
 model BenchChannel {
-  id        Int               @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   name      String
   baseUrl   String
   notes     String?
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  keys      BenchChannelKey[]
+  keys BenchChannelKey[]
 
   @@index([createdAt])
 }
 
 model BenchChannelKey {
-  id          Int      @id @default(autoincrement())
-  channelId   Int
-  name        String   // 用户自命名，如 "v4-vip"
-  apiKey      String   // 明文存储；展示时 mask
-  notes       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        Int      @id @default(autoincrement())
+  channelId Int
+  name      String // 用户自命名，如 "v4-vip"
+  apiKey    String // 明文存储；展示时 mask
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   channel BenchChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
   runs    BenchRun[]
@@ -306,117 +309,117 @@ model BenchChannelKey {
 // question, updates each as it grades, and finalizes summary fields on the
 // run when all tasks complete.
 model BenchRun {
-  id                       Int       @id @default(autoincrement())
+  id                           Int       @id @default(autoincrement())
   // Optional link to a saved channel-key. When set, the engine still uses
   // baseUrl / apiKey from the run row (snapshot at start time), but the UI
   // can group runs under their key. null = legacy ad-hoc run.
-  channelKeyId             Int?
-  name                     String
-  baseUrl                  String
-  apiKeyMasked             String
-  apiKey                   String
-  model                    String    @default("claude-opus-4-7")
-  judgeModel               String    @default("claude-opus-4-7")
-  effort                   String    @default("high")
-  judgeEffort              String    @default("high")
-  n                        Int
-  seed                     Int       @default(42)
-  concurrency              Int       @default(10)
+  channelKeyId                 Int?
+  name                         String
+  baseUrl                      String
+  apiKeyMasked                 String
+  apiKey                       String
+  model                        String    @default("claude-opus-4-7")
+  judgeModel                   String    @default("claude-opus-4-7")
+  effort                       String    @default("high")
+  judgeEffort                  String    @default("high")
+  n                            Int
+  seed                         Int       @default(42)
+  concurrency                  Int       @default(10)
   // queued | running | done | error | canceled
-  status                   String    @default("queued")
-  totalCount               Int
-  completedCount           Int       @default(0)
-  failedCount              Int       @default(0)
+  status                       String    @default("queued")
+  totalCount                   Int
+  completedCount               Int       @default(0)
+  failedCount                  Int       @default(0)
   // Filled when status flips to done.
-  mustHavePassRate         Float?
-  taskResolveRate          Float?
-  allItemsPassRate         Float?
-  avgAnswerLatencyS        Float?
-  avgJudgeLatencyS         Float?
-  totalInputTokens         Int?
-  totalOutputTokens        Int?
-  totalThinkingChars       Int?
+  mustHavePassRate             Float?
+  taskResolveRate              Float?
+  allItemsPassRate             Float?
+  avgAnswerLatencyS            Float?
+  avgJudgeLatencyS             Float?
+  totalInputTokens             Int?
+  totalOutputTokens            Int?
+  totalThinkingChars           Int?
   // Forensic flags — populated from first successful task.
-  hasSignature             Boolean?
-  serviceTierPresent       Boolean?
-  cacheCreationPresent     Boolean?
-  errorSummary             String?
+  hasSignature                 Boolean?
+  serviceTierPresent           Boolean?
+  cacheCreationPresent         Boolean?
+  errorSummary                 String?
   // Cancellation flag — engine polls this between tasks.
-  cancelRequested          Boolean   @default(false)
+  cancelRequested              Boolean   @default(false)
   // ── Fingerprint probe (一发探针，先于 QnA 跑) ──
   // status flow: pending → running → done | error
-  probeStatus              String    @default("pending")
-  probeError               String?
-  probeLatencyS            Float?
-  probeInputTokens         Int?
-  probeOutputTokens        Int?
-  probeThinkingChars       Int?
-  probeHasSignature        Boolean?
-  probeServiceTierPresent  Boolean?
-  probeCacheCreationPresent Boolean?
+  probeStatus                  String    @default("pending")
+  probeError                   String?
+  probeLatencyS                Float?
+  probeInputTokens             Int?
+  probeOutputTokens            Int?
+  probeThinkingChars           Int?
+  probeHasSignature            Boolean?
+  probeServiceTierPresent      Boolean?
+  probeCacheCreationPresent    Boolean?
   // 真伪指数（per BENCHMARK.md §7） — 越正越像真，越负越像伪。
-  probeAuthenticityScore   Int?
+  probeAuthenticityScore       Int?
   // verdict: real | suspicious | fake
-  probeVerdict             String?
+  probeVerdict                 String?
   // 探针的原始模型回答（截断到 ~10K 字符，用于法医回看）
-  probeAnswerPreview       String?
+  probeAnswerPreview           String?
   // 完整 raw response JSON（截断到 ~30K，便于复盘）
-  probeRawResponse         String?
+  probeRawResponse             String?
   // ── 长文本思考截断探针（opt-in：用户在新建 run 或详情页手动开启）──
   // not_requested | pending | running | done | error | skipped
-  truncProbeStatus            String   @default("not_requested")
-  truncProbeError             String?
-  truncProbeLatencyS          Float?
+  truncProbeStatus             String    @default("not_requested")
+  truncProbeError              String?
+  truncProbeLatencyS           Float?
   // requested max_tokens we sent (~64000)
   truncProbeRequestedMaxTokens Int?
   // Anthropic Messages stop_reason: end_turn | max_tokens | stop_sequence | …
-  truncProbeStopReason        String?
-  truncProbeOutputTokens      Int?
-  truncProbeThinkingChars     Int?
-  truncProbeHasText           Boolean?
+  truncProbeStopReason         String?
+  truncProbeOutputTokens       Int?
+  truncProbeThinkingChars      Int?
+  truncProbeHasText            Boolean?
   // ok | thinking_cut | answer_cut | silent_throttle | network_cut
-  truncProbeVerdict           String?
-  truncProbeAnswerPreview     String?
-  startedAt                DateTime?
-  finishedAt               DateTime?
-  createdAt                DateTime  @default(now())
+  truncProbeVerdict            String?
+  truncProbeAnswerPreview      String?
+  startedAt                    DateTime?
+  finishedAt                   DateTime?
+  createdAt                    DateTime  @default(now())
 
-  tasks       BenchTask[]
-  channelKey  BenchChannelKey? @relation(fields: [channelKeyId], references: [id], onDelete: SetNull)
+  tasks      BenchTask[]
+  channelKey BenchChannelKey? @relation(fields: [channelKeyId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([channelKeyId])
 }
 
 model BenchTask {
-  id                  Int       @id @default(autoincrement())
-  runId               Int
-  taskId              String
-  category            String
-  language            String
-  repo                String
+  id                 Int       @id @default(autoincrement())
+  runId              Int
+  taskId             String
+  category           String
+  language           String
+  repo               String
   // pending | running | done | error
-  status              String    @default("pending")
-  mustGot             Int?
-  mustTotal           Int?
-  allGot              Int?
-  allTotal            Int?
-  resolved            Boolean?
-  answerLatencyS      Float?
-  judgeLatencyS       Float?
-  answerInputTokens   Int?
-  answerOutputTokens  Int?
-  judgeInputTokens    Int?
-  judgeOutputTokens   Int?
-  thinkingChars       Int?
-  hasSignature        Boolean?
+  status             String    @default("pending")
+  mustGot            Int?
+  mustTotal          Int?
+  allGot             Int?
+  allTotal           Int?
+  resolved           Boolean?
+  answerLatencyS     Float?
+  judgeLatencyS      Float?
+  answerInputTokens  Int?
+  answerOutputTokens Int?
+  judgeInputTokens   Int?
+  judgeOutputTokens  Int?
+  thinkingChars      Int?
+  hasSignature       Boolean?
   // Bulky payloads, only filled on done.
-  answerText          String?
-  judgeRawText        String?
-  judgeParsedJson     String?
-  errorText           String?
-  startedAt           DateTime?
-  finishedAt          DateTime?
+  answerText         String?
+  judgeRawText       String?
+  judgeParsedJson    String?
+  errorText          String?
+  startedAt          DateTime?
+  finishedAt         DateTime?
 
   run BenchRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
@@ -428,16 +431,16 @@ model BenchTask {
 // "freezes" naturally once the calendar date rolls over (next sync
 // writes to a new row).
 model DailyProfit {
-  id                    Int      @id @default(autoincrement())
-  date                  String   @unique  // YYYY-MM-DD in Asia/Shanghai
-  revenue               Float
-  expense               Float
-  profit                Float
-  siteCostBase          Float
-  upstreamCostBase      Float
-  diff                  Float
-  capturedAt            DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id               Int      @id @default(autoincrement())
+  date             String   @unique // YYYY-MM-DD in Asia/Shanghai
+  revenue          Float
+  expense          Float
+  profit           Float
+  siteCostBase     Float
+  upstreamCostBase Float
+  diff             Float
+  capturedAt       DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 // 全局支出规则——按账号名前缀给一类账号设固定支出。
@@ -457,10 +460,10 @@ model ExpenseRule {
 // 至少一次，明细就永久留底。
 model DailyProfitBreakdown {
   id                  Int      @id @default(autoincrement())
-  date                String              // YYYY-MM-DD Asia/Shanghai
-  kind                String              // "upstream" | "site"
-  refId               Int                 // UpstreamKey.id 或 SiteBoundAccount.id（在各自 namespace 内唯一）
-  label               String              // 显示用："acme / vip-key" 或 "acme / acc-1"
+  date                String // YYYY-MM-DD Asia/Shanghai
+  kind                String // "upstream" | "site"
+  refId               Int // UpstreamKey.id 或 SiteBoundAccount.id（在各自 namespace 内唯一）
+  label               String // 显示用："acme / vip-key" 或 "acme / acc-1"
   // upstream-only metadata snapshots (倍率等 — 留底时定格，免得后续改了倍率
   // 看历史时被算错)
   groupName           String?
@@ -474,8 +477,8 @@ model DailyProfitBreakdown {
   siteAccountName     String?
   rateMultiplier      Float?
   // 实数据
-  cost                Float               // 1× 基础（face value）
-  actualCost          Float               // 应用倍率后（贡献给 revenue 或 expense）
+  cost                Float // 1× 基础（face value）
+  actualCost          Float // 应用倍率后（贡献给 revenue 或 expense）
   // 用户手动改写过的 actualCost。非 null 时优先于 actualCost。
   // 回填/同步**不动**这两个字段（只更新 cost/actualCost 同步值），保证手动改的不被覆盖。
   manualActualCost    Float?
@@ -492,15 +495,15 @@ model DailyProfitBreakdown {
 //   upstream  — 我们 → 渠道商，我们跑对方的 API（多 siteUrl 列）
 // 状态 status 只有三档：discussing / pending_test / tested
 model Project {
-  id           Int      @id @default(autoincrement())
-  type         String   // customer | upstream
-  partnerName  String
-  status       String   @default("discussing") // discussing | pending_test | tested
+  id          Int      @id @default(autoincrement())
+  type        String // customer | upstream
+  partnerName String
+  status      String   @default("discussing") // discussing | pending_test | tested
   // 多目标存储：每行一条，渲染时切分为编号列表
-  goal         String   @default("")
-  siteUrl      String?  // 仅 upstream 用
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  goal        String   @default("")
+  siteUrl     String? // 仅 upstream 用
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([type, status])
 }
@@ -510,12 +513,12 @@ model Project {
 // 这只是一层 UI 层面的聚合视图。
 //   groupIdsJson — JSON list of native sub2api group ids (number[])
 model CustomGroup {
-  id              Int      @id @default(autoincrement())
-  siteAccountId   Int
-  name            String
-  groupIdsJson    String   // JSON: number[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id            Int      @id @default(autoincrement())
+  siteAccountId Int
+  name          String
+  groupIdsJson  String // JSON: number[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([siteAccountId])
 }

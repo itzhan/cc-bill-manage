@@ -2,25 +2,32 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { ensureScheduler } from "@/lib/scheduler";
 import { refreshUpstreamAccount } from "@/lib/sync";
+import { freshTodayActualCost } from "@/lib/freshness";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: Request) {
   await ensureScheduler();
+  const url = new URL(req.url);
+  // ?category=claude / openai / "" (空 = 全部, 兼容旧调用)
+  const category = (url.searchParams.get("category") ?? "").trim();
+  const where = category ? { category } : undefined;
   const accounts = await prisma.upstreamAccount.findMany({
+    where,
     include: {
       _count: { select: { keys: true } },
-      keys: { select: { todayActualCost: true } },
+      // 包含 lastUpdatedAt 才能做 stale 守护 — sync 失败时 todayActualCost
+      // 还是上次成功的旧值, 不过守护后只有 lastUpdatedAt 是今天的才计入。
+      keys: {
+        select: { todayActualCost: true, lastUpdatedAt: true },
+      },
     },
   });
-  // Sort by today's total spend desc (sum of all keys' todayActualCost),
+  // Sort by today's total spend desc (stale 的 key 不计入这一行的"今日"),
   // ties broken by id ascending so order is stable.
   const items = accounts
     .map((a) => {
-      const todayCost = a.keys.reduce(
-        (s, k) => s + (k.todayActualCost ?? 0),
-        0,
-      );
+      const todayCost = a.keys.reduce((s, k) => s + freshTodayActualCost(k), 0);
       const { keys: _keys, ...rest } = a;
       return { ...rest, todayCost };
     })
@@ -32,6 +39,7 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as Partial<{
     name: string;
     type: string;
+    category: string;
     baseUrl: string;
     email: string;
     password: string;
@@ -40,6 +48,7 @@ export async function POST(req: Request) {
   const {
     name,
     type = "sub2api",
+    category = "claude",
     baseUrl,
     email = "",
     password = "",
@@ -62,6 +71,7 @@ export async function POST(req: Request) {
     data: {
       name,
       type,
+      category,
       baseUrl,
       email,
       password,
