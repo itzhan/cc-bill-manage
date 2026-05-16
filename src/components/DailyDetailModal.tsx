@@ -122,6 +122,50 @@ export default function DailyDetailModal({
   );
 
   const reload = () => load(false);
+
+  // 一键把这行的"本站 1×" 和 "上游 1×" 都置为 0 — 走 manualCost (per-day,
+  // 不影响其他日期)。paired 行两边都置;unbound_site 只置 site, unbound_upstream
+  // 只置 upstream。
+  async function zeroBoth1x(row: PairedRow) {
+    if (!date) return;
+    if (!confirm("把这一行的本站 1× 和上游 1× 都设成 0?(仅当日生效)")) return;
+    const tasks: Array<Promise<Response>> = [];
+    if (row.siteAccounts && row.siteAccounts.length === 1) {
+      const sid = row.siteAccounts[0].siteBoundAccountId;
+      tasks.push(
+        fetch(`/api/daily-profit/${date}/breakdown/site/${sid}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ manualCost: 0 }),
+        }),
+      );
+    }
+    if (row.upstreamKeyId != null) {
+      tasks.push(
+        fetch(
+          `/api/daily-profit/${date}/breakdown/upstream/${row.upstreamKeyId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ manualCost: 0 }),
+          },
+        ),
+      );
+    }
+    if (tasks.length === 0) {
+      addToast({ title: "无可清零字段", color: "warning" });
+      return;
+    }
+    const results = await Promise.all(tasks);
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length > 0) {
+      addToast({ title: "部分失败", color: "warning" });
+    } else {
+      addToast({ title: "已置 0", color: "success" });
+    }
+    reload();
+  }
+
   async function load(forceRefresh: boolean) {
     if (!date) return;
     if (forceRefresh) setRefreshing(true);
@@ -413,6 +457,16 @@ export default function DailyDetailModal({
                                             充值 ×{r.rechargeMultiplier.toFixed(2)}
                                           </Chip>
                                         )}
+                                      <Button
+                                        size="sm"
+                                        variant="flat"
+                                        color="default"
+                                        className="h-5 min-w-0 px-1.5 text-[10px]"
+                                        title="把本站 1× 和上游 1× 都置为 0(仅当日生效)"
+                                        onPress={() => zeroBoth1x(r)}
+                                      >
+                                        1×→0
+                                      </Button>
                                     </div>
                                     {isBindingError && r.bindingMismatch && (
                                       <span
