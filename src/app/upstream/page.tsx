@@ -587,9 +587,10 @@ export default function UpstreamPage() {
         </Card>
       ) : (
         <div className="space-y-6">
-          {/* 上游分组卡 — 同 supplier 的渠道聚成一张父卡, 每个渠道一行紧凑视图 */}
+          {/* 上游分组卡 — 同 supplier 的渠道聚成一张父卡, 每个渠道一行紧凑视图。
+              桌面端 2 列网格, 小屏退回 1 列, 避免单卡占满整行浪费空间。 */}
           {grouped.suppliers.length > 0 && (
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
               {grouped.suppliers.map(([sName, channels]) => {
                 const collapsed = collapsedSuppliers.has(sName);
                 const totalBalance = channels.reduce(

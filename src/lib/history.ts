@@ -1005,12 +1005,36 @@ function buildPairedView(
   const siteRowByAccId = new Map<number, BreakdownSiteRow>();
   for (const r of site) siteRowByAccId.set(r.siteBoundAccountId, r);
 
-  // 分组 bindings：一把 upstream key 可能被 N 个 site account 绑定。
-  const bySiteByKey = new Map<number, number[]>();
+  // 一个 site 同一天可能有多条 active binding (典型: 历史 binding 指向旧
+  // key + endedAt=null 的活跃 binding 指向新 key 同时覆盖该日)。如果两条
+  // 都进 paired 计算, site 的 revenue 会被双算 → 顶部 totals 不对, 且 UI
+  // 会出现两条同收入的行(一条正常 paired, 一条因新 key 无流量被降级成
+  // binding 异常)。
+  // 解决: 每个 site 当天只挑一条最合理的 binding 配对, 优先挑当天 upstream
+  // actualCost 最大的那条;并列时退回 createdAt 最新(更近期的意图)。
+  const siteToKey = new Map<number, number>();
   for (const b of bindings) {
-    const list = bySiteByKey.get(b.upstreamKeyId) ?? [];
-    list.push(b.siteBoundAccountId);
-    bySiteByKey.set(b.upstreamKeyId, list);
+    const sid = b.siteBoundAccountId;
+    const candKid = b.upstreamKeyId;
+    const candCost = upRowByKeyId.get(candKid)?.actualCost ?? 0;
+    const existing = siteToKey.get(sid);
+    if (existing == null) {
+      siteToKey.set(sid, candKid);
+      continue;
+    }
+    const existingCost = upRowByKeyId.get(existing)?.actualCost ?? 0;
+    if (candCost > existingCost) {
+      siteToKey.set(sid, candKid);
+    }
+    // 同 cost (含双 0) → 保留先遇到的, 行为稳定
+  }
+
+  // 分组: 一把 upstream key 可能被 N 个 site 绑定, 但每个 site 只挑了一条。
+  const bySiteByKey = new Map<number, number[]>();
+  for (const [sid, kid] of siteToKey.entries()) {
+    const list = bySiteByKey.get(kid) ?? [];
+    list.push(sid);
+    bySiteByKey.set(kid, list);
   }
 
   const rows: PairedBreakdownRow[] = [];
