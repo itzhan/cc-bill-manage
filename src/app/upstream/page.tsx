@@ -238,7 +238,7 @@ export default function UpstreamPage() {
   }
 
   async function deleteCategory(id: number, name: string) {
-    if (!confirm(`删除分类 "${name}"?\n各渠道里 categories 引用此名称的项会变成"未知分类",不影响展示但建议先编辑各渠道清理引用。`)) {
+    if (!confirm(`删除分类 "${name}"?\n各渠道下货源条目里勾过这个分类的会变成"无分类",该 Tab 也会消失。`)) {
       return;
     }
     const res = await fetch(`/api/upstream/categories/${id}`, {
@@ -527,17 +527,10 @@ export default function UpstreamPage() {
   }
 
   function openNew() {
-    // 新建时默认勾上当前 Tab 的分类
-    const defaultCats =
-      categoryFilter === TAB_ALL
-        ? categoryList.length > 0
-          ? [categoryList[0].name]
-          : ["claude"]
-        : [categoryFilter];
     setForm({
       name: "",
       type: "sub2api",
-      categories: defaultCats,
+      categories: [], // 渠道无分类, 提交空数组
       supplier: "",
       baseUrl: "",
       email: "",
@@ -552,14 +545,10 @@ export default function UpstreamPage() {
   }
   function openEdit(a: UpstreamAccount) {
     setEditing(a);
-    const cats =
-      a.categories && a.categories.length > 0
-        ? a.categories
-        : [a.category ?? "claude"];
     setForm({
       name: a.name,
       type: a.type,
-      categories: cats,
+      categories: [], // 渠道无分类
       supplier: a.supplier ?? "",
       baseUrl: a.baseUrl,
       email: a.email,
@@ -743,39 +732,32 @@ export default function UpstreamPage() {
     load();
   }, []);
 
-  // 当前 category 过滤后的渠道集 — supplier 分组和散卡都用它(避免在两处
-  // 重复写 categoryFilter 判断)。
-  function channelCategories(a: UpstreamAccount): string[] {
-    return a.categories && a.categories.length > 0
-      ? a.categories
-      : [a.category ?? "claude"];
+  // 分类只属于货源条目, 渠道本身不再带分类。Tab 过滤逻辑:
+  //   - 全部 tab: 所有渠道都显示, 所有货源都展示
+  //   - 某分类 tab: 渠道有至少 1 条 inventory item 命中此分类才显示;
+  //                 该渠道的货源段也只展示命中此分类的条目
+  //   - 货源条目分类规则: it.categories 包含此 tab → 命中;
+  //                       it.categories 空 → 只在 "全部" tab 显示
+  function inventoryMatchesTab(it: InventoryItem): boolean {
+    if (categoryFilter === TAB_ALL) return true;
+    const cats = it.categories ?? [];
+    return cats.includes(categoryFilter);
   }
-  const filteredAccounts = accounts.filter((a) =>
-    categoryFilter === TAB_ALL
-      ? true
-      : channelCategories(a).includes(categoryFilter),
-  );
+  const filteredAccounts = accounts.filter((a) => {
+    if (categoryFilter === TAB_ALL) return true;
+    const inv = parseInventory(a.inventory);
+    return inv.some(inventoryMatchesTab);
+  });
   // 当前 Tab 下"同名货源最低价"映射: name(lowercase) → {accountId, price}
   // 同 Tab 下显示的所有渠道里, 对每个 inventory 名字找最低价 (按 priceNumeric)。
-  // 该 (name, accountId) 在渲染时拿到 🏆 最低价 标识。"全部" Tab 时也算, 这样
-  // 全局横向比价。
+  // 该 (name, accountId) 在渲染时拿到 🏆 最低价 标识。
   const bestPriceByName = (() => {
     type Best = { accountId: number; numeric: number };
     const m = new Map<string, Best>();
     for (const a of filteredAccounts) {
       const inv = parseInventory(a.inventory);
-      const cats = channelCategories(a);
       for (const it of inv) {
-        // 货源条目过滤: 当前 Tab 是 "全部" 则全收;否则需要 (它自己的 categories
-        // 包含当前 Tab) 或 (它没填 categories 且渠道所属 categories 包含)
-        const itemCats = it.categories ?? [];
-        const itemEffective = itemCats.length > 0 ? itemCats : cats;
-        if (
-          categoryFilter !== TAB_ALL &&
-          !itemEffective.includes(categoryFilter)
-        ) {
-          continue;
-        }
+        if (!inventoryMatchesTab(it)) continue;
         const key = it.name.trim().toLowerCase();
         if (!key) continue;
         const num = priceNumeric(it.price);
@@ -792,13 +774,7 @@ export default function UpstreamPage() {
   // 给单个渠道算它当前 Tab 下应展示的货源(已 filter + sort by price asc)
   function visibleInventory(a: UpstreamAccount): InventoryItem[] {
     const inv = parseInventory(a.inventory);
-    const cats = channelCategories(a);
-    const filtered = inv.filter((it) => {
-      if (categoryFilter === TAB_ALL) return true;
-      const itemCats = it.categories ?? [];
-      const itemEffective = itemCats.length > 0 ? itemCats : cats;
-      return itemEffective.includes(categoryFilter);
-    });
+    const filtered = inv.filter(inventoryMatchesTab);
     filtered.sort((x, y) => priceNumeric(x.price) - priceNumeric(y.price));
     return filtered;
   }
@@ -882,8 +858,11 @@ export default function UpstreamPage() {
             ...categoryList.map((c) => ({
               key: c.name,
               label: c.name,
+              // 渠道数 = 至少有一条货源属于该分类的渠道数
               count: accounts.filter((a) =>
-                (a.categories ?? [a.category ?? "claude"]).includes(c.name),
+                parseInventory(a.inventory).some((it) =>
+                  (it.categories ?? []).includes(c.name),
+                ),
               ).length,
               deletable: true,
               id: c.id,
@@ -913,7 +892,7 @@ export default function UpstreamPage() {
           startContent={<Plus size={12} />}
           onPress={() => newCategoryDlg.onOpen()}
         >
-          新建分类
+          新建货源分类
         </Button>
         {categoryFilter !== TAB_ALL && (
           <Button
@@ -1059,7 +1038,6 @@ export default function UpstreamPage() {
                 {grouped.ungrouped.map((a) => {
                   const inv = visibleInventory(a);
                   const isRevealed = revealed.has(a.id);
-                  const accCats = channelCategories(a);
                   return (
                     <Card
                       key={a.id}
@@ -1074,22 +1052,6 @@ export default function UpstreamPage() {
                       <Chip size="sm" variant="flat">
                         {a.type}
                       </Chip>
-                      {accCats.map((c) => (
-                        <Chip
-                          key={c}
-                          size="sm"
-                          variant="flat"
-                          color={
-                            c === "claude"
-                              ? "warning"
-                              : c === "openai"
-                                ? "success"
-                                : "default"
-                          }
-                        >
-                          {c}
-                        </Chip>
-                      ))}
                       {a.lastSyncError && (
                         <Chip size="sm" color="danger" variant="flat">
                           同步失败
@@ -1378,24 +1340,25 @@ export default function UpstreamPage() {
         </ModalContent>
       </Modal>
 
-      {/* 新建分类 */}
+      {/* 新建货源分类 */}
       <Modal
         isOpen={newCategoryDlg.isOpen}
         onClose={newCategoryDlg.onClose}
         size="sm"
       >
         <ModalContent>
-          <ModalHeader>新建渠道分类</ModalHeader>
+          <ModalHeader>新建货源分类</ModalHeader>
           <ModalBody>
             <Input
               label="分类名"
-              placeholder="例如 claude / windsurf"
+              placeholder="例如 claude / openai / windsurf / kiro"
               value={newCategoryName}
               onValueChange={setNewCategoryName}
               autoFocus
             />
             <p className="text-xs text-default-500">
-              创建后 Tab 列表会立刻出现这个分类。编辑渠道/货源时即可勾选。
+              创建后 Tab 列表会立刻出现这个分类。编辑某条货源时勾选它属于这个
+              分类, 切到该 Tab 就只看到属于此分类的货源。
             </p>
           </ModalBody>
           <ModalFooter>
@@ -1928,10 +1891,6 @@ function ChannelRow({
   onEdit: () => void;
   onRemove: () => void;
 }) {
-  const cats =
-    a.categories && a.categories.length > 0
-      ? a.categories
-      : [a.category ?? "claude"];
   return (
     <div
       className="flex flex-col gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-content2/60 cursor-pointer border border-divider/30"
@@ -1943,17 +1902,6 @@ function ChannelRow({
           <Chip size="sm" variant="flat" classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}>
             {a.type}
           </Chip>
-          {cats.map((c) => (
-            <Chip
-              key={c}
-              size="sm"
-              variant="flat"
-              color={c === "claude" ? "warning" : c === "openai" ? "success" : "default"}
-              classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}
-            >
-              {c}
-            </Chip>
-          ))}
           {a.lastSyncError && (
             <Chip
               size="sm"
@@ -2228,15 +2176,6 @@ function AccountFormTabs({
   isNew: boolean;
   categoryList: UpstreamCategory[];
 }) {
-  function toggleCategory(name: string) {
-    setForm((f) => {
-      const has = f.categories.includes(name);
-      const next = has
-        ? f.categories.filter((c) => c !== name)
-        : [...f.categories, name];
-      return { ...f, categories: next };
-    });
-  }
   function toggleInventoryCategory(idx: number, name: string) {
     setForm((f) => {
       const list = f.inventory.slice();
@@ -2340,20 +2279,20 @@ function AccountFormTabs({
                         <X size={14} />
                       </Button>
                     </div>
-                    {/* 该货源所属分类: 候选 = 渠道勾选的分类 (form.categories);
-                        缺省/不勾 = 继承渠道全部分类 */}
-                    {form.categories.length > 0 && (
+                    {/* 该货源所属分类: 候选 = 全部 UpstreamCategory.
+                        留空 = 只在"全部" Tab 显示 (其它分类 Tab 不会出现这条货源). */}
+                    {categoryList.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         <span className="text-[10px] text-default-400 self-center">
                           属于分类:
                         </span>
-                        {form.categories.map((c) => {
-                          const on = itemCats.includes(c);
+                        {categoryList.map((c) => {
+                          const on = itemCats.includes(c.name);
                           return (
                             <button
-                              key={c}
+                              key={c.id}
                               type="button"
-                              onClick={() => toggleInventoryCategory(i, c)}
+                              onClick={() => toggleInventoryCategory(i, c.name)}
                               className={
                                 "px-1.5 py-0.5 rounded text-[10px] border transition-colors " +
                                 (on
@@ -2362,13 +2301,13 @@ function AccountFormTabs({
                               }
                             >
                               {on ? "✓ " : ""}
-                              {c}
+                              {c.name}
                             </button>
                           );
                         })}
                         {itemCats.length === 0 && (
                           <span className="text-[10px] text-default-400 self-center">
-                            (空 = 继承渠道全部分类)
+                            (空 = 只在&quot;全部&quot;显示)
                           </span>
                         )}
                       </div>
@@ -2402,43 +2341,8 @@ function AccountFormTabs({
               <SelectItem key="newapi">newapi</SelectItem>
             </Select>
           )}
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs text-default-500">
-              分类(可多选 · 决定渠道在管理页的 Tab 归属, 不影响定价/同步)
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {categoryList.length === 0 ? (
-                <span className="text-xs text-default-400">
-                  还没有任何分类, 关闭对话框后点页面顶部"新建分类"先创建。
-                </span>
-              ) : (
-                categoryList.map((c) => {
-                  const checked = form.categories.includes(c.name);
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => toggleCategory(c.name)}
-                      className={
-                        "px-2.5 py-1 rounded-full text-xs border transition-colors " +
-                        (checked
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-content2/60 border-divider/60 hover:bg-content2")
-                      }
-                    >
-                      {checked ? "✓ " : ""}
-                      {c.name}
-                    </button>
-                  );
-                })
-              )}
-            </div>
-            {form.categories.length === 0 && categoryList.length > 0 && (
-              <span className="text-[11px] text-warning">
-                ⚠ 没勾任何分类, 这个渠道不会出现在任何 Tab 里
-              </span>
-            )}
-          </div>
+          {/* 渠道本身不再有分类概念 — 分类只属于"货源"条目 (在下面"货源"
+              Tab 里配置). 表单底层 form.categories 留空数组提交即可。 */}
           <Autocomplete
             label="上游/货源 (可选)"
             description="同名 supplier 在管理页会聚成一张卡。留空 = 散户渠道。已有的可从下拉选,也可手填新名。"
