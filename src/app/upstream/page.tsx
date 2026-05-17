@@ -186,6 +186,7 @@ export default function UpstreamPage() {
     name: "",
     groupIds: "",
     concurrency: "10",
+    priority: "1",
     rateMultiplier: "",
     platform: "anthropic",
     geminiTier: "aistudio_paid", // 仅 platform=gemini 时生效
@@ -350,6 +351,7 @@ export default function UpstreamPage() {
     if (!pushSiteKey) return;
     const siteId = Number(pushSiteForm.siteAccountId);
     const concurrency = Number(pushSiteForm.concurrency);
+    const priority = Number(pushSiteForm.priority);
     const rateMultiplier = Number(pushSiteForm.rateMultiplier);
     const groupIds = pushSiteForm.groupIds
       .split(/[,，]/)
@@ -375,6 +377,10 @@ export default function UpstreamPage() {
       addToast({ title: "倍率非法", color: "warning" });
       return;
     }
+    if (!Number.isFinite(priority) || priority < 0) {
+      addToast({ title: "优先级非法", color: "warning" });
+      return;
+    }
     setPushSiteBusy(true);
     try {
       const res = await fetch(
@@ -387,6 +393,7 @@ export default function UpstreamPage() {
             name: pushSiteForm.name.trim(),
             groupIds,
             concurrency,
+            priority,
             rateMultiplier,
             platform: pushSiteForm.platform || "anthropic",
             // type 始终 apikey, sub2api API 里 type 必填
@@ -1811,7 +1818,7 @@ export default function UpstreamPage() {
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <Input
                 type="number"
                 label="并发"
@@ -1822,9 +1829,18 @@ export default function UpstreamPage() {
               />
               <Input
                 type="number"
+                label="优先级"
+                description="数字越小越优先 (默认 1)"
+                value={pushSiteForm.priority}
+                onValueChange={(v) =>
+                  setPushSiteForm((f) => ({ ...f, priority: v }))
+                }
+              />
+              <Input
+                type="number"
                 step="0.01"
                 label="rate_multiplier"
-                description="账号在 site 端的倍率"
+                description="账号倍率"
                 value={pushSiteForm.rateMultiplier}
                 onValueChange={(v) =>
                   setPushSiteForm((f) => ({ ...f, rateMultiplier: v }))

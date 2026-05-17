@@ -5,6 +5,64 @@ import { refreshSiteAccount } from "@/lib/sync";
 
 export const runtime = "nodejs";
 
+// 默认模型白名单 — 跟 sub2api/魔改 前端 useModelWhitelist.ts 保持一致
+// (引用: claudeModels / openaiModels / geminiModels)。push 到 site 时,
+// 如果用户没特殊配模型映射, 用这些当 model_mapping (whitelist 模式)。
+// 否则账号建出来 model_mapping 为空, sub2api 会把所有模型透传, 一般不
+// 是用户想要的; 想限制反而要走完整 UI。
+const DEFAULT_MODELS_BY_PLATFORM: Record<string, string[]> = {
+  anthropic: [
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-sonnet-20240620",
+    "claude-3-5-haiku-20241022",
+    "claude-3-7-sonnet-20250219",
+    "claude-sonnet-4-20250514",
+    "claude-opus-4-20250514",
+    "claude-opus-4-1-20250805",
+    "claude-sonnet-4-5-20250929",
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-5-20251101",
+    "claude-opus-4-6",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+  ],
+  openai: [
+    "gpt-5.2",
+    "gpt-5.2-2025-12-11",
+    "gpt-5.2-chat-latest",
+    "gpt-5.2-pro",
+    "gpt-5.2-pro-2025-12-11",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-2026-03-05",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "codex-auto-review",
+    "gpt-4o-audio-preview",
+    "gpt-4o-realtime-preview",
+    "gpt-image-1",
+    "gpt-image-1.5",
+    "gpt-image-2",
+  ],
+  gemini: [
+    "gemini-3.1-flash-image",
+    "gemini-2.5-flash-image",
+    "gemini-2.0-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
+  ],
+};
+
+function defaultModelMapping(platform: string): Record<string, string> {
+  const models = DEFAULT_MODELS_BY_PLATFORM[platform] ?? [];
+  const map: Record<string, string> = {};
+  for (const m of models) map[m] = m;
+  return map;
+}
+
 // 把一条 upstream key 一键铺到 site:
 // 1) 在目标 SiteAccount 上 createAdminAccount(用 key.apiKey + upstream.baseUrl)
 // 2) refreshSiteAccount 把新账号拉回 SiteBoundAccount 表
@@ -27,6 +85,7 @@ export async function POST(
     groupIds: number[];
     concurrency: number;
     rateMultiplier: number;
+    priority: number;
     platform: string;
     type: string;
     geminiTier: string;
@@ -37,6 +96,7 @@ export async function POST(
     groupIds,
     concurrency,
     rateMultiplier,
+    priority = 1,
     platform = "anthropic",
     type = "apikey",
     geminiTier,
@@ -96,9 +156,13 @@ export async function POST(
     // 按 platform 拼 credentials. 三个平台 apikey type 都需要
     // base_url + api_key; gemini 额外要 tier_id (参考 sub2api 前端
     // CreateAccountModal.vue:4396)。
+    // model_mapping 默认用平台内置白名单 — 不填的话 sub2api 不限制
+    // 转发, 让所有模型都打过去; 一般用户其实想限制成 "本平台支持的
+    // 那一批", 所以这里自动填上。
     const credentials: Record<string, unknown> = {
       base_url: key.upstreamAccount.baseUrl,
       api_key: key.apiKey,
+      model_mapping: defaultModelMapping(platform),
     };
     if (platform === "gemini") {
       credentials.tier_id = geminiTier || "aistudio_paid";
@@ -110,7 +174,7 @@ export async function POST(
       type,
       credentials,
       concurrency,
-      priority: 50,
+      priority, // 用户传入, 默认 1
       rate_multiplier: rateMultiplier,
       group_ids: groupIds,
       // 混渠道风险确认 — az 工具走的也是这条, 默认 true 否则上游会卡校验
