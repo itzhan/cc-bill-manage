@@ -54,13 +54,26 @@ model AzPreset {
   siteAccount SiteAccount @relation(fields: [siteAccountId], references: [id], onDelete: Cascade)
 }
 
+// 用户自定义的渠道分类 — 在 /upstream 页作为 Tab 展示, admin 可以增删。
+// UpstreamAccount.categories (JSON string[]) 引用这里的 name; 删除分类不级联,
+// 残留引用 UI 自动按"未知分类"处理(也不影响展示)。
+model UpstreamCategory {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
 model UpstreamAccount {
   id               Int       @id @default(autoincrement())
   name             String
   type             String    @default("sub2api")
-  // 模型族分类: claude | openai | gemini | ...(自由字符串,UI 限 select)
-  // 用来在渠道管理页分 Tab 显示;不参与定价/同步逻辑。
+  // 模型族分类 (legacy 单值, 沿用避免破坏旧数据 + 旧 SQL 查询)
+  // 新逻辑用 categories 字段, UI 显示也以 categories 为准。
   category         String    @default("claude")
+  // 多分类: JSON.stringify 的 string[], 例如 '["claude","windsurf"]'。
+  // null 时 fallback 到 [category] 单元素。候选名称由 UpstreamCategory 维护。
+  categories       String?
   // 上游/货源分组: 同名 supplier 的渠道在管理页聚成一张父卡。null = 散户
   // 渠道(按现状大卡片单独显示)。绑定/计费完全不看这个字段。
   supplier         String?

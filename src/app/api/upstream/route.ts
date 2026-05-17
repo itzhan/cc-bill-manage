@@ -6,31 +6,38 @@ import { freshTodayActualCost } from "@/lib/freshness";
 
 export const runtime = "nodejs";
 
+function parseCategories(jsonOrNull: string | null, legacy: string): string[] {
+  if (!jsonOrNull) return legacy ? [legacy] : [];
+  try {
+    const v = JSON.parse(jsonOrNull);
+    return Array.isArray(v) ? (v as string[]).filter(Boolean) : [];
+  } catch {
+    return legacy ? [legacy] : [];
+  }
+}
+
 export async function GET(req: Request) {
   await ensureScheduler();
   const url = new URL(req.url);
-  // ?category=claude / openai / "" (空 = 全部, 兼容旧调用)
+  // ?category=claude — 过滤含此分类的渠道; "" / 缺省 = 全部
   const category = (url.searchParams.get("category") ?? "").trim();
-  const where = category ? { category } : undefined;
   const accounts = await prisma.upstreamAccount.findMany({
-    where,
     include: {
       _count: { select: { keys: true } },
-      // 包含 lastUpdatedAt 才能做 stale 守护 — sync 失败时 todayActualCost
-      // 还是上次成功的旧值, 不过守护后只有 lastUpdatedAt 是今天的才计入。
       keys: {
         select: { todayActualCost: true, lastUpdatedAt: true },
       },
     },
   });
-  // Sort by today's total spend desc (stale 的 key 不计入这一行的"今日"),
-  // ties broken by id ascending so order is stable.
   const items = accounts
     .map((a) => {
       const todayCost = a.keys.reduce((s, k) => s + freshTodayActualCost(k), 0);
-      const { keys: _keys, ...rest } = a;
-      return { ...rest, todayCost };
+      const { keys: _keys, categories, ...rest } = a;
+      const cats = parseCategories(categories, a.category);
+      return { ...rest, categories: cats, todayCost };
     })
+    // 过滤: 同时兼容老 category 字段 (cats 来源就是 categories ?? [category])
+    .filter((a) => (category ? a.categories.includes(category) : true))
     .sort((a, b) => b.todayCost - a.todayCost || a.id - b.id);
   return NextResponse.json({ items });
 }
@@ -40,16 +47,18 @@ export async function POST(req: Request) {
     name: string;
     type: string;
     category: string;
+    categories: string[];
     supplier: string | null;
     baseUrl: string;
     email: string;
     password: string;
     accessToken: string;
+    notes: string | null;
+    inventory: string | null;
   }>;
   const {
     name,
     type = "sub2api",
-    category = "claude",
     supplier,
     baseUrl,
     email = "",
@@ -62,27 +71,35 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  // 需要 accessToken（手动粘贴）或 email+password（登录换取）任一组合。
   if (!accessToken && (!email || !password)) {
     return NextResponse.json(
       { error: "需要 accessToken，或同时提供 email + password" },
       { status: 400 },
     );
   }
+  // 分类: 新接口接 categories 数组优先; 没传时退回老的单字段 category。
+  const cats = Array.isArray(body.categories)
+    ? body.categories.map((s) => s.trim()).filter(Boolean)
+    : body.category
+      ? [body.category.trim()]
+      : ["claude"];
+  // 同步写老 category 保持兼容: 第一个 category 作为主分类
+  const primaryCategory = cats[0] ?? "claude";
   const created = await prisma.upstreamAccount.create({
     data: {
       name,
       type,
-      category,
-      // 空字符串当成"无分组" — 跟客户端 Autocomplete "清空" 的 UX 对齐
+      category: primaryCategory,
+      categories: JSON.stringify(cats),
       supplier: supplier?.trim() ? supplier.trim() : null,
       baseUrl,
       email,
       password,
       accessToken: accessToken || null,
+      notes: body.notes ?? null,
+      inventory: body.inventory ?? null,
     },
   });
-  // fire-and-forget: pull structure once so the user can bind right away
   refreshUpstreamAccount(created.id).catch((e) => {
     console.error("[upstream create] initial refresh failed:", e);
   });

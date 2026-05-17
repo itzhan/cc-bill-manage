@@ -26,6 +26,7 @@ export async function PATCH(
   const body = (await req.json().catch(() => ({}))) as Partial<{
     name: string;
     category: string;
+    categories: string[];
     supplier: string | null;
     baseUrl: string;
     email: string;
@@ -37,6 +38,12 @@ export async function PATCH(
   const data: Record<string, unknown> = {};
   if (body.name != null) data.name = body.name;
   if (body.category != null) data.category = body.category;
+  if (Array.isArray(body.categories)) {
+    const cats = body.categories.map((s) => s.trim()).filter(Boolean);
+    data.categories = JSON.stringify(cats);
+    // 同步老的单字段 category, 保持兼容; 用主分类(第一个)。
+    if (cats.length > 0) data.category = cats[0];
+  }
   if (body.supplier !== undefined) {
     // 显式传 supplier (含 null / 空串) → 写入; 空字符串归一为 null = 无分组
     const v = typeof body.supplier === "string" ? body.supplier.trim() : null;

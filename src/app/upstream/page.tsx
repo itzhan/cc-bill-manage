@@ -51,18 +51,39 @@ import Shell from "@/components/Shell";
 import { copyToClipboard } from "@/lib/clipboard";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
 
+interface UpstreamCategory {
+  id: number;
+  name: string;
+  sortOrder: number;
+}
+
 interface InventoryItem {
   name: string;
   price?: string;
   concurrency?: string;
   note?: string;
+  // 该货源所属分类。空 / 缺失 → 继承所在渠道的 categories (即跟随渠道
+  // 出现在所有它所属的 Tab 里)。
+  categories?: string[];
+}
+
+// 从 price 字符串里抓第一个数字, 给跨渠道比价用 — price 是自由文本
+// ("$5/M", "10/M", "5"...) 普通字符串比较没法用, 抓出数字才能排序。
+// 抓不到返回 Infinity, 自然排到最后。
+function priceNumeric(price: string | undefined): number {
+  if (!price) return Number.POSITIVE_INFINITY;
+  const m = /[0-9]+(?:\.[0-9]+)?/.exec(price);
+  if (!m) return Number.POSITIVE_INFINITY;
+  const v = Number(m[0]);
+  return Number.isFinite(v) ? v : Number.POSITIVE_INFINITY;
 }
 
 interface UpstreamAccount {
   id: number;
   name: string;
   type: string;
-  category: string;
+  category: string; // legacy 主分类, 兼容老代码
+  categories: string[]; // 新多分类列表
   supplier: string | null;
   baseUrl: string;
   email: string;
@@ -78,12 +99,8 @@ interface UpstreamAccount {
   _count?: { keys: number };
 }
 
-const CATEGORY_OPTIONS = ["claude", "openai"] as const;
-const CATEGORY_TABS = [
-  { key: "claude", label: "Claude" },
-  { key: "openai", label: "OpenAI" },
-  { key: "__all", label: "全部" },
-] as const;
+// Tab 全部用 "__all" 作为合成 key, 真实分类来自 API
+const TAB_ALL = "__all";
 
 interface UpstreamKey {
   id: number;
@@ -132,7 +149,7 @@ export default function UpstreamPage() {
   const [form, setForm] = useState({
     name: "",
     type: "sub2api",
-    category: "claude",
+    categories: ["claude"] as string[], // 多分类
     supplier: "",
     baseUrl: "",
     email: "",
@@ -145,8 +162,13 @@ export default function UpstreamPage() {
   const [collapsedSuppliers, setCollapsedSuppliers] = useState<Set<string>>(
     new Set(),
   );
-  // Tab 默认 claude — 历史渠道 db push 时自动落到 claude, 一上来就能看见。
+  // 当前 Tab; 历史渠道 db push 时自动落到 claude, 默认显示 claude。
   const [categoryFilter, setCategoryFilter] = useState<string>("claude");
+  // 用户自定义的分类列表 — 决定 Tab 显示
+  const [categoryList, setCategoryList] = useState<UpstreamCategory[]>([]);
+  // 新增分类对话框
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const newCategoryDlg = useDisclosure();
   const [invDraft, setInvDraft] = useState<InventoryItem>({
     name: "",
     price: "",
@@ -157,12 +179,53 @@ export default function UpstreamPage() {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch("/api/upstream", { cache: "no-store" });
-      const j = await res.json();
-      setAccounts(j.items || []);
+      const [acctRes, catRes] = await Promise.all([
+        fetch("/api/upstream", { cache: "no-store" }),
+        fetch("/api/upstream/categories", { cache: "no-store" }),
+      ]);
+      const acctJ = await acctRes.json();
+      const catJ = await catRes.json();
+      setAccounts(acctJ.items || []);
+      setCategoryList((catJ.items || []) as UpstreamCategory[]);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function addCategory() {
+    const name = newCategoryName.trim();
+    if (!name) {
+      addToast({ title: "分类名必填", color: "warning" });
+      return;
+    }
+    const res = await fetch("/api/upstream/categories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      addToast({ title: "新增失败", description: j.error, color: "danger" });
+      return;
+    }
+    setNewCategoryName("");
+    newCategoryDlg.onClose();
+    await load();
+  }
+
+  async function deleteCategory(id: number, name: string) {
+    if (!confirm(`删除分类 "${name}"?\n各渠道里 categories 引用此名称的项会变成"未知分类",不影响展示但建议先编辑各渠道清理引用。`)) {
+      return;
+    }
+    const res = await fetch(`/api/upstream/categories/${id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      addToast({ title: "删除失败", description: j.error, color: "danger" });
+      return;
+    }
+    await load();
   }
 
   async function loadKeys(id: number) {
@@ -274,11 +337,17 @@ export default function UpstreamPage() {
   }
 
   function openNew() {
+    // 新建时默认勾上当前 Tab 的分类
+    const defaultCats =
+      categoryFilter === TAB_ALL
+        ? categoryList.length > 0
+          ? [categoryList[0].name]
+          : ["claude"]
+        : [categoryFilter];
     setForm({
       name: "",
       type: "sub2api",
-      // 新建时默认填当前 Tab 的 category(用户在 openai tab 点新建 → 默认 openai)
-      category: categoryFilter === "__all" ? "claude" : categoryFilter,
+      categories: defaultCats,
       supplier: "",
       baseUrl: "",
       email: "",
@@ -293,10 +362,14 @@ export default function UpstreamPage() {
   }
   function openEdit(a: UpstreamAccount) {
     setEditing(a);
+    const cats =
+      a.categories && a.categories.length > 0
+        ? a.categories
+        : [a.category ?? "claude"];
     setForm({
       name: a.name,
       type: a.type,
-      category: a.category ?? "claude",
+      categories: cats,
       supplier: a.supplier ?? "",
       baseUrl: a.baseUrl,
       email: a.email,
@@ -353,7 +426,7 @@ export default function UpstreamPage() {
     const payload = {
       name: form.name,
       type: form.type,
-      category: form.category,
+      categories: form.categories,
       supplier: form.supplier?.trim() || null,
       baseUrl: form.baseUrl,
       email: form.email,
@@ -391,7 +464,7 @@ export default function UpstreamPage() {
     const inv = flushedInventory();
     const payload: Record<string, unknown> = {
       name: form.name,
-      category: form.category,
+      categories: form.categories,
       supplier: form.supplier?.trim() || null,
       baseUrl: form.baseUrl,
       email: form.email,
@@ -482,11 +555,68 @@ export default function UpstreamPage() {
 
   // 当前 category 过滤后的渠道集 — supplier 分组和散卡都用它(避免在两处
   // 重复写 categoryFilter 判断)。
+  function channelCategories(a: UpstreamAccount): string[] {
+    return a.categories && a.categories.length > 0
+      ? a.categories
+      : [a.category ?? "claude"];
+  }
   const filteredAccounts = accounts.filter((a) =>
-    categoryFilter === "__all"
+    categoryFilter === TAB_ALL
       ? true
-      : (a.category ?? "claude") === categoryFilter,
+      : channelCategories(a).includes(categoryFilter),
   );
+  // 当前 Tab 下"同名货源最低价"映射: name(lowercase) → {accountId, price}
+  // 同 Tab 下显示的所有渠道里, 对每个 inventory 名字找最低价 (按 priceNumeric)。
+  // 该 (name, accountId) 在渲染时拿到 🏆 最低价 标识。"全部" Tab 时也算, 这样
+  // 全局横向比价。
+  const bestPriceByName = (() => {
+    type Best = { accountId: number; numeric: number };
+    const m = new Map<string, Best>();
+    for (const a of filteredAccounts) {
+      const inv = parseInventory(a.inventory);
+      const cats = channelCategories(a);
+      for (const it of inv) {
+        // 货源条目过滤: 当前 Tab 是 "全部" 则全收;否则需要 (它自己的 categories
+        // 包含当前 Tab) 或 (它没填 categories 且渠道所属 categories 包含)
+        const itemCats = it.categories ?? [];
+        const itemEffective = itemCats.length > 0 ? itemCats : cats;
+        if (
+          categoryFilter !== TAB_ALL &&
+          !itemEffective.includes(categoryFilter)
+        ) {
+          continue;
+        }
+        const key = it.name.trim().toLowerCase();
+        if (!key) continue;
+        const num = priceNumeric(it.price);
+        if (!Number.isFinite(num)) continue;
+        const cur = m.get(key);
+        if (!cur || num < cur.numeric) {
+          m.set(key, { accountId: a.id, numeric: num });
+        }
+      }
+    }
+    return m;
+  })();
+
+  // 给单个渠道算它当前 Tab 下应展示的货源(已 filter + sort by price asc)
+  function visibleInventory(a: UpstreamAccount): InventoryItem[] {
+    const inv = parseInventory(a.inventory);
+    const cats = channelCategories(a);
+    const filtered = inv.filter((it) => {
+      if (categoryFilter === TAB_ALL) return true;
+      const itemCats = it.categories ?? [];
+      const itemEffective = itemCats.length > 0 ? itemCats : cats;
+      return itemEffective.includes(categoryFilter);
+    });
+    filtered.sort((x, y) => priceNumeric(x.price) - priceNumeric(y.price));
+    return filtered;
+  }
+  function isBestPrice(a: UpstreamAccount, it: InventoryItem): boolean {
+    const key = it.name.trim().toLowerCase();
+    const best = bestPriceByName.get(key);
+    return !!best && best.accountId === a.id;
+  }
   // 按 supplier 分组(null = 散户), 顺序按字母 + 散户最后。
   const grouped = (() => {
     const bySupplier = new Map<string, UpstreamAccount[]>();
@@ -545,37 +675,72 @@ export default function UpstreamPage() {
         </div>
       </div>
 
-      <Tabs
-        aria-label="category filter"
-        radius="full"
-        size="sm"
-        variant="solid"
-        selectedKey={categoryFilter}
-        onSelectionChange={(k) => setCategoryFilter(String(k))}
-        classNames={{
-          base: "mb-4",
-          tabList: "bg-content2 p-1",
-          cursor: "bg-content1 shadow-sm",
-        }}
-      >
-        {CATEGORY_TABS.map((t) => {
-          const count =
-            t.key === "__all"
-              ? accounts.length
-              : accounts.filter((a) => (a.category ?? "claude") === t.key).length;
-          return (
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <Tabs
+          aria-label="category filter"
+          radius="full"
+          size="sm"
+          variant="solid"
+          selectedKey={categoryFilter}
+          onSelectionChange={(k) => setCategoryFilter(String(k))}
+          classNames={{
+            tabList: "bg-content2 p-1",
+            cursor: "bg-content1 shadow-sm",
+          }}
+        >
+          {[
+            ...categoryList.map((c) => ({
+              key: c.name,
+              label: c.name,
+              count: accounts.filter((a) =>
+                (a.categories ?? [a.category ?? "claude"]).includes(c.name),
+              ).length,
+              deletable: true,
+              id: c.id,
+            })),
+            {
+              key: TAB_ALL,
+              label: "全部",
+              count: accounts.length,
+              deletable: false,
+              id: -1,
+            },
+          ].map((t) => (
             <Tab
               key={t.key}
               title={
                 <span className="flex items-center gap-1.5">
                   {t.label}
-                  <span className="text-[10px] text-default-400">{count}</span>
+                  <span className="text-[10px] text-default-400">{t.count}</span>
                 </span>
               }
             />
-          );
-        })}
-      </Tabs>
+          ))}
+        </Tabs>
+        <Button
+          size="sm"
+          variant="flat"
+          startContent={<Plus size={12} />}
+          onPress={() => newCategoryDlg.onOpen()}
+        >
+          新建分类
+        </Button>
+        {categoryFilter !== TAB_ALL && (
+          <Button
+            size="sm"
+            variant="light"
+            color="danger"
+            isIconOnly
+            title="删除当前分类"
+            onPress={() => {
+              const cat = categoryList.find((c) => c.name === categoryFilter);
+              if (cat) deleteCategory(cat.id, cat.name);
+            }}
+          >
+            <Trash2 size={13} />
+          </Button>
+        )}
+      </div>
 
       {loading && !accounts.length ? (
         <div className="flex justify-center p-12">
@@ -675,6 +840,9 @@ export default function UpstreamPage() {
                             key={a.id}
                             a={a}
                             busy={busy === a.id || busyRefresh === a.id}
+                            inv={visibleInventory(a)}
+                            isBest={(it) => isBestPrice(a, it)}
+                            categoryFilter={categoryFilter}
                             onClickKeys={() => openKeys(a)}
                             onRefresh={() => refreshOne(a.id)}
                             onEdit={() => openEdit(a)}
@@ -699,8 +867,9 @@ export default function UpstreamPage() {
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {grouped.ungrouped.map((a) => {
-                  const inv = parseInventory(a.inventory);
+                  const inv = visibleInventory(a);
                   const isRevealed = revealed.has(a.id);
+                  const accCats = channelCategories(a);
                   return (
                     <Card
                       key={a.id}
@@ -715,19 +884,22 @@ export default function UpstreamPage() {
                       <Chip size="sm" variant="flat">
                         {a.type}
                       </Chip>
-                      <Chip
-                        size="sm"
-                        variant="flat"
-                        color={
-                          (a.category ?? "claude") === "claude"
-                            ? "warning"
-                            : (a.category ?? "claude") === "openai"
-                              ? "success"
-                              : "default"
-                        }
-                      >
-                        {a.category ?? "claude"}
-                      </Chip>
+                      {accCats.map((c) => (
+                        <Chip
+                          key={c}
+                          size="sm"
+                          variant="flat"
+                          color={
+                            c === "claude"
+                              ? "warning"
+                              : c === "openai"
+                                ? "success"
+                                : "default"
+                          }
+                        >
+                          {c}
+                        </Chip>
+                      ))}
                       {a.lastSyncError && (
                         <Chip size="sm" color="danger" variant="flat">
                           同步失败
@@ -833,10 +1005,17 @@ export default function UpstreamPage() {
                       <Package size={12} />
                       <span>货源</span>
                       <span className="text-default-400">{inv.length}</span>
+                      {categoryFilter !== TAB_ALL && (
+                        <span className="text-[10px] text-default-400">
+                          · 已按 {categoryFilter} 过滤, 按价升序
+                        </span>
+                      )}
                     </div>
                     {inv.length === 0 ? (
                       <p className="text-xs text-default-400 italic">
-                        未填写。点编辑添加。
+                        {categoryFilter === TAB_ALL
+                          ? "未填写。点编辑添加。"
+                          : `当前分类 (${categoryFilter}) 下无货源`}
                       </p>
                     ) : (
                       <div className="rounded-lg overflow-hidden border border-divider/40">
@@ -845,27 +1024,49 @@ export default function UpstreamPage() {
                           <span>倍率 / 价格</span>
                           <span>并发</span>
                         </div>
-                        {inv.map((it, i) => (
-                          <div
-                            key={i}
-                            className="grid grid-cols-3 gap-1 px-2.5 py-1.5 text-xs border-t border-divider/40 items-center"
-                            title={it.note || undefined}
-                          >
-                            <span className="font-medium truncate">
-                              {it.name}
-                            </span>
-                            <span className="font-medium truncate">
-                              {it.price || (
-                                <span className="text-default-400">—</span>
-                              )}
-                            </span>
-                            <span className="font-medium truncate">
-                              {it.concurrency || (
-                                <span className="text-default-400">—</span>
-                              )}
-                            </span>
-                          </div>
-                        ))}
+                        {inv.map((it, i) => {
+                          const best = isBestPrice(a, it);
+                          return (
+                            <div
+                              key={i}
+                              className={
+                                "grid grid-cols-3 gap-1 px-2.5 py-1.5 text-xs border-t border-divider/40 items-center " +
+                                (best
+                                  ? "bg-success-50/40 dark:bg-success-950/20"
+                                  : "")
+                              }
+                              title={it.note || undefined}
+                            >
+                              <span className="font-medium truncate flex items-center gap-1">
+                                {best && (
+                                  <span
+                                    className="text-[10px]"
+                                    title="跨渠道同名最低价"
+                                  >
+                                    🏆
+                                  </span>
+                                )}
+                                {it.name}
+                              </span>
+                              <span
+                                className={
+                                  best
+                                    ? "font-semibold text-success truncate"
+                                    : "font-medium truncate"
+                                }
+                              >
+                                {it.price || (
+                                  <span className="text-default-400">—</span>
+                                )}
+                              </span>
+                              <span className="font-medium truncate">
+                                {it.concurrency || (
+                                  <span className="text-default-400">—</span>
+                                )}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </section>
@@ -945,6 +1146,7 @@ export default function UpstreamPage() {
               removeInventory={removeInventory}
               isNew
               supplierOptions={supplierOptions}
+              categoryList={categoryList}
             />
           </ModalBody>
           <ModalFooter>
@@ -978,6 +1180,7 @@ export default function UpstreamPage() {
               removeInventory={removeInventory}
               isNew={false}
               supplierOptions={supplierOptions}
+              categoryList={categoryList}
             />
           </ModalBody>
           <ModalFooter>
@@ -986,6 +1189,37 @@ export default function UpstreamPage() {
             </Button>
             <Button color="primary" onPress={submitEdit}>
               保存
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* 新建分类 */}
+      <Modal
+        isOpen={newCategoryDlg.isOpen}
+        onClose={newCategoryDlg.onClose}
+        size="sm"
+      >
+        <ModalContent>
+          <ModalHeader>新建渠道分类</ModalHeader>
+          <ModalBody>
+            <Input
+              label="分类名"
+              placeholder="例如 claude / windsurf"
+              value={newCategoryName}
+              onValueChange={setNewCategoryName}
+              autoFocus
+            />
+            <p className="text-xs text-default-500">
+              创建后 Tab 列表会立刻出现这个分类。编辑渠道/货源时即可勾选。
+            </p>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={newCategoryDlg.onClose}>
+              取消
+            </Button>
+            <Button color="primary" onPress={addCategory}>
+              创建
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -1208,6 +1442,9 @@ export default function UpstreamPage() {
 function ChannelRow({
   a,
   busy,
+  inv,
+  isBest,
+  categoryFilter,
   onClickKeys,
   onRefresh,
   onEdit,
@@ -1215,108 +1452,154 @@ function ChannelRow({
 }: {
   a: UpstreamAccount;
   busy: boolean;
+  inv: InventoryItem[]; // 已过滤 + 按价升序
+  isBest: (it: InventoryItem) => boolean;
+  categoryFilter: string;
   onClickKeys: () => void;
   onRefresh: () => void;
   onEdit: () => void;
   onRemove: () => void;
 }) {
-  const cat = a.category ?? "claude";
+  const cats =
+    a.categories && a.categories.length > 0
+      ? a.categories
+      : [a.category ?? "claude"];
   return (
     <div
-      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-content2/60 cursor-pointer border border-divider/30"
+      className="flex flex-col gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-content2/60 cursor-pointer border border-divider/30"
       onClick={onClickKeys}
     >
-      <div className="flex items-center gap-2 min-w-0 flex-1">
-        <span className="font-medium text-sm truncate">{a.name}</span>
-        <Chip size="sm" variant="flat" classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}>
-          {a.type}
-        </Chip>
-        <Chip
-          size="sm"
-          variant="flat"
-          color={cat === "claude" ? "warning" : cat === "openai" ? "success" : "default"}
-          classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}
-        >
-          {cat}
-        </Chip>
-        {a.lastSyncError && (
-          <Chip
-            size="sm"
-            color="danger"
-            variant="flat"
-            classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}
-            title={a.lastSyncError}
-          >
-            ⚠ 同步失败
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
+          <span className="font-medium text-sm truncate">{a.name}</span>
+          <Chip size="sm" variant="flat" classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}>
+            {a.type}
           </Chip>
-        )}
-      </div>
-      <div className="flex items-center gap-4 shrink-0 text-xs">
-        <div className="flex flex-col items-end leading-tight w-16">
-          <span className="text-default-400">今日</span>
-          <span
-            className={
-              (a.todayCost ?? 0) > 0 ? "font-semibold tabular-nums" : "text-default-400 tabular-nums"
-            }
-          >
-            ${fmtMoneyShort(a.todayCost ?? 0)}
+          {cats.map((c) => (
+            <Chip
+              key={c}
+              size="sm"
+              variant="flat"
+              color={c === "claude" ? "warning" : c === "openai" ? "success" : "default"}
+              classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}
+            >
+              {c}
+            </Chip>
+          ))}
+          {a.lastSyncError && (
+            <Chip
+              size="sm"
+              color="danger"
+              variant="flat"
+              classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}
+              title={a.lastSyncError}
+            >
+              ⚠ 同步失败
+            </Chip>
+          )}
+        </div>
+        <div className="flex items-center gap-4 shrink-0 text-xs">
+          <div className="flex flex-col items-end leading-tight w-16">
+            <span className="text-default-400">今日</span>
+            <span
+              className={
+                (a.todayCost ?? 0) > 0 ? "font-semibold tabular-nums" : "text-default-400 tabular-nums"
+              }
+            >
+              ${fmtMoneyShort(a.todayCost ?? 0)}
+            </span>
+          </div>
+          <div className="flex flex-col items-end leading-tight w-20">
+            <span className="text-default-400">余额</span>
+            <span
+              className={`font-semibold tabular-nums ${
+                a.balance == null
+                  ? "text-default-400"
+                  : a.balance > 0
+                    ? "text-success"
+                    : "text-warning"
+              }`}
+            >
+              {a.balance == null ? "—" : `$${fmtMoneyShort(a.balance)}`}
+            </span>
+          </div>
+          <span className="text-default-400 hidden md:inline">
+            {a._count?.keys ?? 0} keys
           </span>
-        </div>
-        <div className="flex flex-col items-end leading-tight w-20">
-          <span className="text-default-400">余额</span>
-          <span
-            className={`font-semibold tabular-nums ${
-              a.balance == null
-                ? "text-default-400"
-                : a.balance > 0
-                  ? "text-success"
-                  : "text-warning"
-            }`}
+          <div
+            className="flex gap-0.5"
+            onClick={(e) => e.stopPropagation()}
           >
-            {a.balance == null ? "—" : `$${fmtMoneyShort(a.balance)}`}
-          </span>
-        </div>
-        <span className="text-default-400 hidden md:inline">
-          {a._count?.keys ?? 0} keys
-        </span>
-        <div
-          className="flex gap-0.5"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <Button
-            size="sm"
-            variant="light"
-            isIconOnly
-            className="h-7 min-w-7"
-            onPress={onRefresh}
-            isLoading={busy}
-            title="刷新+同步"
-          >
-            <RefreshCw size={13} />
-          </Button>
-          <Button
-            size="sm"
-            variant="light"
-            isIconOnly
-            className="h-7 min-w-7"
-            onPress={onEdit}
-            title="编辑"
-          >
-            <Pencil size={13} />
-          </Button>
-          <Button
-            size="sm"
-            variant="light"
-            isIconOnly
-            color="danger"
-            className="h-7 min-w-7"
-            onPress={onRemove}
-            title="删除"
-          >
-            <Trash2 size={13} />
-          </Button>
+            <Button
+              size="sm"
+              variant="light"
+              isIconOnly
+              className="h-7 min-w-7"
+              onPress={onRefresh}
+              isLoading={busy}
+              title="刷新+同步"
+            >
+              <RefreshCw size={13} />
+            </Button>
+            <Button
+              size="sm"
+              variant="light"
+              isIconOnly
+              className="h-7 min-w-7"
+              onPress={onEdit}
+              title="编辑"
+            >
+              <Pencil size={13} />
+            </Button>
+            <Button
+              size="sm"
+              variant="light"
+              isIconOnly
+              color="danger"
+              className="h-7 min-w-7"
+              onPress={onRemove}
+              title="删除"
+            >
+              <Trash2 size={13} />
+            </Button>
+          </div>
         </div>
       </div>
+      {/* 货源 — 已按当前 Tab 过滤 + 价升序 + 跨渠道最低价 🏆 标记 */}
+      {inv.length > 0 && (
+        <div className="flex flex-wrap gap-1 pl-1">
+          {inv.map((it, i) => {
+            const best = isBest(it);
+            return (
+              <span
+                key={i}
+                className={
+                  "text-[10px] px-1.5 py-0.5 rounded border " +
+                  (best
+                    ? "bg-success-50 border-success-300 dark:bg-success-950/30"
+                    : "bg-content2/60 border-divider/60")
+                }
+                title={it.note || undefined}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {best && "🏆 "}
+                <b>{it.name}</b>{" "}
+                <span className={best ? "text-success font-semibold" : "text-default-500"}>
+                  {it.price || "—"}
+                </span>
+                {it.concurrency && (
+                  <span className="text-default-400"> · {it.concurrency}并发</span>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {inv.length === 0 && categoryFilter !== TAB_ALL && (
+        <div className="text-[10px] text-default-400 pl-1">
+          当前分类 ({categoryFilter}) 下无货源
+        </div>
+      )}
     </div>
   );
 }
@@ -1431,13 +1714,14 @@ function AccountFormTabs({
   removeInventory,
   isNew,
   supplierOptions,
+  categoryList,
 }: {
   tab: string;
   setTab: (v: string) => void;
   form: {
     name: string;
     type: string;
-    category: string;
+    categories: string[];
     supplier: string;
     baseUrl: string;
     email: string;
@@ -1450,7 +1734,7 @@ function AccountFormTabs({
     f: (prev: {
       name: string;
       type: string;
-      category: string;
+      categories: string[];
       supplier: string;
       baseUrl: string;
       email: string;
@@ -1461,7 +1745,7 @@ function AccountFormTabs({
     }) => {
       name: string;
       type: string;
-      category: string;
+      categories: string[];
       supplier: string;
       baseUrl: string;
       email: string;
@@ -1477,7 +1761,29 @@ function AccountFormTabs({
   addInventoryDraft: () => void;
   removeInventory: (i: number) => void;
   isNew: boolean;
+  categoryList: UpstreamCategory[];
 }) {
+  function toggleCategory(name: string) {
+    setForm((f) => {
+      const has = f.categories.includes(name);
+      const next = has
+        ? f.categories.filter((c) => c !== name)
+        : [...f.categories, name];
+      return { ...f, categories: next };
+    });
+  }
+  function toggleInventoryCategory(idx: number, name: string) {
+    setForm((f) => {
+      const list = f.inventory.slice();
+      const it = { ...list[idx] };
+      const cur = it.categories ?? [];
+      it.categories = cur.includes(name)
+        ? cur.filter((c) => c !== name)
+        : [...cur, name];
+      list[idx] = it;
+      return { ...f, inventory: list };
+    });
+  }
   return (
     <Tabs
       selectedKey={tab}
@@ -1548,24 +1854,28 @@ function AccountFormTabs({
               未添加货源。填上面的输入框 + 点 + 添加。
             </p>
           ) : (
-            <Table removeWrapper aria-label="inventory" classNames={{ td: "py-2" }}>
-              <TableHeader>
-                <TableColumn>名称</TableColumn>
-                <TableColumn>价格</TableColumn>
-                <TableColumn>并发</TableColumn>
-                <TableColumn>备注</TableColumn>
-                <TableColumn> </TableColumn>
-              </TableHeader>
-              <TableBody>
-                {form.inventory.map((it, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="font-medium">{it.name}</TableCell>
-                    <TableCell>{it.price || "—"}</TableCell>
-                    <TableCell>{it.concurrency || "—"}</TableCell>
-                    <TableCell className="text-default-500 text-xs">
-                      {it.note || "—"}
-                    </TableCell>
-                    <TableCell>
+            <div className="space-y-2">
+              {form.inventory.map((it, i) => {
+                const itemCats = it.categories ?? [];
+                return (
+                  <div
+                    key={i}
+                    className="rounded-lg border border-divider/50 p-2.5 bg-content2/30"
+                  >
+                    <div className="flex items-start gap-2 justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium">{it.name}</div>
+                        <div className="text-xs text-default-500 mt-0.5">
+                          价格 <b>{it.price || "—"}</b> · 并发{" "}
+                          <b>{it.concurrency || "—"}</b>
+                          {it.note && (
+                            <span className="text-default-400">
+                              {" "}
+                              · {it.note}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                       <Button
                         size="sm"
                         variant="light"
@@ -1575,11 +1885,44 @@ function AccountFormTabs({
                       >
                         <X size={14} />
                       </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </div>
+                    {/* 该货源所属分类: 候选 = 渠道勾选的分类 (form.categories);
+                        缺省/不勾 = 继承渠道全部分类 */}
+                    {form.categories.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        <span className="text-[10px] text-default-400 self-center">
+                          属于分类:
+                        </span>
+                        {form.categories.map((c) => {
+                          const on = itemCats.includes(c);
+                          return (
+                            <button
+                              key={c}
+                              type="button"
+                              onClick={() => toggleInventoryCategory(i, c)}
+                              className={
+                                "px-1.5 py-0.5 rounded text-[10px] border transition-colors " +
+                                (on
+                                  ? "bg-primary text-primary-foreground border-primary"
+                                  : "bg-content2/60 border-divider/60 hover:bg-content2")
+                              }
+                            >
+                              {on ? "✓ " : ""}
+                              {c}
+                            </button>
+                          );
+                        })}
+                        {itemCats.length === 0 && (
+                          <span className="text-[10px] text-default-400 self-center">
+                            (空 = 继承渠道全部分类)
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </Tab>
@@ -1605,21 +1948,43 @@ function AccountFormTabs({
               <SelectItem key="newapi">newapi</SelectItem>
             </Select>
           )}
-          <Select
-            label="分类"
-            description="决定渠道在管理页归到哪个 Tab; 不影响定价/同步"
-            selectedKeys={new Set([form.category])}
-            onSelectionChange={(k) =>
-              setForm((f) => ({
-                ...f,
-                category: Array.from(k as Set<string>)[0] ?? "claude",
-              }))
-            }
-          >
-            {CATEGORY_OPTIONS.map((c) => (
-              <SelectItem key={c}>{c}</SelectItem>
-            ))}
-          </Select>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs text-default-500">
+              分类(可多选 · 决定渠道在管理页的 Tab 归属, 不影响定价/同步)
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {categoryList.length === 0 ? (
+                <span className="text-xs text-default-400">
+                  还没有任何分类, 关闭对话框后点页面顶部"新建分类"先创建。
+                </span>
+              ) : (
+                categoryList.map((c) => {
+                  const checked = form.categories.includes(c.name);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => toggleCategory(c.name)}
+                      className={
+                        "px-2.5 py-1 rounded-full text-xs border transition-colors " +
+                        (checked
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-content2/60 border-divider/60 hover:bg-content2")
+                      }
+                    >
+                      {checked ? "✓ " : ""}
+                      {c.name}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            {form.categories.length === 0 && categoryList.length > 0 && (
+              <span className="text-[11px] text-warning">
+                ⚠ 没勾任何分类, 这个渠道不会出现在任何 Tab 里
+              </span>
+            )}
+          </div>
           <Autocomplete
             label="上游/货源 (可选)"
             description="同名 supplier 在管理页会聚成一张卡。留空 = 散户渠道。已有的可从下拉选,也可手填新名。"
