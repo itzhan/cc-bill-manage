@@ -172,9 +172,31 @@ export default function UpstreamPage() {
   const [invDraft, setInvDraft] = useState<InventoryItem>({
     name: "",
     price: "",
-    concurrency: "",
     note: "",
   });
+  // "→ 货源" 弹窗状态
+  const [pushInvKey, setPushInvKey] = useState<UpstreamKey | null>(null);
+  const [pushInvCats, setPushInvCats] = useState<string[]>([]);
+  const [pushInvBusy, setPushInvBusy] = useState(false);
+  // "→ 本站" 弹窗状态
+  const [pushSiteKey, setPushSiteKey] = useState<UpstreamKey | null>(null);
+  const [pushSiteForm, setPushSiteForm] = useState({
+    siteAccountId: "",
+    name: "",
+    groupIds: "",
+    concurrency: "10",
+    rateMultiplier: "",
+    platform: "anthropic",
+    type: "apikey",
+  });
+  const [pushSiteBusy, setPushSiteBusy] = useState(false);
+  const [siteAccounts, setSiteAccounts] = useState<
+    Array<{ id: number; name: string }>
+  >([]);
+  const [siteGroups, setSiteGroups] = useState<
+    Array<{ id: number; name: string; rate_multiplier: number }>
+  >([]);
+  const [loadingSiteGroups, setLoadingSiteGroups] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -232,6 +254,161 @@ export default function UpstreamPage() {
     const res = await fetch(`/api/upstream/${id}/keys`, { cache: "no-store" });
     const j = await res.json();
     setKeys((prev) => ({ ...prev, [id]: j.items || [] }));
+  }
+
+  // "→ 货源": 把当前 key 写到所在渠道的 inventory JSON 里。
+  // 名字用 key.name, 价格用 "×{effectiveRateMultiplier}" (priceNumeric 能抓出
+  // 数字用于跨渠道比价)。
+  function openPushToInventory(k: UpstreamKey) {
+    setPushInvKey(k);
+    // 默认勾选当前 Tab (如果不是"全部"); 否则空, 让用户自己挑
+    const initial =
+      categoryFilter === TAB_ALL || !categoryFilter ? [] : [categoryFilter];
+    setPushInvCats(initial);
+  }
+  async function submitPushToInventory() {
+    if (!pushInvKey || !keysModalAccount) return;
+    setPushInvBusy(true);
+    try {
+      const currentInv = parseInventory(keysModalAccount.inventory);
+      const newItem: InventoryItem = {
+        name: pushInvKey.name,
+        price: `×${pushInvKey.effectiveRateMultiplier}`,
+        categories: pushInvCats.length > 0 ? pushInvCats : undefined,
+        note: pushInvKey.hasExclusiveRate
+          ? `专属倍率 · ${pushInvKey.groupName}`
+          : pushInvKey.groupName,
+      };
+      const nextInv = [...currentInv, newItem];
+      const res = await fetch(`/api/upstream/${keysModalAccount.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inventory: JSON.stringify(nextInv) }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        addToast({ title: "加入失败", description: j.error, color: "danger" });
+        return;
+      }
+      addToast({ title: "已加入货源", color: "success" });
+      setPushInvKey(null);
+      await load();
+      // keysModalAccount 是引用旧 state, 在 load 后我们要更新它
+      // 但保留弹窗打开 — 让用户继续看 keys
+    } finally {
+      setPushInvBusy(false);
+    }
+  }
+
+  // "→ 本站": 打开弹窗前先拉取 SiteAccount 列表
+  async function openPushToSite(k: UpstreamKey) {
+    setPushSiteKey(k);
+    setPushSiteForm((f) => ({
+      ...f,
+      name: k.name,
+      rateMultiplier: String(k.effectiveRateMultiplier),
+      groupIds: "",
+    }));
+    setSiteGroups([]);
+    try {
+      const r = await fetch("/api/site", { cache: "no-store" });
+      const j = await r.json();
+      setSiteAccounts(
+        (j.items ?? []).map(
+          (s: { id: number; name: string }) => ({ id: s.id, name: s.name }),
+        ),
+      );
+    } catch (e) {
+      addToast({
+        title: "加载站点列表失败",
+        description: String(e),
+        color: "danger",
+      });
+    }
+  }
+  async function loadSiteGroups(siteId: number) {
+    if (!siteId) return;
+    setLoadingSiteGroups(true);
+    try {
+      const r = await fetch(`/api/site/${siteId}/groups`, { cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `${r.status}`);
+      setSiteGroups(j.items ?? []);
+    } catch (e) {
+      addToast({
+        title: "加载分组失败",
+        description: String(e),
+        color: "danger",
+      });
+      setSiteGroups([]);
+    } finally {
+      setLoadingSiteGroups(false);
+    }
+  }
+  async function submitPushToSite() {
+    if (!pushSiteKey) return;
+    const siteId = Number(pushSiteForm.siteAccountId);
+    const concurrency = Number(pushSiteForm.concurrency);
+    const rateMultiplier = Number(pushSiteForm.rateMultiplier);
+    const groupIds = pushSiteForm.groupIds
+      .split(/[,，]/)
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (!siteId) {
+      addToast({ title: "请选择目标站点账号", color: "warning" });
+      return;
+    }
+    if (!pushSiteForm.name.trim()) {
+      addToast({ title: "请填账号名称", color: "warning" });
+      return;
+    }
+    if (groupIds.length === 0) {
+      addToast({ title: "至少勾一个分组", color: "warning" });
+      return;
+    }
+    if (!Number.isFinite(concurrency) || concurrency <= 0) {
+      addToast({ title: "并发非法", color: "warning" });
+      return;
+    }
+    if (!Number.isFinite(rateMultiplier) || rateMultiplier <= 0) {
+      addToast({ title: "倍率非法", color: "warning" });
+      return;
+    }
+    setPushSiteBusy(true);
+    try {
+      const res = await fetch(
+        `/api/upstream/key/${pushSiteKey.id}/push-to-site`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            siteAccountId: siteId,
+            name: pushSiteForm.name.trim(),
+            groupIds,
+            concurrency,
+            rateMultiplier,
+            platform: pushSiteForm.platform || "anthropic",
+            type: pushSiteForm.type || "apikey",
+          }),
+        },
+      );
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        addToast({
+          title: "推送失败",
+          description: j.error,
+          color: "danger",
+        });
+        return;
+      }
+      addToast({
+        title: `已创建账号 + binding (#${j.remoteAccountId})`,
+        color: "success",
+      });
+      setPushSiteKey(null);
+    } finally {
+      setPushSiteBusy(false);
+    }
   }
 
   async function syncOne(id: number) {
@@ -356,7 +533,7 @@ export default function UpstreamPage() {
       notes: "",
       inventory: [],
     });
-    setInvDraft({ name: "", price: "", concurrency: "", note: "" });
+    setInvDraft({ name: "", price: "", note: "" });
     setEditTab("creds");
     newDlg.onOpen();
   }
@@ -378,7 +555,7 @@ export default function UpstreamPage() {
       notes: a.notes ?? "",
       inventory: parseInventory(a.inventory),
     });
-    setInvDraft({ name: "", price: "", concurrency: "", note: "" });
+    setInvDraft({ name: "", price: "", note: "" });
     setEditTab("inventory");
     editDlg.onOpen();
   }
@@ -392,7 +569,7 @@ export default function UpstreamPage() {
   function addInventoryDraft() {
     if (!invDraft.name.trim()) return;
     setForm((f) => ({ ...f, inventory: [...f.inventory, { ...invDraft }] }));
-    setInvDraft({ name: "", price: "", concurrency: "", note: "" });
+    setInvDraft({ name: "", price: "", note: "" });
   }
   function removeInventory(i: number) {
     setForm((f) => ({
@@ -1019,10 +1196,9 @@ export default function UpstreamPage() {
                       </p>
                     ) : (
                       <div className="rounded-lg overflow-hidden border border-divider/40">
-                        <div className="grid grid-cols-3 gap-1 px-2.5 py-1 text-[10px] uppercase tracking-wide text-default-400 bg-content2/40">
+                        <div className="grid grid-cols-2 gap-1 px-2.5 py-1 text-[10px] uppercase tracking-wide text-default-400 bg-content2/40">
                           <span>名称</span>
                           <span>倍率 / 价格</span>
-                          <span>并发</span>
                         </div>
                         {inv.map((it, i) => {
                           const best = isBestPrice(a, it);
@@ -1030,7 +1206,7 @@ export default function UpstreamPage() {
                             <div
                               key={i}
                               className={
-                                "grid grid-cols-3 gap-1 px-2.5 py-1.5 text-xs border-t border-divider/40 items-center " +
+                                "grid grid-cols-2 gap-1 px-2.5 py-1.5 text-xs border-t border-divider/40 items-center " +
                                 (best
                                   ? "bg-success-50/40 dark:bg-success-950/20"
                                   : "")
@@ -1056,11 +1232,6 @@ export default function UpstreamPage() {
                                 }
                               >
                                 {it.price || (
-                                  <span className="text-default-400">—</span>
-                                )}
-                              </span>
-                              <span className="font-medium truncate">
-                                {it.concurrency || (
                                   <span className="text-default-400">—</span>
                                 )}
                               </span>
@@ -1301,6 +1472,7 @@ export default function UpstreamPage() {
                           <TableColumn>今日</TableColumn>
                           <TableColumn>累计</TableColumn>
                           <TableColumn>充值倍率</TableColumn>
+                          <TableColumn>操作</TableColumn>
                         </TableHeader>
                         <TableBody>
                           {filtered.map((k) => {
@@ -1395,6 +1567,29 @@ export default function UpstreamPage() {
                                   }}
                                 />
                               </TableCell>
+                              <TableCell>
+                                <div className="flex gap-1">
+                                  <Button
+                                    size="sm"
+                                    variant="flat"
+                                    className="h-7 min-w-0 px-2 text-[10px]"
+                                    onPress={() => openPushToInventory(k)}
+                                    title="加入到此渠道的货源(选分类)"
+                                  >
+                                    → 货源
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    color="primary"
+                                    variant="flat"
+                                    className="h-7 min-w-0 px-2 text-[10px]"
+                                    onPress={() => openPushToSite(k)}
+                                    title="一键添加到本站(创建账号+建绑定)"
+                                  >
+                                    → 本站
+                                  </Button>
+                                </div>
+                              </TableCell>
                             </TableRow>
                             );
                           })}
@@ -1429,6 +1624,236 @@ export default function UpstreamPage() {
             </Button>
             <Button variant="flat" onPress={keysDlg.onClose}>
               关闭
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* "→ 货源" 弹窗: 把 key 加进所在渠道 inventory + 选分类 */}
+      <Modal
+        isOpen={pushInvKey !== null}
+        onClose={() => setPushInvKey(null)}
+        size="md"
+      >
+        <ModalContent>
+          <ModalHeader>
+            将 key 加入货源 · {pushInvKey?.name}
+          </ModalHeader>
+          <ModalBody>
+            <p className="text-xs text-default-500">
+              这条货源将以 <b>{pushInvKey?.name}</b> 为名,价格用{" "}
+              <b>×{pushInvKey?.effectiveRateMultiplier}</b> (跨渠道比价用),
+              备注自动填 {pushInvKey?.groupName}。
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-default-500">所属分类(可多选)</span>
+              <div className="flex flex-wrap gap-1.5">
+                {categoryList.length === 0 ? (
+                  <span className="text-xs text-default-400">
+                    还没有分类, 关闭后去顶部"新建分类"
+                  </span>
+                ) : (
+                  categoryList.map((c) => {
+                    const on = pushInvCats.includes(c.name);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() =>
+                          setPushInvCats((cur) =>
+                            cur.includes(c.name)
+                              ? cur.filter((x) => x !== c.name)
+                              : [...cur, c.name],
+                          )
+                        }
+                        className={
+                          "px-2.5 py-1 rounded-full text-xs border " +
+                          (on
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-content2/60 border-divider/60")
+                        }
+                      >
+                        {on ? "✓ " : ""}
+                        {c.name}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              {pushInvCats.length === 0 && (
+                <span className="text-[11px] text-default-400">
+                  留空 = 继承所在渠道的全部分类
+                </span>
+              )}
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setPushInvKey(null)}>
+              取消
+            </Button>
+            <Button
+              color="primary"
+              isLoading={pushInvBusy}
+              onPress={submitPushToInventory}
+            >
+              加入
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* "→ 本站" 弹窗: 选目标站点+填表 → 创建账号 + 建 binding */}
+      <Modal
+        isOpen={pushSiteKey !== null}
+        onClose={() => setPushSiteKey(null)}
+        size="lg"
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          <ModalHeader>
+            添加到本站 · {pushSiteKey?.name}
+          </ModalHeader>
+          <ModalBody className="gap-3">
+            <p className="text-xs text-default-500">
+              在选定的站点账号上创建一个 sub2api admin 账号 ,
+              credentials 用此 upstream key, 然后自动建 binding。
+            </p>
+            <Select
+              label="目标站点账号"
+              selectedKeys={
+                pushSiteForm.siteAccountId
+                  ? new Set([pushSiteForm.siteAccountId])
+                  : new Set()
+              }
+              onSelectionChange={(k) => {
+                const v = Array.from(k as Set<string>)[0] ?? "";
+                setPushSiteForm((f) => ({ ...f, siteAccountId: v }));
+                if (v) loadSiteGroups(Number(v));
+              }}
+            >
+              {siteAccounts.map((s) => (
+                <SelectItem key={String(s.id)}>{s.name}</SelectItem>
+              ))}
+            </Select>
+            <Input
+              label="账号名称"
+              value={pushSiteForm.name}
+              onValueChange={(v) =>
+                setPushSiteForm((f) => ({ ...f, name: v }))
+              }
+            />
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-default-500">
+                分组(可多选)
+                {loadingSiteGroups && (
+                  <span className="ml-1 text-default-400">加载中…</span>
+                )}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {!pushSiteForm.siteAccountId ? (
+                  <span className="text-xs text-default-400">
+                    先选目标站点账号
+                  </span>
+                ) : siteGroups.length === 0 && !loadingSiteGroups ? (
+                  <Input
+                    size="sm"
+                    label="分组 IDs (逗号分隔)"
+                    placeholder="例如 1,2"
+                    value={pushSiteForm.groupIds}
+                    onValueChange={(v) =>
+                      setPushSiteForm((f) => ({ ...f, groupIds: v }))
+                    }
+                  />
+                ) : (
+                  siteGroups.map((g) => {
+                    const set = new Set(
+                      pushSiteForm.groupIds
+                        .split(/[,，]/)
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    );
+                    const on = set.has(String(g.id));
+                    return (
+                      <button
+                        key={g.id}
+                        type="button"
+                        onClick={() => {
+                          const cur = new Set(set);
+                          if (cur.has(String(g.id))) cur.delete(String(g.id));
+                          else cur.add(String(g.id));
+                          setPushSiteForm((f) => ({
+                            ...f,
+                            groupIds: [...cur].join(","),
+                          }));
+                        }}
+                        className={
+                          "px-2.5 py-1 rounded-full text-xs border " +
+                          (on
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-content2/60 border-divider/60")
+                        }
+                        title={`#${g.id} · ×${g.rate_multiplier}`}
+                      >
+                        {on ? "✓ " : ""}
+                        {g.name}
+                        <span className="opacity-60 ml-1">
+                          ×{g.rate_multiplier}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                type="number"
+                label="并发"
+                value={pushSiteForm.concurrency}
+                onValueChange={(v) =>
+                  setPushSiteForm((f) => ({ ...f, concurrency: v }))
+                }
+              />
+              <Input
+                type="number"
+                step="0.01"
+                label="rate_multiplier"
+                description="账号在 site 端的倍率"
+                value={pushSiteForm.rateMultiplier}
+                onValueChange={(v) =>
+                  setPushSiteForm((f) => ({ ...f, rateMultiplier: v }))
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                size="sm"
+                label="platform"
+                value={pushSiteForm.platform}
+                onValueChange={(v) =>
+                  setPushSiteForm((f) => ({ ...f, platform: v }))
+                }
+              />
+              <Input
+                size="sm"
+                label="type"
+                value={pushSiteForm.type}
+                onValueChange={(v) =>
+                  setPushSiteForm((f) => ({ ...f, type: v }))
+                }
+              />
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setPushSiteKey(null)}>
+              取消
+            </Button>
+            <Button
+              color="primary"
+              isLoading={pushSiteBusy}
+              onPress={submitPushToSite}
+            >
+              创建+绑定
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -1587,9 +2012,6 @@ function ChannelRow({
                 <span className={best ? "text-success font-semibold" : "text-default-500"}>
                   {it.price || "—"}
                 </span>
-                {it.concurrency && (
-                  <span className="text-default-400"> · {it.concurrency}并发</span>
-                )}
               </span>
             );
           })}
@@ -1798,7 +2220,7 @@ function AccountFormTabs({
               size="sm"
               label="名称"
               placeholder="Claude Sonnet"
-              className="col-span-3"
+              className="col-span-4"
               value={invDraft.name}
               onValueChange={(v) =>
                 setInvDraft({ ...invDraft, name: v })
@@ -1816,19 +2238,9 @@ function AccountFormTabs({
             />
             <Input
               size="sm"
-              label="并发"
-              placeholder="100"
-              className="col-span-2"
-              value={invDraft.concurrency ?? ""}
-              onValueChange={(v) =>
-                setInvDraft({ ...invDraft, concurrency: v })
-              }
-            />
-            <Input
-              size="sm"
               label="备注"
               placeholder="可选"
-              className="col-span-3"
+              className="col-span-4"
               value={invDraft.note ?? ""}
               onValueChange={(v) => setInvDraft({ ...invDraft, note: v })}
             />
@@ -1866,8 +2278,7 @@ function AccountFormTabs({
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium">{it.name}</div>
                         <div className="text-xs text-default-500 mt-0.5">
-                          价格 <b>{it.price || "—"}</b> · 并发{" "}
-                          <b>{it.concurrency || "—"}</b>
+                          价格 <b>{it.price || "—"}</b>
                           {it.note && (
                             <span className="text-default-400">
                               {" "}
