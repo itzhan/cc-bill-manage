@@ -178,7 +178,8 @@ export default function UpstreamPage() {
   const [pushInvKey, setPushInvKey] = useState<UpstreamKey | null>(null);
   const [pushInvCats, setPushInvCats] = useState<string[]>([]);
   const [pushInvBusy, setPushInvBusy] = useState(false);
-  // "→ 本站" 弹窗状态
+  // "→ 本站" 弹窗状态. type 始终 apikey 不暴露; platform 用下拉
+  // (anthropic/openai/gemini), gemini 时多一个 tier_id 字段。
   const [pushSiteKey, setPushSiteKey] = useState<UpstreamKey | null>(null);
   const [pushSiteForm, setPushSiteForm] = useState({
     siteAccountId: "",
@@ -187,7 +188,7 @@ export default function UpstreamPage() {
     concurrency: "10",
     rateMultiplier: "",
     platform: "anthropic",
-    type: "apikey",
+    geminiTier: "aistudio_paid", // 仅 platform=gemini 时生效
   });
   const [pushSiteBusy, setPushSiteBusy] = useState(false);
   const [siteAccounts, setSiteAccounts] = useState<
@@ -388,7 +389,12 @@ export default function UpstreamPage() {
             concurrency,
             rateMultiplier,
             platform: pushSiteForm.platform || "anthropic",
-            type: pushSiteForm.type || "apikey",
+            // type 始终 apikey, sub2api API 里 type 必填
+            type: "apikey",
+            geminiTier:
+              pushSiteForm.platform === "gemini"
+                ? pushSiteForm.geminiTier
+                : undefined,
           }),
         },
       );
@@ -1826,22 +1832,43 @@ export default function UpstreamPage() {
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Input
+              <Select
                 size="sm"
-                label="platform"
-                value={pushSiteForm.platform}
-                onValueChange={(v) =>
-                  setPushSiteForm((f) => ({ ...f, platform: v }))
-                }
-              />
-              <Input
-                size="sm"
-                label="type"
-                value={pushSiteForm.type}
-                onValueChange={(v) =>
-                  setPushSiteForm((f) => ({ ...f, type: v }))
-                }
-              />
+                label="平台"
+                selectedKeys={new Set([pushSiteForm.platform])}
+                onSelectionChange={(k) => {
+                  const v =
+                    Array.from(k as Set<string>)[0] ?? "anthropic";
+                  setPushSiteForm((f) => ({ ...f, platform: v }));
+                }}
+              >
+                <SelectItem key="anthropic">Anthropic (Claude)</SelectItem>
+                <SelectItem key="openai">OpenAI</SelectItem>
+                <SelectItem key="gemini">Gemini</SelectItem>
+              </Select>
+              {pushSiteForm.platform === "gemini" ? (
+                <Select
+                  size="sm"
+                  label="Gemini tier"
+                  selectedKeys={new Set([pushSiteForm.geminiTier])}
+                  onSelectionChange={(k) => {
+                    const v =
+                      Array.from(k as Set<string>)[0] ?? "aistudio_paid";
+                    setPushSiteForm((f) => ({ ...f, geminiTier: v }));
+                  }}
+                >
+                  <SelectItem key="aistudio_paid">AI Studio Paid</SelectItem>
+                  <SelectItem key="aistudio_free">AI Studio Free</SelectItem>
+                </Select>
+              ) : (
+                <Input
+                  size="sm"
+                  label="type"
+                  value="apikey"
+                  isReadOnly
+                  description="type 固定 apikey"
+                />
+              )}
             </div>
           </ModalBody>
           <ModalFooter>

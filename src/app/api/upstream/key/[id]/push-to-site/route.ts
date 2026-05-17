@@ -29,6 +29,7 @@ export async function POST(
     rateMultiplier: number;
     platform: string;
     type: string;
+    geminiTier: string;
   }>;
   const {
     siteAccountId,
@@ -38,7 +39,15 @@ export async function POST(
     rateMultiplier,
     platform = "anthropic",
     type = "apikey",
+    geminiTier,
   } = body;
+  // sub2api 后端校验 platform 必须是 anthropic/openai/gemini/antigravity
+  if (!["anthropic", "openai", "gemini"].includes(platform)) {
+    return NextResponse.json(
+      { error: `不支持的 platform: ${platform}` },
+      { status: 400 },
+    );
+  }
   if (
     !siteAccountId ||
     !name ||
@@ -84,15 +93,22 @@ export async function POST(
   }
 
   try {
+    // 按 platform 拼 credentials. 三个平台 apikey type 都需要
+    // base_url + api_key; gemini 额外要 tier_id (参考 sub2api 前端
+    // CreateAccountModal.vue:4396)。
+    const credentials: Record<string, unknown> = {
+      base_url: key.upstreamAccount.baseUrl,
+      api_key: key.apiKey,
+    };
+    if (platform === "gemini") {
+      credentials.tier_id = geminiTier || "aistudio_paid";
+    }
     const client = await makeSiteClient(Number(siteAccountId));
     const created = await client.createAdminAccount({
       name,
       platform,
       type,
-      credentials: {
-        base_url: key.upstreamAccount.baseUrl,
-        api_key: key.apiKey,
-      },
+      credentials,
       concurrency,
       priority: 50,
       rate_multiplier: rateMultiplier,
