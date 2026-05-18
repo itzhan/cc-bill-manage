@@ -226,10 +226,15 @@ export class NewApiClient {
       ? data
       : (data.items ?? data.records ?? data.data ?? []);
     this.tokensCache = tokens;
+    // new-api 列表接口返回的 key 字段是已 mask 过的 (controller/token.go
+    // buildMaskedTokenResponse → token.GetMaskedKey)。要拿完整 key 必须再
+    // 调 POST /api/token/batch/keys (限 100 id/批)。否则我们存到 DB 的
+    // apiKey 永远是 null, 后续"加入本站"等需要 raw key 的功能会失败。
+    const fullKeysById = await this.fetchFullKeys(tokens.map((t) => t.id));
     return tokens.map((t) => ({
       id: t.id,
       user_id: t.user_id,
-      key: t.key,
+      key: fullKeysById.get(t.id) ?? t.key,
       name: t.name,
       // newapi has no group_id concept; we leave 0 and put the name on
       // the group struct so refreshUpstreamAccount's rate lookup uses name.
@@ -242,6 +247,35 @@ export class NewApiClient {
         rate_multiplier: 1,
       },
     }));
+  }
+
+  // 批量获取完整 key, 走 new-api 的 POST /api/token/batch/keys。
+  // 限 100/批, 我们分块跑;不报错 (老版本可能没这个接口) — 失败的就回退
+  // 到 masked, 用户后续重试即可。
+  private async fetchFullKeys(ids: number[]): Promise<Map<number, string>> {
+    const out = new Map<number, string>();
+    if (ids.length === 0) return out;
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
+      try {
+        const resp = await this.request<{ keys: Record<string, string> }>(
+          "POST",
+          "/api/token/batch/keys",
+          { ids: chunk },
+        );
+        for (const [k, v] of Object.entries(resp.keys ?? {})) {
+          if (typeof v === "string" && v.length > 0) {
+            out.set(Number(k), v);
+          }
+        }
+      } catch (e) {
+        console.warn(
+          `[newapi] fetchFullKeys batch failed (chunk ${i}/${ids.length}):`,
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
+    return out;
   }
 
   // Aggregate today's per-token spend in ONE call, plus pull lifetime from
