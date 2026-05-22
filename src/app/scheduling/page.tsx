@@ -2386,29 +2386,37 @@ function GroupCard({
   // SLOW_MS仍用于"快/慢"分类显示（chip 颜色）。批量调整并发已下线，改为
   // 用户手动看测试结果再决定。
   const SLOW_MS = 10_000;
-  // 自动测试：每 X 秒触发一次"一键测试"。每个单测固定 30s 超时。
-  const AUTO_TEST_MIN_SEC = 30;
-  const AUTO_TEST_KEY = `scheduling.autoTest.${siteId ?? "x"}.${group.id}`;
+  // 自动测试：每 X 分钟触发一次"一键测试"。每个单测固定 30s 超时。
+  // 旧版用秒（key=scheduling.autoTest），切换到分钟后改用新 key 避免错读。
+  const AUTO_TEST_MIN_MINUTES = 1;
+  const AUTO_TEST_KEY = `scheduling.autoTestV2.${siteId ?? "x"}.${group.id}`;
   const [autoTestEnabled, setAutoTestEnabled] = useState(false);
-  const [autoTestInterval, setAutoTestInterval] = useState(60);
+  const [autoTestIntervalMin, setAutoTestIntervalMin] = useState(5);
+  const [autoTestModalOpen, setAutoTestModalOpen] = useState(false);
+  // Modal 草稿值，保存后才落到 state + localStorage
+  const [draftEnabled, setDraftEnabled] = useState(false);
+  const [draftIntervalMin, setDraftIntervalMin] = useState(5);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(AUTO_TEST_KEY);
       if (!raw) return;
-      const v = JSON.parse(raw) as { enabled?: boolean; intervalSec?: number };
+      const v = JSON.parse(raw) as { enabled?: boolean; intervalMin?: number };
       if (typeof v.enabled === "boolean") setAutoTestEnabled(v.enabled);
-      if (typeof v.intervalSec === "number" && v.intervalSec >= AUTO_TEST_MIN_SEC)
-        setAutoTestInterval(v.intervalSec);
+      if (
+        typeof v.intervalMin === "number" &&
+        v.intervalMin >= AUTO_TEST_MIN_MINUTES
+      )
+        setAutoTestIntervalMin(v.intervalMin);
     } catch {
       // ignore
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [AUTO_TEST_KEY]);
-  function persistAutoTest(enabled: boolean, intervalSec: number) {
+  function persistAutoTest(enabled: boolean, intervalMin: number) {
     try {
       localStorage.setItem(
         AUTO_TEST_KEY,
-        JSON.stringify({ enabled, intervalSec }),
+        JSON.stringify({ enabled, intervalMin }),
       );
     } catch {
       // ignore
@@ -2447,6 +2455,11 @@ function GroupCard({
     });
     const queue = [...sortedAccounts];
     const m = groupTestModel.trim();
+    // 本地汇总，用于在 Promise.all 后做"全失败"判定;比读取异步 state 可靠。
+    const localResults = new Map<
+      number,
+      { kind: "ok" } | { kind: "fail"; output: string }
+    >();
     async function worker() {
       while (queue.length > 0) {
         const a = queue.shift();
@@ -2465,32 +2478,34 @@ function GroupCard({
           );
           const j = await r.json();
           const latencyMs = Date.now() - t0;
-          setGroupTestResults((prev) => ({
-            ...prev,
-            [a.id]: j.ok
-              ? { kind: "ok", latencyMs }
-              : {
-                  kind: "fail",
-                  latencyMs,
-                  output: String(j.output || "").slice(0, 600),
-                },
-          }));
+          if (j.ok) {
+            localResults.set(a.id, { kind: "ok" });
+            setGroupTestResults((prev) => ({
+              ...prev,
+              [a.id]: { kind: "ok", latencyMs },
+            }));
+          } else {
+            const output = String(j.output || "").slice(0, 600);
+            localResults.set(a.id, { kind: "fail", output });
+            setGroupTestResults((prev) => ({
+              ...prev,
+              [a.id]: { kind: "fail", latencyMs, output },
+            }));
+          }
         } catch (e) {
           const latencyMs = Date.now() - t0;
           const isTimeout =
             (e instanceof DOMException && e.name === "TimeoutError") ||
             (e instanceof Error && /timeout/i.test(e.message));
+          const output = isTimeout
+            ? `超时（>30s）`
+            : e instanceof Error
+              ? e.message
+              : String(e);
+          localResults.set(a.id, { kind: "fail", output });
           setGroupTestResults((prev) => ({
             ...prev,
-            [a.id]: {
-              kind: "fail",
-              latencyMs,
-              output: isTimeout
-                ? `超时（>30s）`
-                : e instanceof Error
-                  ? e.message
-                  : String(e),
-            },
+            [a.id]: { kind: "fail", latencyMs, output },
           }));
         }
       }
@@ -2501,6 +2516,35 @@ function GroupCard({
       Array.from({ length: Math.min(5, sortedAccounts.length) }, () => worker()),
     );
     setGroupTesting(false);
+
+    // 全部账号失败 → 触发邮件告警(服务端按 siteId:groupId 做冷却,避免重复)。
+    if (sortedAccounts.length > 0) {
+      const fails = sortedAccounts
+        .map((a) => {
+          const r = localResults.get(a.id);
+          return r && r.kind === "fail"
+            ? { name: a.name, error: r.output }
+            : null;
+        })
+        .filter((x): x is { name: string; error: string } => x != null);
+      if (fails.length === sortedAccounts.length) {
+        try {
+          await fetch("/api/scheduling/group-alert", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              siteId,
+              groupId: group.id,
+              groupName: group.name,
+              totalAccounts: sortedAccounts.length,
+              failingAccounts: fails,
+            }),
+          });
+        } catch {
+          // 邮件失败不影响 UI；服务端日志可查。
+        }
+      }
+    }
   }
 
   // 自动测试：每 intervalSec 秒触发一次 testGroup。in-flight 守卫=groupTesting，
@@ -2511,7 +2555,8 @@ function GroupCard({
   });
   useEffect(() => {
     if (!autoTestEnabled || sortedAccounts.length === 0) return;
-    const interval = Math.max(AUTO_TEST_MIN_SEC, autoTestInterval) * 1000;
+    const interval =
+      Math.max(AUTO_TEST_MIN_MINUTES, autoTestIntervalMin) * 60 * 1000;
     let canceled = false;
     const tick = () => {
       if (canceled) return;
@@ -2529,7 +2574,7 @@ function GroupCard({
       clearInterval(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoTestEnabled, autoTestInterval, sortedAccounts.length]);
+  }, [autoTestEnabled, autoTestIntervalMin, sortedAccounts.length]);
 
   const testStats = (() => {
     let ok = 0;
@@ -2597,6 +2642,27 @@ function GroupCard({
                   : `未调度 ${unscheduled.length}`}
               </Chip>
             )}
+            <Button
+              size="sm"
+              variant="light"
+              isIconOnly
+              className="min-w-0 w-7 h-7"
+              title={
+                autoTestEnabled
+                  ? `自动测试已开启 · 每 ${autoTestIntervalMin} 分钟`
+                  : "可用性自动检测设置"
+              }
+              onPress={() => {
+                setDraftEnabled(autoTestEnabled);
+                setDraftIntervalMin(autoTestIntervalMin);
+                setAutoTestModalOpen(true);
+              }}
+            >
+              <SettingsIcon
+                size={14}
+                className={autoTestEnabled ? "text-success" : ""}
+              />
+            </Button>
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -2661,34 +2727,11 @@ function GroupCard({
           >
             一键测试（{sortedAccounts.length}）
           </Button>
-          {/* 自动测试：勾上开关 + 设置间隔（秒，≥30）。单测 30 秒超时。 */}
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <Switch
-              size="sm"
-              isSelected={autoTestEnabled}
-              onValueChange={(v) => {
-                setAutoTestEnabled(v);
-                persistAutoTest(v, autoTestInterval);
-              }}
-            >
-              <span className="text-xs">自动测试</span>
-            </Switch>
-            <Input
-              type="number"
-              size="sm"
-              variant="bordered"
-              className="w-20"
-              classNames={{ inputWrapper: "h-8 min-h-8" }}
-              value={String(autoTestInterval)}
-              min={AUTO_TEST_MIN_SEC}
-              onValueChange={(s) => {
-                const n = Math.max(AUTO_TEST_MIN_SEC, Number(s) || AUTO_TEST_MIN_SEC);
-                setAutoTestInterval(n);
-                persistAutoTest(autoTestEnabled, n);
-              }}
-              endContent={<span className="text-[10px] text-default-400">秒</span>}
-            />
-          </div>
+          {autoTestEnabled && (
+            <span className="text-[11px] text-success self-center mb-0.5">
+              自动测试 · 每 {autoTestIntervalMin} 分钟
+            </span>
+          )}
           {(testStats.ok > 0 || testStats.fail > 0) && (
             <span className="text-[11px] text-default-500 self-center">
               {testStats.ok} 通过
@@ -2806,6 +2849,69 @@ function GroupCard({
           </button>
         )}
       </CardBody>
+      <Modal
+        isOpen={autoTestModalOpen}
+        onOpenChange={setAutoTestModalOpen}
+        size="sm"
+      >
+        <ModalContent>
+          {(close) => (
+            <>
+              <ModalHeader>
+                <div className="flex flex-col">
+                  <span>分组可用性自动检测</span>
+                  <span className="text-xs text-default-500 font-normal">
+                    分组「{group.name}」
+                  </span>
+                </div>
+              </ModalHeader>
+              <ModalBody className="gap-4">
+                <Switch
+                  isSelected={draftEnabled}
+                  onValueChange={setDraftEnabled}
+                >
+                  启用自动检测
+                </Switch>
+                <Input
+                  type="number"
+                  label="检测间隔（分钟）"
+                  description="每隔 N 分钟对本分组所有账号发起一次测试，单测 30 秒超时。最小 1 分钟。"
+                  min={AUTO_TEST_MIN_MINUTES}
+                  value={String(draftIntervalMin)}
+                  onValueChange={(v) => {
+                    const n = Math.max(
+                      AUTO_TEST_MIN_MINUTES,
+                      Math.floor(Number(v) || AUTO_TEST_MIN_MINUTES),
+                    );
+                    setDraftIntervalMin(n);
+                  }}
+                />
+                <p className="text-xs text-default-500 leading-relaxed">
+                  当本分组所有账号在一次检测中全部失败时，将按「设置」页配置的
+                  发件邮箱与收件人发送邮件提醒；同一分组在冷却窗口（设置页
+                  「冷却分钟数」）内不会重复发送。
+                </p>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="light" onPress={close}>
+                  取消
+                </Button>
+                <Button
+                  color="primary"
+                  onPress={() => {
+                    setAutoTestEnabled(draftEnabled);
+                    setAutoTestIntervalMin(draftIntervalMin);
+                    persistAutoTest(draftEnabled, draftIntervalMin);
+                    close();
+                  }}
+                >
+                  保存
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
     </Card>
   );
 }

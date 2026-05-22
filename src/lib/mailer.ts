@@ -347,6 +347,106 @@ export async function maybeSendErrorRateAlert(
   }
 }
 
+// ── Group outage alert (资源调度 自动检测) ──
+// 当某个分组的全部账号在自动/手动测试里都失败时,触发邮件。冷却窗口在
+// 进程内按 `${siteId}:${groupId}` 记忆,避免长时间停服时短时重发。
+// 复用 Settings.emailCooldownMinutes 作为冷却时长。
+const groupAlertLastSent = new Map<string, number>();
+
+export interface GroupOutagePayload {
+  siteName: string;
+  groupName: string;
+  totalAccounts: number;
+  failingAccounts: { name: string; error?: string }[];
+}
+
+function buildGroupOutageHtml(p: GroupOutagePayload): string {
+  const rows = p.failingAccounts
+    .map(
+      (a) => `
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid #eee">${escapeHtml(a.name)}</td>
+          <td style="padding:8px;border-bottom:1px solid #eee;color:#dc2626">${escapeHtml(a.error ?? "")}</td>
+        </tr>
+      `,
+    )
+    .join("");
+  return `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937;max-width:760px">
+  <h2 style="margin:0 0 8px;color:#dc2626">分组全部账号失效告警</h2>
+  <p style="color:#6b7280;margin:0 0 16px">站点 <strong>${escapeHtml(p.siteName)}</strong> · 分组 <strong>${escapeHtml(p.groupName)}</strong> · 共 ${p.totalAccounts} 个账号全部测试失败</p>
+  <table style="border-collapse:collapse;width:100%;font-size:13px">
+    <thead>
+      <tr style="background:#f9fafb">
+        <th style="padding:8px;text-align:left;border-bottom:2px solid #e5e7eb">账号</th>
+        <th style="padding:8px;text-align:left;border-bottom:2px solid #e5e7eb">错误</th>
+      </tr>
+    </thead>
+    <tbody>${rows || `<tr><td colspan="2" style="padding:12px;text-align:center;color:#9ca3af">无明细</td></tr>`}</tbody>
+  </table>
+  <p style="margin-top:16px;color:#9ca3af;font-size:12px">由 Bill Manage 自动发出 · ${new Date().toLocaleString("zh-CN")}</p>
+</div>
+  `.trim();
+}
+
+function buildGroupOutageText(p: GroupOutagePayload): string {
+  const lines: string[] = [
+    `分组全部账号失效`,
+    `站点: ${p.siteName} · 分组: ${p.groupName} · ${p.totalAccounts} 个账号全部失败`,
+    "",
+  ];
+  for (const a of p.failingAccounts) {
+    lines.push(`- ${a.name}: ${a.error ?? ""}`);
+  }
+  return lines.join("\n");
+}
+
+export async function maybeSendGroupOutageAlert(opts: {
+  siteId: number;
+  groupId: number;
+  siteName: string;
+  groupName: string;
+  totalAccounts: number;
+  failingAccounts: { name: string; error?: string }[];
+}): Promise<{ sent: boolean; reason?: string }> {
+  try {
+    const s = await prisma.settings.findUnique({ where: { id: 1 } });
+    if (!s) return { sent: false, reason: "no settings" };
+    const cooldownMin = s.emailCooldownMinutes ?? 30;
+    const key = `${opts.siteId}:${opts.groupId}`;
+    const last = groupAlertLastSent.get(key);
+    if (last != null) {
+      const elapsedMin = (Date.now() - last) / 60_000;
+      if (elapsedMin < cooldownMin) {
+        return {
+          sent: false,
+          reason: `cooldown ${Math.round(elapsedMin)}/${cooldownMin}min`,
+        };
+      }
+    }
+    const cfg = await loadMailConfig();
+    if (!cfg) return { sent: false, reason: "config incomplete" };
+    const subject = `${cfg.subject}（分组「${opts.groupName}」全部账号失效）`;
+    const payload: GroupOutagePayload = {
+      siteName: opts.siteName,
+      groupName: opts.groupName,
+      totalAccounts: opts.totalAccounts,
+      failingAccounts: opts.failingAccounts,
+    };
+    await postEmail(
+      cfg,
+      subject,
+      buildGroupOutageHtml(payload),
+      buildGroupOutageText(payload),
+    );
+    groupAlertLastSent.set(key, Date.now());
+    return { sent: true };
+  } catch (e) {
+    console.error("[mailer] group outage send failed:", e);
+    return { sent: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Check current diff against threshold and send an alert email if needed.
  * Respects per-Settings cooldown to avoid spamming during persistent
