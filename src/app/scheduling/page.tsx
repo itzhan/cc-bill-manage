@@ -2368,12 +2368,6 @@ function GroupCard({
 }) {
   const [mode, setMode] = useState<"scheduled" | "unscheduled">("scheduled");
   const [search, setSearch] = useState("");
-  // Per-group bulk test: model picker + in-flight latency map.
-  // result keyed by account id; latencyMs is wall-clock from request start
-  // to response (includes upstream latency, which is what users care about).
-  const [groupTestModel, setGroupTestModel] = useState<string>(
-    "claude-opus-4-6",
-  );
   const [groupTesting, setGroupTesting] = useState(false);
   const [groupTestResults, setGroupTestResults] = useState<
     Record<
@@ -2390,33 +2384,55 @@ function GroupCard({
   // 旧版用秒（key=scheduling.autoTest），切换到分钟后改用新 key 避免错读。
   const AUTO_TEST_MIN_MINUTES = 1;
   const AUTO_TEST_KEY = `scheduling.autoTestV2.${siteId ?? "x"}.${group.id}`;
+  const DEFAULT_TEST_MODEL = "claude-opus-4-6";
+  const MODEL_PRESETS = [
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+  ];
   const [autoTestEnabled, setAutoTestEnabled] = useState(false);
   const [autoTestIntervalMin, setAutoTestIntervalMin] = useState(5);
+  const [autoTestModel, setAutoTestModel] = useState<string>(
+    DEFAULT_TEST_MODEL,
+  );
   const [autoTestModalOpen, setAutoTestModalOpen] = useState(false);
   // Modal 草稿值，保存后才落到 state + localStorage
   const [draftEnabled, setDraftEnabled] = useState(false);
   const [draftIntervalMin, setDraftIntervalMin] = useState(5);
+  const [draftModel, setDraftModel] = useState<string>(DEFAULT_TEST_MODEL);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(AUTO_TEST_KEY);
       if (!raw) return;
-      const v = JSON.parse(raw) as { enabled?: boolean; intervalMin?: number };
+      const v = JSON.parse(raw) as {
+        enabled?: boolean;
+        intervalMin?: number;
+        model?: string;
+      };
       if (typeof v.enabled === "boolean") setAutoTestEnabled(v.enabled);
       if (
         typeof v.intervalMin === "number" &&
         v.intervalMin >= AUTO_TEST_MIN_MINUTES
       )
         setAutoTestIntervalMin(v.intervalMin);
+      if (typeof v.model === "string" && v.model.trim()) {
+        setAutoTestModel(v.model.trim());
+      }
     } catch {
       // ignore
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [AUTO_TEST_KEY]);
-  function persistAutoTest(enabled: boolean, intervalMin: number) {
+  function persistAutoTest(
+    enabled: boolean,
+    intervalMin: number,
+    model: string,
+  ) {
     try {
       localStorage.setItem(
         AUTO_TEST_KEY,
-        JSON.stringify({ enabled, intervalMin }),
+        JSON.stringify({ enabled, intervalMin, model }),
       );
     } catch {
       // ignore
@@ -2454,7 +2470,7 @@ function GroupCard({
       return next;
     });
     const queue = [...sortedAccounts];
-    const m = groupTestModel.trim();
+    const m = autoTestModel.trim();
     // 本地汇总，用于在 Promise.all 后做"全失败"判定;比读取异步 state 可靠。
     const localResults = new Map<
       number,
@@ -2655,6 +2671,7 @@ function GroupCard({
               onPress={() => {
                 setDraftEnabled(autoTestEnabled);
                 setDraftIntervalMin(autoTestIntervalMin);
+                setDraftModel(autoTestModel);
                 setAutoTestModalOpen(true);
               }}
             >
@@ -2683,38 +2700,7 @@ function GroupCard({
           onValueChange={setSearch}
           classNames={{ inputWrapper: "h-7 min-h-7" }}
         />
-        <div className="flex items-end gap-2 flex-wrap">
-          <Autocomplete
-            size="sm"
-            label="测试模型"
-            className="flex-1 min-w-[180px]"
-            defaultItems={[
-              { key: "claude-opus-4-6", label: "claude-opus-4-6" },
-              { key: "claude-opus-4-7", label: "claude-opus-4-7" },
-              { key: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
-              { key: "claude-haiku-4-5", label: "claude-haiku-4-5" },
-            ]}
-            selectedKey={
-              [
-                "claude-opus-4-6",
-                "claude-opus-4-7",
-                "claude-sonnet-4-6",
-                "claude-haiku-4-5",
-              ].includes(groupTestModel)
-                ? groupTestModel
-                : null
-            }
-            inputValue={groupTestModel}
-            onInputChange={setGroupTestModel}
-            onSelectionChange={(k) => {
-              if (k != null) setGroupTestModel(String(k));
-            }}
-            allowsCustomValue
-          >
-            {(item) => (
-              <AutocompleteItem key={item.key}>{item.label}</AutocompleteItem>
-            )}
-          </Autocomplete>
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             size="sm"
             color="primary"
@@ -2723,12 +2709,17 @@ function GroupCard({
             onPress={testGroup}
             isLoading={groupTesting}
             isDisabled={sortedAccounts.length === 0}
-            className="mb-0.5"
           >
             一键测试（{sortedAccounts.length}）
           </Button>
+          <span
+            className="text-[11px] text-default-500 self-center font-mono"
+            title="可在右上角齿轮里修改"
+          >
+            模型: {autoTestModel}
+          </span>
           {autoTestEnabled && (
-            <span className="text-[11px] text-success self-center mb-0.5">
+            <span className="text-[11px] text-success self-center">
               自动测试 · 每 {autoTestIntervalMin} 分钟
             </span>
           )}
@@ -2886,6 +2877,27 @@ function GroupCard({
                     setDraftIntervalMin(n);
                   }}
                 />
+                <Autocomplete
+                  size="sm"
+                  label="测试模型"
+                  description="自动检测 + 手动「一键测试」都会用这个模型。可输入自定义 model id。"
+                  defaultItems={MODEL_PRESETS.map((m) => ({ key: m, label: m }))}
+                  selectedKey={
+                    MODEL_PRESETS.includes(draftModel) ? draftModel : null
+                  }
+                  inputValue={draftModel}
+                  onInputChange={setDraftModel}
+                  onSelectionChange={(k) => {
+                    if (k != null) setDraftModel(String(k));
+                  }}
+                  allowsCustomValue
+                >
+                  {(item) => (
+                    <AutocompleteItem key={item.key}>
+                      {item.label}
+                    </AutocompleteItem>
+                  )}
+                </Autocomplete>
                 <p className="text-xs text-default-500 leading-relaxed">
                   当本分组所有账号在一次检测中全部失败时，将按「设置」页配置的
                   发件邮箱与收件人发送邮件提醒；同一分组在冷却窗口（设置页
@@ -2899,9 +2911,12 @@ function GroupCard({
                 <Button
                   color="primary"
                   onPress={() => {
+                    const m =
+                      draftModel.trim() || DEFAULT_TEST_MODEL;
                     setAutoTestEnabled(draftEnabled);
                     setAutoTestIntervalMin(draftIntervalMin);
-                    persistAutoTest(draftEnabled, draftIntervalMin);
+                    setAutoTestModel(m);
+                    persistAutoTest(draftEnabled, draftIntervalMin, m);
                     close();
                   }}
                 >
