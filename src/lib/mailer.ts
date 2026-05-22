@@ -66,15 +66,18 @@ export async function loadMailConfig(): Promise<MailConfig | null> {
   };
 }
 
-async function postEmail(
+async function postEmailSingle(
   cfg: MailConfig,
+  recipient: string,
   subject: string,
   htmlContent: string,
   textContent: string,
 ): Promise<void> {
   const body: AifunSendPayload = {
     sendEmail: cfg.sendEmail,
-    receiveEmail: cfg.receivers,
+    // aifun 接口对数组里的多个收件人只会发到第一个,所以一次只塞一个,
+    // 外层循环 N 次,保证每个收件人都收到。
+    receiveEmail: [recipient],
     accountId: cfg.accountId,
     manyType: null,
     name: cfg.senderName,
@@ -98,7 +101,6 @@ async function postEmail(
   if (!res.ok) {
     throw new Error(`email http ${res.status}: ${(await res.text()).slice(0, 300)}`);
   }
-  // server returns code/message envelope; surface non-zero codes too
   let json: { code?: number; message?: string } = {};
   try {
     json = (await res.json()) as { code?: number; message?: string };
@@ -108,6 +110,33 @@ async function postEmail(
   }
   if (json.code != null && json.code !== 0 && json.code !== 200) {
     throw new Error(`email api code=${json.code} msg=${json.message ?? ""}`);
+  }
+}
+
+async function postEmail(
+  cfg: MailConfig,
+  subject: string,
+  htmlContent: string,
+  textContent: string,
+): Promise<void> {
+  if (cfg.receivers.length === 0) {
+    throw new Error("no receivers");
+  }
+  // 并发对每个收件人发一次。allSettled 让部分失败不影响其他人; 只要
+  // 至少有一个成功就当作整体成功(失败信息进 console 留存)。
+  const results = await Promise.allSettled(
+    cfg.receivers.map((r) =>
+      postEmailSingle(cfg, r, subject, htmlContent, textContent),
+    ),
+  );
+  const failures = results
+    .map((r, i) => (r.status === "rejected" ? `${cfg.receivers[i]}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}` : null))
+    .filter((x): x is string => x != null);
+  if (failures.length === cfg.receivers.length) {
+    throw new Error(`all recipients failed: ${failures.join("; ").slice(0, 600)}`);
+  }
+  if (failures.length > 0) {
+    console.error("[mailer] partial send failures:", failures);
   }
 }
 
