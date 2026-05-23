@@ -95,6 +95,8 @@ interface UnboundAccountRow {
   costBase: number;
   profit: number;
   hasFixedCost: boolean;
+  accumExpense: number;
+  lastUsedDate: string | null;
 }
 interface UnboundAccountsResp {
   days: number;
@@ -1263,6 +1265,10 @@ function UnboundView({
   const [savingPrefix, setSavingPrefix] = useState(false);
   // "支出规则" 弹窗 — 跟每日明细 modal 里的 ExpenseRulesDialog 共用
   const [editingRules, setEditingRules] = useState(false);
+  // 排序方式: 默认按"最近使用"倒序; 其他维度 desc。
+  const [sortBy, setSortBy] = useState<
+    "lastUsed" | "revenue" | "accumExpense" | "profit"
+  >("lastUsed");
 
   // 绑定弹窗状态
   const [bindTarget, setBindTarget] = useState<UnboundAccountRow | null>(null);
@@ -1493,6 +1499,28 @@ function UnboundView({
             onDaysChange(n);
           }}
         />
+        <Select
+          size="sm"
+          label="排序"
+          className="w-36"
+          selectedKeys={[sortBy]}
+          onSelectionChange={(keys) => {
+            const v = String(Array.from(keys)[0] ?? "lastUsed");
+            if (
+              v === "lastUsed" ||
+              v === "revenue" ||
+              v === "accumExpense" ||
+              v === "profit"
+            ) {
+              setSortBy(v);
+            }
+          }}
+        >
+          <SelectItem key="lastUsed">最近使用</SelectItem>
+          <SelectItem key="revenue">收入</SelectItem>
+          <SelectItem key="accumExpense">累计支出</SelectItem>
+          <SelectItem key="profit">估算利润</SelectItem>
+        </Select>
         <Button
           size="sm"
           variant="flat"
@@ -1560,14 +1588,34 @@ function UnboundView({
                 <TableColumn>账号</TableColumn>
                 <TableColumn>所属站点</TableColumn>
                 <TableColumn>倍率</TableColumn>
-                <TableColumn>一次性投入</TableColumn>
+                <TableColumn>最近使用</TableColumn>
+                <TableColumn>累计支出</TableColumn>
                 <TableColumn>1× 成本</TableColumn>
                 <TableColumn>收入</TableColumn>
                 <TableColumn>估算利润</TableColumn>
                 <TableColumn>操作</TableColumn>
               </TableHeader>
               <TableBody>
-                {data.items.map((r) => (
+                {(() => {
+                  const sorted = [...data.items].sort((a, b) => {
+                    if (sortBy === "lastUsed") {
+                      if (a.lastUsedDate == null && b.lastUsedDate == null)
+                        return 0;
+                      if (a.lastUsedDate == null) return 1;
+                      if (b.lastUsedDate == null) return -1;
+                      return a.lastUsedDate > b.lastUsedDate
+                        ? -1
+                        : a.lastUsedDate < b.lastUsedDate
+                          ? 1
+                          : 0;
+                    }
+                    if (sortBy === "revenue") return b.revenue - a.revenue;
+                    if (sortBy === "accumExpense")
+                      return b.accumExpense - a.accumExpense;
+                    return b.profit - a.profit;
+                  });
+                  return sorted;
+                })().map((r) => (
                   <TableRow
                     key={r.id}
                     className="bg-warning-50/40 dark:bg-warning-950/20"
@@ -1584,6 +1632,15 @@ function UnboundView({
                       <span className="text-sm tabular-nums">
                         ×{r.rateMultiplier.toFixed(2)}
                       </span>
+                    </TableCell>
+                    <TableCell>
+                      {r.lastUsedDate ? (
+                        <span className="text-xs tabular-nums">
+                          {r.lastUsedDate}
+                        </span>
+                      ) : (
+                        <span className="text-default-400 text-xs">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Popover
@@ -1606,32 +1663,40 @@ function UnboundView({
                             type="button"
                             className="inline-flex items-center gap-1 hover:bg-content2/60 rounded px-1 py-0.5"
                           >
-                            {r.fixedCost != null ? (
+                            {r.accumExpense > 0 ? (
                               <span
                                 className="tabular-nums text-primary font-medium"
-                                title={fmtMoney(r.fixedCost)}
+                                title={fmtMoney(r.accumExpense)}
                               >
-                                {fmtMoneyShort(r.fixedCost)}
+                                {fmtMoneyShort(r.accumExpense)}
                               </span>
                             ) : (
-                              <span className="text-default-400 text-xs">点击设置</span>
+                              <span className="text-default-400 text-xs">
+                                点击设置
+                              </span>
                             )}
                           </button>
                         </PopoverTrigger>
                         <PopoverContent className="p-3">
-                          <div className="flex flex-col gap-2 w-64">
+                          <div className="flex flex-col gap-2 w-72">
                             <div className="text-[11px] text-default-500">
                               {r.accountName}
+                            </div>
+                            <div className="text-xs text-default-600">
+                              历史累计支出{" "}
+                              <span className="font-medium tabular-nums">
+                                ${fmtMoney(r.accumExpense)}
+                              </span>
                             </div>
                             <Input
                               type="number"
                               size="sm"
-                              label="一次性投入"
+                              label="每日默认支出 (fixedCost)"
                               value={fcDraft[r.id] ?? ""}
                               onValueChange={(v) =>
                                 setFcDraft((s) => ({ ...s, [r.id]: v }))
                               }
-                              description="设置后每日支出按此金额算，sync/backfill 不会覆盖"
+                              description="设置后未手填支出的日子都按此金额算; 单日覆盖请在「每日明细」里改"
                             />
                             <div className="flex justify-between gap-2">
                               <Button
