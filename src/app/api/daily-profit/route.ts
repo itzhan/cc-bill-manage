@@ -7,22 +7,26 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// GET /api/daily-profit?days=30  → last N days, newest first
+// GET /api/daily-profit?days=30          → last N days, newest first
+// GET /api/daily-profit?startDate=YYYY-MM-DD → 所有 date >= startDate, newest first
+//                                              (上限 1000 天兜底, 避免误用拉爆)
 //
 // 每日利润不再单独存表 — 全部由 DailyProfitBreakdown 按 paired view 现算,
 // 保证跟"每日明细"modal 顶部 totals 永远一致。
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const startDate = url.searchParams.get("startDate");
+  const useStart = startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate);
   const days = Math.min(
     365,
     Math.max(1, Number(url.searchParams.get("days")) || 30),
   );
-  // 拿最近 N 个有 breakdown 数据的日期 + 当日的 updatedAt(最近一行)
   const rows = await prisma.dailyProfitBreakdown.groupBy({
     by: ["date"],
     _max: { updatedAt: true },
+    where: useStart ? { date: { gte: startDate } } : undefined,
     orderBy: { date: "desc" },
-    take: days,
+    take: useStart ? 1000 : days,
   });
   const dates = rows.map((r) => r.date);
   const updatedByDate = new Map(

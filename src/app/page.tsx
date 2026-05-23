@@ -17,6 +17,7 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
+  Pagination,
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -57,6 +58,9 @@ import DailyDetailModal, {
 } from "@/components/DailyDetailModal";
 import { fmtDate, fmtMoney, fmtMoneyShort } from "@/lib/format";
 import type { DashboardSummary } from "@/lib/dashboard";
+
+// 每日利润起始日期 — 用户要求从 2025-04-18 起的所有记录全部展示, 客户端分页。
+const DAILY_START_DATE = "2025-04-18";
 
 const RANGE_LABELS: Record<string, string> = {
   "1h": "最近 1 小时",
@@ -121,6 +125,18 @@ export default function DashboardPage() {
   const [detailDate, setDetailDate] = useState<string | null>(null);
   // 每日利润卡片的视图切换：按日期 / 未绑定账号
   const [dailyView, setDailyView] = useState<"by-date" | "unbound">("by-date");
+  // 「按日期」分页 — 每页条数 + 当前页。每页条数可选。
+  const [dailyPageSize, setDailyPageSize] = useState<number>(30);
+  const [dailyPage, setDailyPage] = useState<number>(1);
+  const dailyTotalPages = Math.max(
+    1,
+    Math.ceil(daily.length / dailyPageSize),
+  );
+  const dailyPageClamped = Math.min(dailyPage, dailyTotalPages);
+  const dailyPageSlice = daily.slice(
+    (dailyPageClamped - 1) * dailyPageSize,
+    dailyPageClamped * dailyPageSize,
+  );
   const [unboundDays, setUnboundDays] = useState(30);
   const [unbound, setUnbound] = useState<UnboundAccountsResp | null>(null);
   const [unboundLoading, setUnboundLoading] = useState(false);
@@ -157,9 +173,9 @@ export default function DashboardPage() {
         fetch(`/api/dashboard/top-expenses?_=${ts}`, { cache: "no-store" }).then((r) =>
           r.json(),
         ),
-        fetch(`/api/daily-profit?days=30&_=${ts}`, { cache: "no-store" }).then((r) =>
-          r.json(),
-        ),
+        fetch(`/api/daily-profit?startDate=${DAILY_START_DATE}&_=${ts}`, {
+          cache: "no-store",
+        }).then((r) => r.json()),
       ]);
       // 我若已过时（有人发起了更新的 loadAll），直接丢弃这一轮结果。
       if (mySeq !== loadSeqRef.current) return;
@@ -980,6 +996,7 @@ export default function DashboardPage() {
                   暂无每日记录。每次同步会写入当天的累计值
                 </p>
               ) : (
+                <>
                 <Table removeWrapper aria-label="daily profit">
                   <TableHeader>
                     <TableColumn>日期</TableColumn>
@@ -990,8 +1007,9 @@ export default function DashboardPage() {
                     <TableColumn>更新时间</TableColumn>
                   </TableHeader>
                   <TableBody>
-                    {daily.map((d, i) => {
-                      const isToday = i === 0;
+                    {dailyPageSlice.map((d, idx) => {
+                      // "今天" 标志只看绝对位置 (page 1 第一行 = 最新), 翻页不再标。
+                      const isToday = dailyPageClamped === 1 && idx === 0;
                       return (
                         <TableRow
                           key={d.id}
@@ -1072,6 +1090,44 @@ export default function DashboardPage() {
                     })}
                   </TableBody>
                 </Table>
+                <div className="flex items-center justify-between flex-wrap gap-3 mt-3 pt-3 border-t border-divider/50">
+                  <div className="flex items-center gap-2 text-xs text-default-500">
+                    <span>
+                      共 {daily.length} 天 · 起 {DAILY_START_DATE}
+                    </span>
+                    <span className="text-default-400">·</span>
+                    <span>每页</span>
+                    <Select
+                      size="sm"
+                      aria-label="每页条数"
+                      className="w-20"
+                      selectedKeys={[String(dailyPageSize)]}
+                      onSelectionChange={(keys) => {
+                        const v = Number(Array.from(keys)[0]);
+                        if (!Number.isFinite(v) || v <= 0) return;
+                        setDailyPageSize(v);
+                        setDailyPage(1);
+                      }}
+                    >
+                      <SelectItem key="20">20</SelectItem>
+                      <SelectItem key="30">30</SelectItem>
+                      <SelectItem key="50">50</SelectItem>
+                      <SelectItem key="100">100</SelectItem>
+                      <SelectItem key="200">200</SelectItem>
+                    </Select>
+                    <span>条</span>
+                  </div>
+                  {dailyTotalPages > 1 && (
+                    <Pagination
+                      size="sm"
+                      showControls
+                      total={dailyTotalPages}
+                      page={dailyPageClamped}
+                      onChange={setDailyPage}
+                    />
+                  )}
+                </div>
+                </>
               )}
             </CardBody>
           </Card>
