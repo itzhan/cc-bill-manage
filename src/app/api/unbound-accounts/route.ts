@@ -36,20 +36,28 @@ export async function GET(req: Request) {
     }),
     prisma.settings.findUnique({
       where: { id: 1 },
-      select: { unboundExcludePrefixes: true },
+      select: {
+        unboundExcludePrefixes: true,
+        unboundExcludeSuffixes: true,
+      },
     }),
     prisma.expenseRule.findMany(),
   ]);
 
-  // 解析排除前缀（按行/逗号分隔，跳过空白和 # 注释）。
-  const excludePrefixes = (settings?.unboundExcludePrefixes ?? "")
-    .split(/[,\n]/)
-    .map((s) => s.trim())
-    .filter((s) => s && !s.startsWith("#"));
-  const isExcluded = (name: string) =>
-    excludePrefixes.some((p) =>
-      name.toLowerCase().startsWith(p.toLowerCase()),
-    );
+  // 排除前缀 / 后缀; 按行 / 逗号分隔, 跳过空白和 # 注释。
+  const parseList = (raw: string | null | undefined) =>
+    (raw ?? "")
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter((s) => s && !s.startsWith("#"));
+  const excludePrefixes = parseList(settings?.unboundExcludePrefixes);
+  const excludeSuffixes = parseList(settings?.unboundExcludeSuffixes);
+  const isExcluded = (name: string) => {
+    const n = name.toLowerCase();
+    if (excludePrefixes.some((p) => n.startsWith(p.toLowerCase()))) return true;
+    if (excludeSuffixes.some((s) => n.endsWith(s.toLowerCase()))) return true;
+    return false;
+  };
 
   const filteredUnbound = unbound.filter((u) => !isExcluded(u.name));
 
@@ -61,6 +69,7 @@ export async function GET(req: Request) {
       totalCostBase: 0,
       totalProfit: 0,
       excludePrefixes,
+      excludeSuffixes,
     });
   }
 
@@ -183,5 +192,6 @@ export async function GET(req: Request) {
     totalProfit,
     items,
     excludePrefixes,
+    excludeSuffixes,
   });
 }

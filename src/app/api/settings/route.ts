@@ -30,6 +30,7 @@ export async function PATCH(req: Request) {
     errorRateCooldownMinutes: number;
     schedulingExcludePrefixes: string | null;
     unboundExcludePrefixes: string | null;
+    unboundExcludeSuffixes: string | null;
     defaultAzSiteAccountId: number | null;
   }>;
   const data: Record<string, unknown> = {};
@@ -68,6 +69,8 @@ export async function PATCH(req: Request) {
     data.schedulingExcludePrefixes = body.schedulingExcludePrefixes;
   if (body.unboundExcludePrefixes !== undefined)
     data.unboundExcludePrefixes = body.unboundExcludePrefixes;
+  if (body.unboundExcludeSuffixes !== undefined)
+    data.unboundExcludeSuffixes = body.unboundExcludeSuffixes;
   if ("defaultAzSiteAccountId" in body)
     data.defaultAzSiteAccountId = body.defaultAzSiteAccountId;
   await ensureSettings();

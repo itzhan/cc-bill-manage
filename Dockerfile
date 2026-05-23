@@ -36,4 +36,4 @@ RUN mkdir -p /app/data
 
 EXPOSE 3100
 # 启动前跑增量 migration(幂等),让新列自动落到现网 DB。失败不阻塞 server。
-CMD ["sh", "-c", "node scripts/migrate-balance-alert.mjs || true; exec node server.js"]
+CMD ["sh", "-c", "node scripts/migrate.mjs || true; exec node server.js"]

@@ -105,6 +105,7 @@ interface UnboundAccountsResp {
   totalProfit: number;
   items: UnboundAccountRow[];
   excludePrefixes?: string[];
+  excludeSuffixes?: string[];
 }
 
 export default function DashboardPage() {
@@ -1262,6 +1263,7 @@ function UnboundView({
 }) {
   const [editingPrefix, setEditingPrefix] = useState(false);
   const [prefixDraft, setPrefixDraft] = useState("");
+  const [suffixDraft, setSuffixDraft] = useState("");
   const [savingPrefix, setSavingPrefix] = useState(false);
   // "支出规则" 弹窗 — 跟每日明细 modal 里的 ExpenseRulesDialog 共用
   const [editingRules, setEditingRules] = useState(false);
@@ -1423,8 +1425,10 @@ function UnboundView({
       const r = await fetch("/api/settings", { cache: "no-store" });
       const j = await r.json();
       setPrefixDraft(j.settings?.unboundExcludePrefixes ?? "");
+      setSuffixDraft(j.settings?.unboundExcludeSuffixes ?? "");
     } catch {
       setPrefixDraft("");
+      setSuffixDraft("");
     }
     setEditingPrefix(true);
   }
@@ -1434,7 +1438,10 @@ function UnboundView({
       const r = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ unboundExcludePrefixes: prefixDraft || null }),
+        body: JSON.stringify({
+          unboundExcludePrefixes: prefixDraft || null,
+          unboundExcludeSuffixes: suffixDraft || null,
+        }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -1472,12 +1479,15 @@ function UnboundView({
           自动匹配绑定
         </Button>
         <Button size="sm" variant="flat" onPress={openPrefixDialog}>
-          排除前缀
-          {data?.excludePrefixes && data.excludePrefixes.length > 0 && (
-            <span className="ml-0.5 text-default-400">
-              ({data.excludePrefixes.length})
-            </span>
-          )}
+          排除前缀/后缀
+          {(() => {
+            const n =
+              (data?.excludePrefixes?.length ?? 0) +
+              (data?.excludeSuffixes?.length ?? 0);
+            return n > 0 ? (
+              <span className="ml-0.5 text-default-400">({n})</span>
+            ) : null;
+          })()}
         </Button>
         <Button
           size="sm"
@@ -1540,8 +1550,10 @@ function UnboundView({
 
       <PrefixDialog
         isOpen={editingPrefix}
-        value={prefixDraft}
-        onChange={setPrefixDraft}
+        prefixValue={prefixDraft}
+        suffixValue={suffixDraft}
+        onPrefixChange={setPrefixDraft}
+        onSuffixChange={setSuffixDraft}
         onClose={() => setEditingPrefix(false)}
         onSave={savePrefix}
         saving={savingPrefix}
@@ -1819,15 +1831,19 @@ function StatTile({
 
 function PrefixDialog({
   isOpen,
-  value,
-  onChange,
+  prefixValue,
+  suffixValue,
+  onPrefixChange,
+  onSuffixChange,
   onClose,
   onSave,
   saving,
 }: {
   isOpen: boolean;
-  value: string;
-  onChange: (s: string) => void;
+  prefixValue: string;
+  suffixValue: string;
+  onPrefixChange: (s: string) => void;
+  onSuffixChange: (s: string) => void;
   onClose: () => void;
   onSave: () => void;
   saving: boolean;
@@ -1835,18 +1851,33 @@ function PrefixDialog({
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="md">
       <ModalContent>
-        <ModalHeader>未绑定账号 · 排除前缀</ModalHeader>
-        <ModalBody>
-          <p className="text-xs text-default-500">
-            以前缀匹配（区分大小写不敏感），账号名以这些前缀开头会被隐藏。
-            一行一个；# 开头视作注释。例如：
-          </p>
-          <Textarea
-            minRows={4}
-            placeholder={"az-\n# 隐藏所有以 trial- 开头的账号\ntrial-"}
-            value={value}
-            onValueChange={onChange}
-          />
+        <ModalHeader>未绑定账号 · 排除前缀 / 后缀</ModalHeader>
+        <ModalBody className="gap-4">
+          <div>
+            <p className="text-xs text-default-500 mb-1">
+              以前缀匹配(大小写不敏感),账号名以这些前缀开头会被隐藏。
+              一行一个;# 开头视作注释。
+            </p>
+            <Textarea
+              label="排除前缀"
+              minRows={3}
+              placeholder={"az-\n# 隐藏所有以 trial- 开头的账号\ntrial-"}
+              value={prefixValue}
+              onValueChange={onPrefixChange}
+            />
+          </div>
+          <div>
+            <p className="text-xs text-default-500 mb-1">
+              账号名以这些后缀结尾会被隐藏。一行一个;# 开头视作注释。
+            </p>
+            <Textarea
+              label="排除后缀"
+              minRows={3}
+              placeholder={"-o总\n# 隐藏所有以 -test 结尾的账号\n-test"}
+              value={suffixValue}
+              onValueChange={onSuffixChange}
+            />
+          </div>
         </ModalBody>
         <ModalFooter>
           <Button variant="flat" onPress={onClose}>
