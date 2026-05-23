@@ -496,7 +496,7 @@ export default function DashboardPage() {
                       近一周利润趋势
                     </h2>
                     <p className="text-xs text-default-500 mt-0.5">
-                      按 Asia/Shanghai 日期 · 绿色盈利 / 红色亏损
+                      按 Asia/Shanghai 日期
                     </p>
                   </div>
                 </div>

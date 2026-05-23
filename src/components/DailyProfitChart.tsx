@@ -1,9 +1,8 @@
 "use client";
 import {
-  Bar,
-  BarChart,
-  Cell,
   CartesianGrid,
+  Line,
+  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -17,8 +16,7 @@ export interface DailyProfitPoint {
   profit: number;
 }
 
-// 每日利润柱状图 — 正负分别用 success / danger 染色, 0 轴用 ReferenceLine 强调。
-// 给"近一周"小图用 (height 200), 也可被复用做长区间。
+// 每日利润折线图 — 蓝色 (primary); 0 轴用 ReferenceLine 标出, 方便看正负。
 export default function DailyProfitChart({
   data,
   height = 220,
@@ -43,7 +41,7 @@ export default function DailyProfitChart({
   }));
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart
+      <LineChart
         data={chartData}
         margin={{ top: 8, right: 12, bottom: 8, left: 8 }}
       >
@@ -58,6 +56,7 @@ export default function DailyProfitChart({
           tick={{ fill: "hsl(var(--heroui-default-500))", fontSize: 11 }}
           tickLine={false}
           axisLine={{ stroke: "hsl(var(--heroui-divider))" }}
+          minTickGap={24}
         />
         <YAxis
           tick={{ fill: "hsl(var(--heroui-default-500))", fontSize: 11 }}
@@ -67,7 +66,6 @@ export default function DailyProfitChart({
           tickFormatter={(v) => fmtMoneyShort(Number(v), 1)}
         />
         <Tooltip
-          cursor={{ fill: "hsla(var(--heroui-foreground)/0.05)" }}
           contentStyle={{
             background: "hsl(var(--heroui-content2))",
             border: "1px solid hsl(var(--heroui-divider))",
@@ -86,19 +84,15 @@ export default function DailyProfitChart({
             }) as any
           }
         />
-        <Bar dataKey="profit" radius={[4, 4, 0, 0]} maxBarSize={48}>
-          {chartData.map((p, i) => (
-            <Cell
-              key={i}
-              fill={
-                p.profit >= 0
-                  ? "hsl(var(--heroui-success))"
-                  : "hsl(var(--heroui-danger))"
-              }
-            />
-          ))}
-        </Bar>
-      </BarChart>
+        <Line
+          type="monotone"
+          dataKey="profit"
+          stroke="hsl(var(--heroui-primary))"
+          strokeWidth={2}
+          dot={{ r: 3, fill: "hsl(var(--heroui-primary))" }}
+          name="日利润"
+        />
+      </LineChart>
     </ResponsiveContainer>
   );
 }
