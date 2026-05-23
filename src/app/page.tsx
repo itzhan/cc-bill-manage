@@ -53,6 +53,7 @@ import ExpenseBarChart, {
 } from "@/components/ExpenseBarChart";
 import { type TrendPoint } from "@/components/TrendLineChart";
 import DailyRevenueChart from "@/components/DailyRevenueChart";
+import DailyProfitChart from "@/components/DailyProfitChart";
 import DailyDetailModal, {
   ExpenseRulesDialog,
 } from "@/components/DailyDetailModal";
@@ -482,6 +483,49 @@ export default function DashboardPage() {
               />
             )}
           </div>
+
+          {view === "overview" && daily.length > 0 && (
+            <Card className="bg-content1 border border-divider/50 shadow-none mb-6">
+              <CardHeader className="flex justify-between items-center pb-1">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                    <Wallet size={16} />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold leading-tight">
+                      近一周利润趋势
+                    </h2>
+                    <p className="text-xs text-default-500 mt-0.5">
+                      按 Asia/Shanghai 日期 · 绿色盈利 / 红色亏损
+                    </p>
+                  </div>
+                </div>
+                {(() => {
+                  const last7 = daily.slice(0, 7);
+                  const sum = last7.reduce((s, d) => s + d.profit, 0);
+                  return (
+                    <span className="text-xs text-default-500">
+                      7 日累计{" "}
+                      <b
+                        className={
+                          sum > 0
+                            ? "text-success"
+                            : sum < 0
+                              ? "text-danger"
+                              : "text-foreground"
+                        }
+                      >
+                        {fmtMoneyShort(sum)}
+                      </b>
+                    </span>
+                  );
+                })()}
+              </CardHeader>
+              <CardBody className="pt-2">
+                <DailyProfitChart data={daily.slice(0, 7)} />
+              </CardBody>
+            </Card>
+          )}
 
           {view !== "overview" && (
             <div className="grid grid-cols-1 gap-4 mb-6">

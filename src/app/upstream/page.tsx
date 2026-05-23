@@ -32,6 +32,7 @@ import {
   useDisclosure,
 } from "@heroui/react";
 import {
+  Bell,
   Building2,
   ChevronDown,
   Copy,
@@ -144,6 +145,7 @@ export default function UpstreamPage() {
   const newDlg = useDisclosure();
   const editDlg = useDisclosure();
   const keysDlg = useDisclosure();
+  const balanceAlertDlg = useDisclosure();
   const [editing, setEditing] = useState<UpstreamAccount | null>(null);
   const [editTab, setEditTab] = useState<string>("creds");
   const [form, setForm] = useState({
@@ -829,6 +831,13 @@ export default function UpstreamPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <Button
             variant="flat"
+            startContent={<Bell size={14} />}
+            onPress={() => balanceAlertDlg.onOpen()}
+          >
+            余额提醒
+          </Button>
+          <Button
+            variant="flat"
             startContent={<RefreshCw size={14} />}
             onPress={refreshAndSyncAll}
             isLoading={busyAll}
@@ -840,6 +849,11 @@ export default function UpstreamPage() {
           </Button>
         </div>
       </div>
+
+      <BalanceAlertModal
+        isOpen={balanceAlertDlg.isOpen}
+        onOpenChange={balanceAlertDlg.onOpenChange}
+      />
 
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <Tabs
@@ -2405,5 +2419,302 @@ function AccountFormTabs({
         </div>
       </Tab>
     </Tabs>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// 余额提醒 modal
+// 一张表罗列所有渠道:启用 / 间隔(分) / 阈值列表(自由文本)
+// 阈值用逗号 / 空格 / 换行分隔, 输入 "10000 5000 1000" / "10000,5000" 都行。
+// "用户充钱"逻辑在后端: balance 回到 ≥ 阈值时把该阈值从 fired 中移除。
+// ──────────────────────────────────────────────────────────────────
+
+interface BalanceAlertItem {
+  id: number;
+  name: string;
+  supplier: string | null;
+  balance: number | null;
+  balanceUpdatedAt: string | null;
+  enabled: boolean;
+  intervalMin: number;
+  thresholds: number[];
+  fired: number[];
+  lastCheckAt: string | null;
+}
+
+function parseThresholdsInput(raw: string): number[] {
+  if (!raw.trim()) return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(/[\s,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => Number(s))
+        .filter((n) => Number.isFinite(n) && n > 0),
+    ),
+  ).sort((a, b) => b - a);
+}
+
+function BalanceAlertModal({
+  isOpen,
+  onOpenChange,
+}: {
+  isOpen: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [items, setItems] = useState<BalanceAlertItem[]>([]);
+  const [draftText, setDraftText] = useState<Record<number, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [filter, setFilter] = useState("");
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/upstream/balance-alert", {
+        cache: "no-store",
+      });
+      const j = (await r.json()) as { items: BalanceAlertItem[] };
+      setItems(j.items || []);
+      const texts: Record<number, string> = {};
+      for (const it of j.items || []) {
+        texts[it.id] = it.thresholds.join(", ");
+      }
+      setDraftText(texts);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (isOpen) load();
+  }, [isOpen]);
+
+  function update(id: number, patch: Partial<BalanceAlertItem>) {
+    setItems((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const payload = items.map((it) => ({
+        id: it.id,
+        enabled: it.enabled,
+        intervalMin: it.intervalMin,
+        thresholds: parseThresholdsInput(draftText[it.id] ?? ""),
+      }));
+      const r = await fetch("/api/upstream/balance-alert", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: payload }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        addToast({
+          title: "保存失败",
+          description: String(j.error || r.status),
+          color: "danger",
+        });
+        return;
+      }
+      const j = (await r.json()) as { updated: number };
+      addToast({ title: `已保存 ${j.updated} 个渠道`, color: "success" });
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runCheckNow() {
+    const r = await fetch("/api/upstream/balance-alert/check", {
+      method: "POST",
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      addToast({
+        title: "触发失败",
+        description: String(j.error || r.status),
+        color: "danger",
+      });
+      return;
+    }
+    addToast({
+      title: "已触发一次检测",
+      description: "受 intervalMin 节流; 想立刻发邮件可临时把间隔改成 1 分钟",
+      color: "success",
+    });
+    await load();
+  }
+
+  const q = filter.trim().toLowerCase();
+  const filtered = q
+    ? items.filter(
+        (x) =>
+          x.name.toLowerCase().includes(q) ||
+          (x.supplier ?? "").toLowerCase().includes(q),
+      )
+    : items;
+  const enabledCount = items.filter((x) => x.enabled).length;
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+      size="5xl"
+      scrollBehavior="inside"
+    >
+      <ModalContent>
+        {(close) => (
+          <>
+            <ModalHeader>
+              <div className="flex flex-col">
+                <span className="flex items-center gap-2">
+                  <Bell size={16} /> 渠道余额提醒
+                </span>
+                <span className="text-xs text-default-500 font-normal mt-0.5">
+                  跌破阈值 → 邮件提醒;充值回到阈值之上后,下次再跌破时重新提醒。
+                  邮件使用「设置」页里配置的发件/收件邮箱。
+                </span>
+              </div>
+            </ModalHeader>
+            <ModalBody className="gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Input
+                  size="sm"
+                  placeholder="按渠道名 / 货源筛选…"
+                  value={filter}
+                  onValueChange={setFilter}
+                  className="flex-1 min-w-[200px]"
+                />
+                <span className="text-xs text-default-500">
+                  已启用 {enabledCount} / {items.length}
+                </span>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  onPress={runCheckNow}
+                  isDisabled={loading || saving}
+                >
+                  立即触发一次检测
+                </Button>
+              </div>
+              {loading ? (
+                <div className="flex justify-center py-8">
+                  <Spinner />
+                </div>
+              ) : (
+                <Table removeWrapper aria-label="balance alerts">
+                  <TableHeader>
+                    <TableColumn>渠道</TableColumn>
+                    <TableColumn>当前余额</TableColumn>
+                    <TableColumn>启用</TableColumn>
+                    <TableColumn>间隔(分)</TableColumn>
+                    <TableColumn>阈值(USD, 多个用空格/逗号/换行)</TableColumn>
+                    <TableColumn>已触发</TableColumn>
+                  </TableHeader>
+                  <TableBody emptyContent="没有匹配的渠道">
+                    {filtered.map((it) => (
+                      <TableRow key={it.id}>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{it.name}</span>
+                            {it.supplier && (
+                              <span className="text-[10px] text-default-400">
+                                {it.supplier}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={`font-mono ${
+                              it.balance == null
+                                ? "text-default-400"
+                                : it.balance > 0
+                                  ? "text-foreground"
+                                  : "text-warning"
+                            }`}
+                          >
+                            {it.balance == null
+                              ? "—"
+                              : `$${fmtMoneyShort(it.balance)}`}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Checkbox
+                            isSelected={it.enabled}
+                            onValueChange={(v) =>
+                              update(it.id, { enabled: v })
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            size="sm"
+                            min={1}
+                            className="w-20"
+                            value={String(it.intervalMin)}
+                            onValueChange={(v) =>
+                              update(it.id, {
+                                intervalMin: Math.max(
+                                  1,
+                                  Math.floor(Number(v) || 60),
+                                ),
+                              })
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            size="sm"
+                            placeholder="例: 10000, 5000, 1000"
+                            value={draftText[it.id] ?? ""}
+                            onValueChange={(v) =>
+                              setDraftText((m) => ({ ...m, [it.id]: v }))
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          {it.fired.length === 0 ? (
+                            <span className="text-default-400 text-xs">—</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {it.fired.map((t) => (
+                                <Chip
+                                  key={t}
+                                  size="sm"
+                                  color="warning"
+                                  variant="flat"
+                                  classNames={{
+                                    base: "h-5",
+                                    content: "text-[10px] px-1.5",
+                                  }}
+                                >
+                                  ${fmtMoneyShort(t)}
+                                </Chip>
+                              ))}
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={close}>
+                关闭
+              </Button>
+              <Button color="primary" onPress={save} isLoading={saving}>
+                保存全部
+              </Button>
+            </ModalFooter>
+          </>
+        )}
+      </ModalContent>
+    </Modal>
   );
 }

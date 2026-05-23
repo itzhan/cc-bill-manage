@@ -476,6 +476,67 @@ export async function maybeSendGroupOutageAlert(opts: {
   }
 }
 
+// ── 余额提醒 ──
+// 一通跌破阈值就发一封, 不再做额外冷却(checkBalanceAlerts 的"已触发集合"
+// 已经避免了重复)。每个渠道独立 firedSet, 互不影响。
+function buildBalanceAlertHtml(p: {
+  accountName: string;
+  crossed: number[];
+  balance: number;
+}): string {
+  const rows = p.crossed
+    .map(
+      (t) => `<tr>
+        <td style="padding:8px;border-bottom:1px solid #eee">$${fmt(t, 2)}</td>
+      </tr>`,
+    )
+    .join("");
+  return `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937;max-width:640px">
+  <h2 style="margin:0 0 8px;color:#d97706">渠道余额跌破阈值</h2>
+  <p style="color:#6b7280;margin:0 0 16px">
+    <strong>${escapeHtml(p.accountName)}</strong> 当前余额 <strong style="color:#dc2626">$${fmt(p.balance, 2)}</strong>
+  </p>
+  <p style="color:#6b7280;margin:0 0 8px;font-size:13px">本次跌破的阈值：</p>
+  <table style="border-collapse:collapse;width:100%;font-size:13px">
+    <tbody>${rows}</tbody>
+  </table>
+  <p style="margin-top:16px;color:#9ca3af;font-size:12px">
+    充值并回到阈值以上后，下次再跌破时会重新提醒。<br/>
+    由 Bill Manage 自动发出 · ${new Date().toLocaleString("zh-CN")}
+  </p>
+</div>`.trim();
+}
+
+function buildBalanceAlertText(p: {
+  accountName: string;
+  crossed: number[];
+  balance: number;
+}): string {
+  const lines = [
+    `渠道「${p.accountName}」余额跌破阈值`,
+    `当前余额: $${fmt(p.balance, 2)}`,
+    `跌破阈值: ${p.crossed.map((t) => `$${fmt(t, 2)}`).join(", ")}`,
+  ];
+  return lines.join("\n");
+}
+
+export async function sendBalanceAlertEmail(opts: {
+  accountName: string;
+  crossed: number[];
+  balance: number;
+}): Promise<void> {
+  const cfg = await loadMailConfig();
+  if (!cfg) throw new Error("邮件配置不完整");
+  const subject = `${cfg.subject}（${opts.accountName} 余额 $${fmt(opts.balance, 2)}）`;
+  await postEmail(
+    cfg,
+    subject,
+    buildBalanceAlertHtml(opts),
+    buildBalanceAlertText(opts),
+  );
+}
+
 /**
  * Check current diff against threshold and send an alert email if needed.
  * Respects per-Settings cooldown to avoid spamming during persistent

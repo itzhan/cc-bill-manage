@@ -92,6 +92,15 @@ model UpstreamAccount {
   // notes: free-form remarks; inventory: JSON list [{name,price,concurrency,note}]
   notes            String?
   inventory        String?
+  // ── 余额提醒 (per-channel) ──
+  // thresholds: JSON number[], 阈值。balance 跌破任一阈值 → 邮件提醒一次,
+  // 直到 balance 重新 >= 该阈值(用户充钱了)才重置, 这样不会重复提醒。
+  // fired: 当前已经"用掉"的阈值, balance 回升到 >= T 时把 T 移出。
+  balanceAlertEnabled       Boolean   @default(false)
+  balanceAlertIntervalMin   Int       @default(60)
+  balanceAlertThresholdsJson String?
+  balanceAlertFiredJson     String?
+  balanceAlertLastCheckAt   DateTime?
   createdAt        DateTime  @default(now())
 
   keys UpstreamKey[]

@@ -734,6 +734,12 @@ export async function syncAll(): Promise<SyncAllResult> {
   pollAndAlertErrorRates().catch((e) =>
     console.error("[errorRateAlert] poll failed:", e),
   );
+  // 余额提醒: 同步刚把 balance 写新, 用最新值评估阈值。fire-and-forget。
+  import("./balance-alert").then(({ checkBalanceAlerts }) =>
+    checkBalanceAlerts().catch((e) =>
+      console.error("[balance-alert] check failed:", e),
+    ),
+  );
   console.log(
     `[syncAll] up=${ups.length} site=${sites.length} batch=${batchMs}ms snapshot=${snapMs}ms total=${
       Date.now() - t0
