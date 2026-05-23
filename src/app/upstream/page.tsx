@@ -165,7 +165,7 @@ export default function UpstreamPage() {
     new Set(),
   );
   // 当前 Tab; 历史渠道 db push 时自动落到 claude, 默认显示 claude。
-  const [categoryFilter, setCategoryFilter] = useState<string>("claude");
+  const [categoryFilter, setCategoryFilter] = useState<string>(TAB_ALL);
   // 用户自定义的分类列表 — 决定 Tab 显示
   const [categoryList, setCategoryList] = useState<UpstreamCategory[]>([]);
   // 新增分类对话框
