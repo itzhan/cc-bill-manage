@@ -12,10 +12,9 @@ const ALLOWED_RANGES = new Set(["1h", "6h", "24h", "7d", "30d"]);
 const MAX_PAGES = 100;
 const PAGE_SIZE = 500;
 // Per-account recent events kept on the response so the UI can drill in
-// without a second roundtrip. 默认不截断(全量返回, 方便用户排查),
-// 受 MAX_PAGES * PAGE_SIZE = 50k 总抓取量天然兜底。
-// 调用方可以传 ?recentPerAccount=N (N>0) 主动限制, 0 / 缺省 = 无上限。
-const DEFAULT_RECENT_PER_ACCOUNT = 0;
+// without a second roundtrip. Cap so the JSON doesn't balloon when one
+// account has thousands of errors — top is usually enough for triage.
+const RECENT_PER_ACCOUNT = 200;
 
 interface RecentEvent {
   id: number;
@@ -54,11 +53,6 @@ export async function GET(
   const url = new URL(req.url);
   const rangeRaw = url.searchParams.get("range") ?? "1h";
   const range = ALLOWED_RANGES.has(rangeRaw) ? rangeRaw : "1h";
-  const recentRaw = url.searchParams.get("recentPerAccount");
-  const recentPerAccount =
-    recentRaw != null && /^\d+$/.test(recentRaw)
-      ? Number(recentRaw)
-      : DEFAULT_RECENT_PER_ACCOUNT;
   try {
     const client = await makeSiteClient(Number(siteId));
     // Fire snapshot in parallel with the first page — it returns SLA /
@@ -120,11 +114,8 @@ export async function GET(
               count: 1,
             };
         }
-        if (
-          recentPerAccount === 0 ||
-          agg.recentEvents.length < recentPerAccount
-        ) {
-          // Items arrive DESC by created_at, so captured order = latest first.
+        if (agg.recentEvents.length < RECENT_PER_ACCOUNT) {
+          // Items arrive DESC by created_at, so first 200 captured = latest 200.
           agg.recentEvents.push({
             id: e.id,
             createdAt: e.created_at,
@@ -174,7 +165,7 @@ export async function GET(
       pages,
       maxPages: MAX_PAGES,
       pageSize: PAGE_SIZE,
-      recentPerAccount,
+      recentPerAccount: RECENT_PER_ACCOUNT,
       summary,
       accounts: ranking.map((a) => ({
         accountId: a.accountId,

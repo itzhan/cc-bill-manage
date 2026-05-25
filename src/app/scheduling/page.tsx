@@ -1923,21 +1923,10 @@ function ErrorAccountModal({
                 </div>
               </div>
               <p className="text-[11px] text-default-400">
-                {recentCap === 0 ? (
-                  <>
-                    展示该账号 {events.length.toLocaleString()} 条原始错误
-                    {account.count > events.length &&
-                      `（共 ${account.count.toLocaleString()} 条，更早因总抓取上限未到）`}
-                    。
-                  </>
-                ) : (
-                  <>
-                    展示最近 {Math.min(events.length, recentCap)} 条原始错误
-                    {account.count > recentCap &&
-                      `（该账号共 ${account.count.toLocaleString()} 条，更早的未保留）`}
-                    。
-                  </>
-                )}
+                展示最近 {Math.min(events.length, recentCap)} 条原始错误
+                {account.count > recentCap &&
+                  `（该账号共 ${account.count.toLocaleString()} 条，更早的未保留）`}
+                。
               </p>
               {filtered.length === 0 ? (
                 <p className="text-default-500 text-sm py-4 text-center">
