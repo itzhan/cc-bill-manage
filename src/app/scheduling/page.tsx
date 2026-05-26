@@ -502,21 +502,34 @@ export default function SchedulingPage() {
     }
   }, [siteId, cacheSet]);
 
+  // 全局刷新中标志:让 2s 的 concurrency 轮询在刷新期间停手,
+  // 否则 setConcurrency 每 2s 触发一次完整 GroupCard 树重渲染, 跟
+  // refreshAll 里的大状态更新撞在一起, 主线程会被持续吃满 → "卡死"。
+  const refreshingRef = useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
+
   // Manual refresh: fetches everything fresh and stamps the cache.
   const refreshAll = useCallback(async () => {
     if (siteId == null) return;
-    await Promise.all([
-      loadStructure(),
-      loadBindings(),
-      loadConcurrency(),
-      loadGroupUsage(),
-      loadAccountStats(),
-      loadCustomGroups(),
-      ...(view === "users" ? [loadGroupUsers()] : []),
-    ]);
-    const now = new Date().toISOString();
-    cacheSet("stamp", now);
-    setCacheStamp(now);
+    refreshingRef.current = true;
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        loadStructure(),
+        loadBindings(),
+        loadConcurrency(),
+        loadGroupUsage(),
+        loadAccountStats(),
+        loadCustomGroups(),
+        ...(view === "users" ? [loadGroupUsers()] : []),
+      ]);
+      const now = new Date().toISOString();
+      cacheSet("stamp", now);
+      setCacheStamp(now);
+    } finally {
+      refreshingRef.current = false;
+      setRefreshing(false);
+    }
   }, [
     siteId,
     view,
@@ -577,9 +590,11 @@ export default function SchedulingPage() {
 
   // Concurrency + site RPM/TPM + per-user concurrency all poll at the same
   // 2s tick — they're the live indicators and all three calls are cheap.
-  // Paused while tab is hidden.
+  // Paused while tab is hidden,refreshAll 进行中,或当前 Tab 不是渠道调度
+  // (在"分组使用 / 错误排行" Tab 上不需要这些实时指标, 也免得大重渲染)。
   useEffect(() => {
     if (siteId == null) return;
+    if (view !== "channels") return;
     const fireAll = () => {
       loadConcurrency();
       loadSiteRate();
@@ -588,19 +603,20 @@ export default function SchedulingPage() {
     fireAll();
     const tick = () => {
       if (!visibleRef.current) return;
+      if (refreshingRef.current) return;
       fireAll();
     };
     const t = setInterval(tick, POLL_MS);
     const onVis = () => {
       visibleRef.current = !document.hidden;
-      if (!document.hidden) fireAll();
+      if (!document.hidden && !refreshingRef.current) fireAll();
     };
     document.addEventListener("visibilitychange", onVis);
     return () => {
       clearInterval(t);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [siteId, loadConcurrency, loadSiteRate, loadUserConc]);
+  }, [siteId, view, loadConcurrency, loadSiteRate, loadUserConc]);
 
   // Group-users view: load on first switch if cache empty.
   useEffect(() => {
@@ -834,7 +850,7 @@ export default function SchedulingPage() {
             variant="flat"
             startContent={<RefreshCw size={14} />}
             onPress={() => refreshAll()}
-            isLoading={structureLoading}
+            isLoading={refreshing || structureLoading}
           >
             刷新
           </Button>
@@ -1515,15 +1531,21 @@ function ErrorRankingView({ siteId }: { siteId: number | null }) {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<ErrorRankAccount | null>(null);
+  // 让旧请求在切换 range / 卸载时被 cancel, 避免 in-flight 堆积。
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
     if (siteId == null) return;
+    // 取消上一次未完成的请求
+    abortRef.current?.abort();
+    const ctl = new AbortController();
+    abortRef.current = ctl;
     setLoading(true);
     setError(null);
     try {
       const r = await fetch(
         `/api/scheduling/${siteId}/error-ranking?range=${range}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: ctl.signal },
       );
       const j = await r.json();
       if (!r.ok) {
@@ -1532,14 +1554,20 @@ function ErrorRankingView({ siteId }: { siteId: number | null }) {
       }
       setData(j);
     } catch (e) {
+      // 主动 cancel 抛 AbortError, 不当作错误展示。
+      if (e instanceof DOMException && e.name === "AbortError") return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      // 只有当本轮请求仍是最新的才清 loading, 避免被新请求误清。
+      if (abortRef.current === ctl) setLoading(false);
     }
   }, [siteId, range]);
 
   useEffect(() => {
     void load();
+    return () => {
+      abortRef.current?.abort();
+    };
   }, [load]);
 
   if (siteId == null) {
