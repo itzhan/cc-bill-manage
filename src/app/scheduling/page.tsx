@@ -15,9 +15,6 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
   Select,
   SelectItem,
   Spinner,
@@ -2409,13 +2406,20 @@ function GroupCard({
       | { kind: "fail"; latencyMs: number; output: string }
     >
   >({});
-  // 批量编辑: 选中的账号 id 集合 + 弹窗状态 + busy 标志。每个 GroupCard
-  // 独立维护(不跨卡共享, 避免互相干扰)。通过 sub2api bulk-update 一次性
-  // 改 N 个, 不再 N 次 PUT。
+  // 批量编辑: 选中的账号 id 集合 + 弹窗 + draft 表单。每个 GroupCard 独立
+  // 维护。通过 sub2api bulk-update 一次性改 N 个, 不再 N 次 PUT。
+  // draft 里空字符串 / "no-change" = 不修改, 其余值才会进 patch。
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [bulkConcOpen, setBulkConcOpen] = useState(false);
-  const [bulkConcDraft, setBulkConcDraft] = useState("");
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const EMPTY_DRAFT = {
+    status: "" as "" | "active" | "inactive",
+    schedulable: "" as "" | "true" | "false",
+    concurrency: "",
+    priority: "",
+    rateMultiplier: "",
+  };
+  const [bulkDraft, setBulkDraft] = useState(EMPTY_DRAFT);
   // SLOW_MS仍用于"快/慢"分类显示（chip 颜色）。批量调整并发已下线，改为
   // 用户手动看测试结果再决定。
   const SLOW_MS = 10_000;
@@ -2634,8 +2638,8 @@ function GroupCard({
         color: "success",
       });
       setSelectedIds(new Set());
-      setBulkConcOpen(false);
-      setBulkConcDraft("");
+      setBulkEditOpen(false);
+      setBulkDraft(EMPTY_DRAFT);
       await onChanged();
     } finally {
       setBulkBusy(false);
@@ -2861,112 +2865,23 @@ function GroupCard({
                 <Button
                   size="sm"
                   variant="flat"
-                  color="success"
+                  color="primary"
                   className="h-6 px-2 min-w-0 text-[11px]"
+                  onPress={() => {
+                    setBulkDraft(EMPTY_DRAFT);
+                    setBulkEditOpen(true);
+                  }}
                   isDisabled={bulkBusy}
-                  onPress={() => applyBulk({ status: "active" })}
                 >
-                  启用
+                  批量编辑
                 </Button>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  color="warning"
-                  className="h-6 px-2 min-w-0 text-[11px]"
-                  isDisabled={bulkBusy}
-                  onPress={() => applyBulk({ status: "inactive" })}
-                >
-                  禁用
-                </Button>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  className="h-6 px-2 min-w-0 text-[11px]"
-                  isDisabled={bulkBusy}
-                  onPress={() => applyBulk({ schedulable: true })}
-                >
-                  纳入调度
-                </Button>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  className="h-6 px-2 min-w-0 text-[11px]"
-                  isDisabled={bulkBusy}
-                  onPress={() => applyBulk({ schedulable: false })}
-                >
-                  移出调度
-                </Button>
-                <Popover
-                  isOpen={bulkConcOpen}
-                  onOpenChange={setBulkConcOpen}
-                  placement="bottom-start"
-                >
-                  <PopoverTrigger>
-                    <Button
-                      size="sm"
-                      variant="flat"
-                      color="primary"
-                      className="h-6 px-2 min-w-0 text-[11px]"
-                      isDisabled={bulkBusy}
-                    >
-                      修改并发
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="p-3">
-                    <div className="flex flex-col gap-2 w-56">
-                      <div className="text-[11px] text-default-500">
-                        将选中的 {selectedIds.size} 个账号的 concurrency 设为:
-                      </div>
-                      <Input
-                        type="number"
-                        size="sm"
-                        min={0}
-                        autoFocus
-                        placeholder="例如 5"
-                        value={bulkConcDraft}
-                        onValueChange={setBulkConcDraft}
-                        description="0 表示不限并发"
-                      />
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          onPress={() => setBulkConcOpen(false)}
-                        >
-                          取消
-                        </Button>
-                        <Button
-                          size="sm"
-                          color="primary"
-                          isLoading={bulkBusy}
-                          onPress={() => {
-                            const n = Math.max(
-                              0,
-                              Math.floor(Number(bulkConcDraft)),
-                            );
-                            if (!Number.isFinite(n)) {
-                              addToast({
-                                title: "并发数非法",
-                                color: "warning",
-                              });
-                              return;
-                            }
-                            applyBulk({ concurrency: n });
-                          }}
-                        >
-                          应用
-                        </Button>
-                      </div>
-                    </div>
-                  </PopoverContent>
-                </Popover>
                 <Button
                   size="sm"
                   variant="light"
                   className="h-6 px-2 min-w-0 text-[11px]"
                   onPress={() => setSelectedIds(new Set())}
                 >
-                  取消
+                  取消选择
                 </Button>
               </>
             )}
@@ -3084,6 +2999,150 @@ function GroupCard({
           </button>
         )}
       </CardBody>
+      <Modal
+        isOpen={bulkEditOpen}
+        onOpenChange={setBulkEditOpen}
+        size="md"
+      >
+        <ModalContent>
+          {(close) => (
+            <>
+              <ModalHeader>
+                <div className="flex flex-col">
+                  <span>批量编辑账号</span>
+                  <span className="text-xs text-default-500 font-normal mt-0.5">
+                    将对选中的 {selectedIds.size} 个账号生效 · 留空字段表示不修改
+                  </span>
+                </div>
+              </ModalHeader>
+              <ModalBody className="gap-4">
+                <Select
+                  size="sm"
+                  label="状态"
+                  selectedKeys={
+                    bulkDraft.status ? [bulkDraft.status] : ["__noop"]
+                  }
+                  onSelectionChange={(keys) => {
+                    const v = String(Array.from(keys)[0] ?? "");
+                    setBulkDraft((d) => ({
+                      ...d,
+                      status:
+                        v === "active" || v === "inactive" ? v : "",
+                    }));
+                  }}
+                >
+                  <SelectItem key="__noop">不修改</SelectItem>
+                  <SelectItem key="active">启用 (active)</SelectItem>
+                  <SelectItem key="inactive">禁用 (inactive)</SelectItem>
+                </Select>
+                <Select
+                  size="sm"
+                  label="调度"
+                  selectedKeys={
+                    bulkDraft.schedulable
+                      ? [bulkDraft.schedulable]
+                      : ["__noop"]
+                  }
+                  onSelectionChange={(keys) => {
+                    const v = String(Array.from(keys)[0] ?? "");
+                    setBulkDraft((d) => ({
+                      ...d,
+                      schedulable:
+                        v === "true" || v === "false" ? v : "",
+                    }));
+                  }}
+                >
+                  <SelectItem key="__noop">不修改</SelectItem>
+                  <SelectItem key="true">纳入调度</SelectItem>
+                  <SelectItem key="false">移出调度</SelectItem>
+                </Select>
+                <Input
+                  type="number"
+                  size="sm"
+                  label="并发数 (concurrency)"
+                  placeholder="留空 = 不修改; 0 = 不限并发"
+                  min={0}
+                  value={bulkDraft.concurrency}
+                  onValueChange={(v) =>
+                    setBulkDraft((d) => ({ ...d, concurrency: v }))
+                  }
+                />
+                <Input
+                  type="number"
+                  size="sm"
+                  label="优先级 (priority)"
+                  placeholder="留空 = 不修改"
+                  value={bulkDraft.priority}
+                  onValueChange={(v) =>
+                    setBulkDraft((d) => ({ ...d, priority: v }))
+                  }
+                />
+                <Input
+                  type="number"
+                  size="sm"
+                  step="0.01"
+                  label="倍率 (rate_multiplier)"
+                  placeholder="留空 = 不修改; 例如 1, 1.5"
+                  value={bulkDraft.rateMultiplier}
+                  onValueChange={(v) =>
+                    setBulkDraft((d) => ({ ...d, rateMultiplier: v }))
+                  }
+                />
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="light" onPress={close}>
+                  取消
+                </Button>
+                <Button
+                  color="primary"
+                  isLoading={bulkBusy}
+                  onPress={() => {
+                    const patch: Record<string, unknown> = {};
+                    if (bulkDraft.status) patch.status = bulkDraft.status;
+                    if (bulkDraft.schedulable) {
+                      patch.schedulable = bulkDraft.schedulable === "true";
+                    }
+                    if (bulkDraft.concurrency.trim() !== "") {
+                      const n = Math.floor(Number(bulkDraft.concurrency));
+                      if (!Number.isFinite(n) || n < 0) {
+                        addToast({ title: "并发数非法", color: "warning" });
+                        return;
+                      }
+                      patch.concurrency = n;
+                    }
+                    if (bulkDraft.priority.trim() !== "") {
+                      const n = Math.floor(Number(bulkDraft.priority));
+                      if (!Number.isFinite(n)) {
+                        addToast({ title: "优先级非法", color: "warning" });
+                        return;
+                      }
+                      patch.priority = n;
+                    }
+                    if (bulkDraft.rateMultiplier.trim() !== "") {
+                      const n = Number(bulkDraft.rateMultiplier);
+                      if (!Number.isFinite(n) || n < 0) {
+                        addToast({ title: "倍率非法", color: "warning" });
+                        return;
+                      }
+                      patch.rateMultiplier = n;
+                    }
+                    if (Object.keys(patch).length === 0) {
+                      addToast({
+                        title: "没有要修改的字段",
+                        color: "warning",
+                      });
+                      return;
+                    }
+                    applyBulk(patch);
+                  }}
+                >
+                  应用到 {selectedIds.size} 个账号
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
       <Modal
         isOpen={autoTestModalOpen}
         onOpenChange={setAutoTestModalOpen}
