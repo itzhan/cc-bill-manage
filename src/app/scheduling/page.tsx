@@ -7,6 +7,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Checkbox,
   Chip,
   Input,
   Modal,
@@ -14,6 +15,9 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Select,
   SelectItem,
   Spinner,
@@ -2405,6 +2409,13 @@ function GroupCard({
       | { kind: "fail"; latencyMs: number; output: string }
     >
   >({});
+  // 批量编辑: 选中的账号 id 集合 + 弹窗状态 + busy 标志。每个 GroupCard
+  // 独立维护(不跨卡共享, 避免互相干扰)。通过 sub2api bulk-update 一次性
+  // 改 N 个, 不再 N 次 PUT。
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkConcOpen, setBulkConcOpen] = useState(false);
+  const [bulkConcDraft, setBulkConcDraft] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
   // SLOW_MS仍用于"快/慢"分类显示（chip 颜色）。批量调整并发已下线，改为
   // 用户手动看测试结果再决定。
   const SLOW_MS = 10_000;
@@ -2591,6 +2602,55 @@ function GroupCard({
     }
   }
 
+  // ── 批量编辑 ──
+  // 用 sub2api 的 /api/v1/admin/accounts/bulk-update — 一次 HTTP 改多个,
+  // 避免 N 次 PUT 把页面/upstream 卡住。失败 toast, 成功 onChanged() 刷新。
+  async function applyBulk(patch: Record<string, unknown>) {
+    if (siteId == null || selectedIds.size === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const r = await fetch(
+        `/api/scheduling/${siteId}/channels/bulk-update`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accountIds: Array.from(selectedIds),
+            patch,
+          }),
+        },
+      );
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        addToast({
+          title: "批量更新失败",
+          description: String(j.error || r.status),
+          color: "danger",
+        });
+        return;
+      }
+      addToast({
+        title: `已批量更新 ${selectedIds.size} 个账号`,
+        color: "success",
+      });
+      setSelectedIds(new Set());
+      setBulkConcOpen(false);
+      setBulkConcDraft("");
+      await onChanged();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  function toggleSelect(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   // 自动测试：每 intervalSec 秒触发一次 testGroup。in-flight 守卫=groupTesting，
   // 标签页切走时停。testGroup 用 ref 取最新闭包，避免 interval 锁定旧 sortedAccounts。
   const testGroupRef = useRef<() => Promise<void>>(testGroup);
@@ -2767,6 +2827,151 @@ function GroupCard({
         </div>
       </CardHeader>
       <CardBody className="pt-0 gap-1">
+        {/* 批量编辑工具条 — 选中 ≥1 个或可见 ≥2 个时显示, 用 sub2api
+            bulk-update 一次 HTTP 改完, 不再 N 次 PUT。 */}
+        {sortedAccounts.length > 0 && (
+          <div className="flex items-center gap-1.5 px-1 py-1 mb-1 flex-wrap text-[11px]">
+            <Checkbox
+              size="sm"
+              isSelected={
+                selectedIds.size > 0 &&
+                sortedAccounts.every((a) => selectedIds.has(a.id))
+              }
+              isIndeterminate={
+                selectedIds.size > 0 &&
+                !sortedAccounts.every((a) => selectedIds.has(a.id))
+              }
+              onValueChange={(checked) => {
+                if (checked) {
+                  setSelectedIds(new Set(sortedAccounts.map((a) => a.id)));
+                } else {
+                  setSelectedIds(new Set());
+                }
+              }}
+            >
+              <span className="text-[11px]">
+                {selectedIds.size > 0
+                  ? `已选 ${selectedIds.size}`
+                  : "全选"}
+              </span>
+            </Checkbox>
+            {selectedIds.size > 0 && (
+              <>
+                <span className="text-default-300">|</span>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  color="success"
+                  className="h-6 px-2 min-w-0 text-[11px]"
+                  isDisabled={bulkBusy}
+                  onPress={() => applyBulk({ status: "active" })}
+                >
+                  启用
+                </Button>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  color="warning"
+                  className="h-6 px-2 min-w-0 text-[11px]"
+                  isDisabled={bulkBusy}
+                  onPress={() => applyBulk({ status: "inactive" })}
+                >
+                  禁用
+                </Button>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  className="h-6 px-2 min-w-0 text-[11px]"
+                  isDisabled={bulkBusy}
+                  onPress={() => applyBulk({ schedulable: true })}
+                >
+                  纳入调度
+                </Button>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  className="h-6 px-2 min-w-0 text-[11px]"
+                  isDisabled={bulkBusy}
+                  onPress={() => applyBulk({ schedulable: false })}
+                >
+                  移出调度
+                </Button>
+                <Popover
+                  isOpen={bulkConcOpen}
+                  onOpenChange={setBulkConcOpen}
+                  placement="bottom-start"
+                >
+                  <PopoverTrigger>
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      color="primary"
+                      className="h-6 px-2 min-w-0 text-[11px]"
+                      isDisabled={bulkBusy}
+                    >
+                      修改并发
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="p-3">
+                    <div className="flex flex-col gap-2 w-56">
+                      <div className="text-[11px] text-default-500">
+                        将选中的 {selectedIds.size} 个账号的 concurrency 设为:
+                      </div>
+                      <Input
+                        type="number"
+                        size="sm"
+                        min={0}
+                        autoFocus
+                        placeholder="例如 5"
+                        value={bulkConcDraft}
+                        onValueChange={setBulkConcDraft}
+                        description="0 表示不限并发"
+                      />
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          onPress={() => setBulkConcOpen(false)}
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          size="sm"
+                          color="primary"
+                          isLoading={bulkBusy}
+                          onPress={() => {
+                            const n = Math.max(
+                              0,
+                              Math.floor(Number(bulkConcDraft)),
+                            );
+                            if (!Number.isFinite(n)) {
+                              addToast({
+                                title: "并发数非法",
+                                color: "warning",
+                              });
+                              return;
+                            }
+                            applyBulk({ concurrency: n });
+                          }}
+                        >
+                          应用
+                        </Button>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <Button
+                  size="sm"
+                  variant="light"
+                  className="h-6 px-2 min-w-0 text-[11px]"
+                  onPress={() => setSelectedIds(new Set())}
+                >
+                  取消
+                </Button>
+              </>
+            )}
+          </div>
+        )}
         {sortedAccounts.map((a) => {
           const inflight = concurrency.account?.[String(a.id)]?.current_in_use ?? 0;
           const lim = a.concurrency ?? 0;
@@ -2774,12 +2979,23 @@ function GroupCard({
           const off = a.status !== "active";
           const bind = bindings[String(a.id)] ?? [];
           const errored = isErrored(a);
+          const selected = selectedIds.has(a.id);
           return (
             <div
               key={a.id}
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-content2/40 text-xs"
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs ${
+                selected
+                  ? "bg-primary-50 dark:bg-primary-950/40 ring-1 ring-primary-300"
+                  : "bg-content2/40"
+              }`}
               title={errored && a.error_message ? a.error_message : undefined}
             >
+              <Checkbox
+                size="sm"
+                isSelected={selected}
+                onValueChange={() => toggleSelect(a.id)}
+                classNames={{ base: "shrink-0", wrapper: "before:rounded" }}
+              />
               <span className="shrink-0 w-3 text-center">
                 {errored ? (
                   <span className="text-danger">⚠</span>
