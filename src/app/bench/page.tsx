@@ -173,6 +173,30 @@ export default function BenchPage() {
     load();
   }
 
+  // 强行终止该 key 当前运行中的 BenchRun。后端会立刻把 status 翻成
+  // "canceled" + 设 cancelRequested=true, 引擎下一轮 between-task 检查会
+  // 停手, in-flight 的 LLM 调用自然走完不再启新任务。UI 状态会立刻更新,
+  // 然后用户就能点"再测一次"开新 run。
+  async function cancelRun(k: ChannelKey) {
+    const lr = k.latestRun;
+    if (!lr) return;
+    if (!confirm(`终止当前测试「${k.name}」?in-flight 任务自然结束。`)) return;
+    const r = await fetch(`/api/bench/runs/${lr.id}/cancel`, {
+      method: "POST",
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      addToast({
+        title: "终止失败",
+        description: String(j.error || r.status),
+        color: "danger",
+      });
+      return;
+    }
+    addToast({ title: "已终止", color: "success" });
+    load();
+  }
+
   return (
     <Shell>
       <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
@@ -317,6 +341,7 @@ export default function BenchPage() {
                               setInfoKeyId(k.id);
                               infoDlg.onOpen();
                             }}
+                            onCancel={() => cancelRun(k)}
                           />
                         ))}
                       </div>
@@ -404,6 +429,7 @@ function KeyRow({
   onDelete,
   onOpen,
   onInfo,
+  onCancel,
 }: {
   channelId: number;
   data: ChannelKey;
@@ -412,6 +438,7 @@ function KeyRow({
   onDelete: () => void;
   onOpen: () => void;
   onInfo: () => void;
+  onCancel: () => void;
 }) {
   const lr = data.latestRun;
   const running =
@@ -481,6 +508,17 @@ function KeyRow({
         >
           {running ? "测试中" : lr ? "再测一次" : "测试"}
         </Button>
+        {running && (
+          <Button
+            size="sm"
+            color="warning"
+            variant="flat"
+            onPress={onCancel}
+            title="强行终止: 立即把状态改成「取消」, in-flight 的任务自然结束不再 queue 新任务"
+          >
+            终止
+          </Button>
+        )}
         {lr && (
           <Button
             as={Link}
