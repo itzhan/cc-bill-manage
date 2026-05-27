@@ -203,6 +203,24 @@ export default function UpstreamPage() {
   >([]);
   const [loadingSiteGroups, setLoadingSiteGroups] = useState(false);
 
+  // === 批量"加到本站": keys 弹窗内多选 + 模板复用 ===
+  // selectedKeyIds 跟当前打开的渠道 keys 弹窗强相关, 关弹窗 / 切渠道清空
+  const [selectedKeyIds, setSelectedKeyIds] = useState<Set<number>>(new Set());
+  const [bulkPushOpen, setBulkPushOpen] = useState(false);
+  const [bulkPushBusy, setBulkPushBusy] = useState(false);
+  const [bulkPushForm, setBulkPushForm] = useState({
+    siteAccountId: "",
+    templateRemoteAccountId: "",
+    namePrefix: "",
+    nameSuffix: "",
+  });
+  // 模板候选: 选定 site 后从 /api/site/[id]/accounts 拉 SiteBoundAccount 列表
+  // (这些就是 sub2api 上的 admin account)。
+  const [templateAccounts, setTemplateAccounts] = useState<
+    Array<{ id: number; remoteAccountId: number; name: string }>
+  >([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+
   async function load() {
     setLoading(true);
     try {
@@ -331,6 +349,145 @@ export default function UpstreamPage() {
       });
     }
   }
+  // === 批量 push 相关 helpers ===
+  function toggleKeySelect(id: number) {
+    setSelectedKeyIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function openBulkPushDialog() {
+    if (selectedKeyIds.size === 0) {
+      addToast({ title: "请先勾选 key", color: "warning" });
+      return;
+    }
+    // 复用 pushSite 的 site 列表加载逻辑(同一份数据)。
+    try {
+      const r = await fetch("/api/site", { cache: "no-store" });
+      const j = await r.json();
+      setSiteAccounts(
+        (j.items ?? []).map(
+          (s: { id: number; name: string }) => ({ id: s.id, name: s.name }),
+        ),
+      );
+    } catch (e) {
+      addToast({
+        title: "加载站点列表失败",
+        description: String(e),
+        color: "danger",
+      });
+      return;
+    }
+    setTemplateAccounts([]);
+    setBulkPushForm({
+      siteAccountId: "",
+      templateRemoteAccountId: "",
+      namePrefix: "",
+      nameSuffix: "",
+    });
+    setBulkPushOpen(true);
+  }
+
+  async function loadTemplateAccounts(siteId: number) {
+    if (!siteId) return;
+    setLoadingTemplates(true);
+    try {
+      const r = await fetch(`/api/site/${siteId}/accounts`, {
+        cache: "no-store",
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `${r.status}`);
+      const items = (j.items ?? []) as Array<{
+        id: number;
+        remoteAccountId: number;
+        name: string;
+      }>;
+      // 按名字排序方便用户找
+      items.sort((a, b) => a.name.localeCompare(b.name));
+      setTemplateAccounts(items);
+    } catch (e) {
+      addToast({
+        title: "加载模板账号失败",
+        description: String(e),
+        color: "danger",
+      });
+      setTemplateAccounts([]);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  }
+
+  async function submitBulkPush() {
+    const siteAccountId = Number(bulkPushForm.siteAccountId);
+    const templateRemoteAccountId = Number(
+      bulkPushForm.templateRemoteAccountId,
+    );
+    if (!siteAccountId) {
+      addToast({ title: "请选择目标站点", color: "warning" });
+      return;
+    }
+    if (!templateRemoteAccountId) {
+      addToast({ title: "请选择模板账号", color: "warning" });
+      return;
+    }
+    if (selectedKeyIds.size === 0) {
+      addToast({ title: "未选中 key", color: "warning" });
+      return;
+    }
+    setBulkPushBusy(true);
+    try {
+      const res = await fetch("/api/upstream/keys/bulk-push-to-site", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          upstreamKeyIds: Array.from(selectedKeyIds),
+          siteAccountId,
+          templateRemoteAccountId,
+          namePrefix: bulkPushForm.namePrefix,
+          nameSuffix: bulkPushForm.nameSuffix,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        addToast({
+          title: "批量推送失败",
+          description: String(j.error || res.status),
+          color: "danger",
+        });
+        return;
+      }
+      const failedRows = (j.results ?? []).filter(
+        (r: { ok: boolean }) => !r.ok,
+      );
+      if (failedRows.length > 0) {
+        addToast({
+          title: `成功 ${j.success} / 共 ${j.total}, 失败 ${j.failed}`,
+          description: failedRows
+            .slice(0, 3)
+            .map(
+              (r: { keyName: string; error?: string }) =>
+                `${r.keyName}: ${r.error}`,
+            )
+            .join("; "),
+          color: "warning",
+        });
+      } else {
+        addToast({
+          title: `已批量推送 ${j.success} 个 key`,
+          color: "success",
+        });
+      }
+      setSelectedKeyIds(new Set());
+      setBulkPushOpen(false);
+      if (keysModalAccount) await loadKeys(keysModalAccount.id);
+    } finally {
+      setBulkPushBusy(false);
+    }
+  }
+
   async function loadSiteGroups(siteId: number) {
     if (!siteId) return;
     setLoadingSiteGroups(true);
@@ -567,6 +724,7 @@ export default function UpstreamPage() {
 
   function openKeys(a: UpstreamAccount) {
     setKeysModalAccount(a);
+    setSelectedKeyIds(new Set()); // 切换渠道时清空选择, 避免误带入
     keysDlg.onOpen();
     if (!keys[a.id]) loadKeys(a.id);
   }
@@ -1490,8 +1648,59 @@ export default function UpstreamPage() {
                         没有今日有消费的 key。
                       </p>
                     ) : (
+                      <>
+                      {/* 批量推到本站工具条 - 仅在勾了至少 1 个 key 时露出。
+                          选中后弹模板选择窗, 新建账号复用模板配置, 一次性创建+建 binding。 */}
+                      <div className="flex items-center gap-2 mb-2 flex-wrap text-[11px]">
+                        <Checkbox
+                          size="sm"
+                          isSelected={
+                            selectedKeyIds.size > 0 &&
+                            filtered.every((k) => selectedKeyIds.has(k.id))
+                          }
+                          isIndeterminate={
+                            selectedKeyIds.size > 0 &&
+                            !filtered.every((k) => selectedKeyIds.has(k.id))
+                          }
+                          onValueChange={(v) => {
+                            if (v) {
+                              setSelectedKeyIds(new Set(filtered.map((k) => k.id)));
+                            } else {
+                              setSelectedKeyIds(new Set());
+                            }
+                          }}
+                        >
+                          <span className="text-[11px]">
+                            {selectedKeyIds.size > 0
+                              ? `已选 ${selectedKeyIds.size}`
+                              : "全选"}
+                          </span>
+                        </Checkbox>
+                        {selectedKeyIds.size > 0 && (
+                          <>
+                            <Button
+                              size="sm"
+                              color="primary"
+                              variant="flat"
+                              className="h-6 px-2 min-w-0 text-[11px]"
+                              onPress={openBulkPushDialog}
+                            >
+                              批量加到本站(用模板配置)
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="light"
+                              className="h-6 px-2 min-w-0 text-[11px]"
+                              onPress={() => setSelectedKeyIds(new Set())}
+                            >
+                              取消选择
+                            </Button>
+                          </>
+                        )}
+                      </div>
                       <Table removeWrapper aria-label="keys">
                         <TableHeader>
+                          <TableColumn>{" "}</TableColumn>
                           <TableColumn>名称</TableColumn>
                           <TableColumn>分组×倍率</TableColumn>
                           <TableColumn>今日</TableColumn>
@@ -1504,6 +1713,13 @@ export default function UpstreamPage() {
                             const rm = k.rechargeMultiplier ?? 1;
                             return (
                             <TableRow key={k.id}>
+                              <TableCell className="w-8">
+                                <Checkbox
+                                  size="sm"
+                                  isSelected={selectedKeyIds.has(k.id)}
+                                  onValueChange={() => toggleKeySelect(k.id)}
+                                />
+                              </TableCell>
                               <TableCell>
                                 <div className="flex items-center gap-2">
                                   <div className="flex flex-col leading-tight min-w-0">
@@ -1631,6 +1847,7 @@ export default function UpstreamPage() {
                           })}
                         </TableBody>
                       </Table>
+                      </>
                     )}
                   </>
                 );
@@ -1735,6 +1952,119 @@ export default function UpstreamPage() {
               加入
             </Button>
           </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* 批量推到本站(模板复用)弹窗 — 选 site + template, 一次性把
+          多个 key 创建为账号 + 建 binding。配置完全继承模板, 只换
+          base_url + api_key + 账号名。 */}
+      <Modal
+        isOpen={bulkPushOpen}
+        onOpenChange={setBulkPushOpen}
+        size="lg"
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          {(close) => (
+            <>
+              <ModalHeader>
+                <div className="flex flex-col">
+                  <span>批量加到本站(用模板配置)</span>
+                  <span className="text-xs text-default-500 font-normal mt-0.5">
+                    已勾选 {selectedKeyIds.size} 个 key · 将复用模板账号的
+                    platform / 并发 / 优先级 / 倍率 / 分组 / model_mapping
+                  </span>
+                </div>
+              </ModalHeader>
+              <ModalBody className="gap-3">
+                <Select
+                  label="目标站点"
+                  selectedKeys={
+                    bulkPushForm.siteAccountId
+                      ? [bulkPushForm.siteAccountId]
+                      : []
+                  }
+                  onSelectionChange={(keys) => {
+                    const v = String(Array.from(keys)[0] ?? "");
+                    setBulkPushForm((f) => ({
+                      ...f,
+                      siteAccountId: v,
+                      templateRemoteAccountId: "",
+                    }));
+                    if (v) void loadTemplateAccounts(Number(v));
+                    else setTemplateAccounts([]);
+                  }}
+                >
+                  {siteAccounts.map((s) => (
+                    <SelectItem key={String(s.id)}>{s.name}</SelectItem>
+                  ))}
+                </Select>
+                <Select
+                  label={
+                    loadingTemplates
+                      ? "模板账号(加载中…)"
+                      : `模板账号(共 ${templateAccounts.length} 个)`
+                  }
+                  isDisabled={!bulkPushForm.siteAccountId || loadingTemplates}
+                  selectedKeys={
+                    bulkPushForm.templateRemoteAccountId
+                      ? [bulkPushForm.templateRemoteAccountId]
+                      : []
+                  }
+                  onSelectionChange={(keys) => {
+                    const v = String(Array.from(keys)[0] ?? "");
+                    setBulkPushForm((f) => ({
+                      ...f,
+                      templateRemoteAccountId: v,
+                    }));
+                  }}
+                  description="新账号的 platform / 并发 / 优先级 / 倍率 / 分组 / model_mapping 等都会跟此账号一致"
+                >
+                  {templateAccounts.map((t) => (
+                    <SelectItem key={String(t.remoteAccountId)}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </Select>
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    size="sm"
+                    label="账号名前缀(可空)"
+                    placeholder=""
+                    value={bulkPushForm.namePrefix}
+                    onValueChange={(v) =>
+                      setBulkPushForm((f) => ({ ...f, namePrefix: v }))
+                    }
+                  />
+                  <Input
+                    size="sm"
+                    label="账号名后缀(可空)"
+                    placeholder=""
+                    value={bulkPushForm.nameSuffix}
+                    onValueChange={(v) =>
+                      setBulkPushForm((f) => ({ ...f, nameSuffix: v }))
+                    }
+                  />
+                </div>
+                <p className="text-[11px] text-default-500 leading-relaxed">
+                  新账号名 = 前缀 + 上游 key 名 + 后缀。重名时 sub2api 会报错,
+                  失败的 key 会在结果里列出, 不影响其他成功创建的。
+                </p>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="light" onPress={close}>
+                  取消
+                </Button>
+                <Button
+                  color="primary"
+                  isLoading={bulkPushBusy}
+                  onPress={submitBulkPush}
+                >
+                  推送 {selectedKeyIds.size} 个 key
+                </Button>
+              </ModalFooter>
+            </>
+          )}
         </ModalContent>
       </Modal>
 
