@@ -3130,13 +3130,17 @@ function ImportSkAntModal({
   onOpenChange: (v: boolean) => void;
 }) {
   const [sites, setSites] = useState<Array<{ id: number; name: string }>>([]);
+  const [groups, setGroups] = useState<
+    Array<{ id: number; name: string; rate_multiplier?: number }>
+  >([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
   const [form, setForm] = useState({
     siteAccountId: "",
     namePrefix: "max",
     concurrency: "10",
     windowCostLimit: "0",
     rateMultiplier: "1",
-    groupIds: "",
+    groupIds: [] as number[],
     tokens: "",
   });
   const [busy, setBusy] = useState(false);
@@ -3162,6 +3166,41 @@ function ImportSkAntModal({
       });
   }, [isOpen]);
 
+  // 切换站点时拉该站点的分组列表
+  useEffect(() => {
+    if (!isOpen) return;
+    const sid = Number(form.siteAccountId);
+    if (!sid) {
+      setGroups([]);
+      setForm((f) => ({ ...f, groupIds: [] }));
+      return;
+    }
+    setLoadingGroups(true);
+    fetch(`/api/site/${sid}/groups`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.error) throw new Error(j.error);
+        setGroups(
+          (j.items ?? []) as Array<{
+            id: number;
+            name: string;
+            rate_multiplier?: number;
+          }>,
+        );
+        // 切站点清空已选, 避免把别的站点的 group id 误带过去
+        setForm((f) => ({ ...f, groupIds: [] }));
+      })
+      .catch((e) => {
+        addToast({
+          title: "加载分组失败",
+          description: String(e),
+          color: "danger",
+        });
+        setGroups([]);
+      })
+      .finally(() => setLoadingGroups(false));
+  }, [isOpen, form.siteAccountId]);
+
   async function submit() {
     const siteId = Number(form.siteAccountId);
     if (!siteId) {
@@ -3181,10 +3220,9 @@ function ImportSkAntModal({
     const windowCostLimit = Math.max(0, Number(form.windowCostLimit) || 0);
     const rateMultiplier =
       Math.max(0, Number(form.rateMultiplier) || 0) || 1;
-    const groupIds = form.groupIds
-      .split(/[,，\s]+/)
-      .map((s) => Number(s.trim()))
-      .filter((n) => Number.isFinite(n) && n > 0);
+    const groupIds = form.groupIds.filter(
+      (n) => Number.isFinite(n) && n > 0,
+    );
     const tokens = form.tokens
       .split(/\r?\n/)
       .map((t) => t.trim())
@@ -3291,15 +3329,34 @@ function ImportSkAntModal({
                     setForm((f) => ({ ...f, namePrefix: v }))
                   }
                 />
-                <Input
+                <Select
                   size="sm"
-                  label="分组 IDs (可选)"
-                  placeholder="逗号/空格分隔, 如 1,2,3"
-                  value={form.groupIds}
-                  onValueChange={(v) =>
-                    setForm((f) => ({ ...f, groupIds: v }))
+                  label={
+                    loadingGroups
+                      ? "分组(加载中…)"
+                      : form.siteAccountId
+                        ? `分组 (共 ${groups.length} 个, 可多选)`
+                        : "分组 (先选站点)"
                   }
-                />
+                  selectionMode="multiple"
+                  isDisabled={!form.siteAccountId || loadingGroups}
+                  selectedKeys={form.groupIds.map((n) => String(n))}
+                  onSelectionChange={(keys) => {
+                    const arr = Array.from(keys as Set<string>)
+                      .map((s) => Number(s))
+                      .filter((n) => Number.isFinite(n) && n > 0);
+                    setForm((f) => ({ ...f, groupIds: arr }));
+                  }}
+                >
+                  {groups.map((g) => (
+                    <SelectItem key={String(g.id)}>
+                      {g.name}
+                      {g.rate_multiplier != null
+                        ? ` ×${g.rate_multiplier}`
+                        : ""}
+                    </SelectItem>
+                  ))}
+                </Select>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <Input
