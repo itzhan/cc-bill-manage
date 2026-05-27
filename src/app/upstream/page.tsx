@@ -141,6 +141,7 @@ export default function UpstreamPage() {
   const [showZero, setShowZero] = useState(false);
   const [revealed, setRevealed] = useState<Set<number>>(new Set());
   const [copyingKeyId, setCopyingKeyId] = useState<number | null>(null);
+  const [benchPushingKeyId, setBenchPushingKeyId] = useState<number | null>(null);
 
   const newDlg = useDisclosure();
   const editDlg = useDisclosure();
@@ -727,6 +728,40 @@ export default function UpstreamPage() {
       });
     } finally {
       setCopyingKeyId(null);
+    }
+  }
+
+  // 一键把 UpstreamKey 推到 /bench(智商测试) 的 BenchChannel + Key 表。
+  // 后端按 baseUrl 复用 channel, 按 (channelId, apiKey) 去重 key, 已存在不报错。
+  async function pushKeyToBench(keyId: number, name: string) {
+    setBenchPushingKeyId(keyId);
+    try {
+      const res = await fetch(`/api/bench/import-upstream-key`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ upstreamKeyId: keyId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        addToast({
+          title: "添加到智测失败",
+          description: String(j.error || res.status),
+          color: "danger",
+        });
+        return;
+      }
+      const parts: string[] = [];
+      if (j.channelCreated) parts.push("已新建渠道");
+      else parts.push("复用已有渠道");
+      if (j.keyCreated) parts.push("已新建 key");
+      else parts.push("key 已存在");
+      addToast({
+        title: `${name} 已加入智测`,
+        description: parts.join(" · "),
+        color: "success",
+      });
+    } finally {
+      setBenchPushingKeyId(null);
     }
   }
 
@@ -1577,6 +1612,17 @@ export default function UpstreamPage() {
                                     title="一键添加到本站(创建账号+建绑定)"
                                   >
                                     → 本站
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    color="secondary"
+                                    variant="flat"
+                                    className="h-7 min-w-0 px-2 text-[10px]"
+                                    onPress={() => pushKeyToBench(k.id, k.name)}
+                                    isLoading={benchPushingKeyId === k.id}
+                                    title="一键加入智商测试(自动复用 baseUrl, 同 key 不重复)"
+                                  >
+                                    → 智测
                                   </Button>
                                 </div>
                               </TableCell>
