@@ -147,6 +147,7 @@ export default function UpstreamPage() {
   const editDlg = useDisclosure();
   const keysDlg = useDisclosure();
   const balanceAlertDlg = useDisclosure();
+  const importSkAntDlg = useDisclosure();
   const [editing, setEditing] = useState<UpstreamAccount | null>(null);
   const [editTab, setEditTab] = useState<string>("creds");
   const [form, setForm] = useState({
@@ -1031,6 +1032,13 @@ export default function UpstreamPage() {
           </Button>
           <Button
             variant="flat"
+            startContent={<KeyRound size={14} />}
+            onPress={() => importSkAntDlg.onOpen()}
+          >
+            批量录入 sk-ant
+          </Button>
+          <Button
+            variant="flat"
             startContent={<RefreshCw size={14} />}
             onPress={refreshAndSyncAll}
             isLoading={busyAll}
@@ -1046,6 +1054,10 @@ export default function UpstreamPage() {
       <BalanceAlertModal
         isOpen={balanceAlertDlg.isOpen}
         onOpenChange={balanceAlertDlg.onOpenChange}
+      />
+      <ImportSkAntModal
+        isOpen={importSkAntDlg.isOpen}
+        onOpenChange={importSkAntDlg.onOpenChange}
       />
 
       <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -3088,6 +3100,324 @@ function BalanceAlertModal({
               </Button>
               <Button color="primary" onPress={save} isLoading={saving}>
                 保存全部
+              </Button>
+            </ModalFooter>
+          </>
+        )}
+      </ModalContent>
+    </Modal>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// 批量录入 sk-ant token modal
+// 表单 → 调 /api/site/[id]/import-sk-ant → 把成功/失败结果列在下面给用户售后参考
+// ──────────────────────────────────────────────────────────────────
+
+interface ImportSkAntResultRow {
+  tokenMasked: string;
+  name: string;
+  ok: boolean;
+  error?: string;
+  remoteAccountId?: number;
+}
+
+function ImportSkAntModal({
+  isOpen,
+  onOpenChange,
+}: {
+  isOpen: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [sites, setSites] = useState<Array<{ id: number; name: string }>>([]);
+  const [form, setForm] = useState({
+    siteAccountId: "",
+    namePrefix: "max",
+    concurrency: "10",
+    windowCostLimit: "0",
+    rateMultiplier: "1",
+    groupIds: "",
+    tokens: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [results, setResults] = useState<ImportSkAntResultRow[] | null>(null);
+  const [startIdx, setStartIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setResults(null);
+    setStartIdx(null);
+    fetch("/api/site", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) =>
+        setSites(
+          (j.items ?? []).map((s: { id: number; name: string }) => ({
+            id: s.id,
+            name: s.name,
+          })),
+        ),
+      )
+      .catch(() => {
+        addToast({ title: "加载站点失败", color: "danger" });
+      });
+  }, [isOpen]);
+
+  async function submit() {
+    const siteId = Number(form.siteAccountId);
+    if (!siteId) {
+      addToast({ title: "请选择目标站点", color: "warning" });
+      return;
+    }
+    const namePrefix = form.namePrefix.trim();
+    if (!namePrefix) {
+      addToast({ title: "请填名称前缀", color: "warning" });
+      return;
+    }
+    const concurrency = Math.max(1, Math.floor(Number(form.concurrency) || 0));
+    if (!concurrency) {
+      addToast({ title: "并发数非法", color: "warning" });
+      return;
+    }
+    const windowCostLimit = Math.max(0, Number(form.windowCostLimit) || 0);
+    const rateMultiplier =
+      Math.max(0, Number(form.rateMultiplier) || 0) || 1;
+    const groupIds = form.groupIds
+      .split(/[,，\s]+/)
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const tokens = form.tokens
+      .split(/\r?\n/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (tokens.length === 0) {
+      addToast({ title: "请粘贴至少 1 个 token", color: "warning" });
+      return;
+    }
+    setBusy(true);
+    setResults(null);
+    try {
+      const r = await fetch(`/api/site/${siteId}/import-sk-ant`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tokens,
+          namePrefix,
+          concurrency,
+          windowCostLimit,
+          rateMultiplier,
+          groupIds,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        addToast({
+          title: "提交失败",
+          description: String(j.error || r.status),
+          color: "danger",
+        });
+        return;
+      }
+      setResults(j.results || []);
+      setStartIdx(j.startIdx ?? null);
+      addToast({
+        title: `录入完成: 成功 ${j.success} / 共 ${j.total}, 失败 ${j.failed}`,
+        color: j.failed > 0 ? "warning" : "success",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function copyFailedTokens() {
+    if (!results) return;
+    const failed = results
+      .filter((r) => !r.ok)
+      .map((r) => `${r.name}\t${r.tokenMasked}\t${r.error ?? ""}`)
+      .join("\n");
+    if (!failed) {
+      addToast({ title: "没有失败行", color: "default" });
+      return;
+    }
+    void copyToClipboard(failed).then((ok) =>
+      addToast({
+        title: ok ? "失败列表已复制" : "复制失败",
+        color: ok ? "success" : "danger",
+      }),
+    );
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+      size="3xl"
+      scrollBehavior="inside"
+    >
+      <ModalContent>
+        {(close) => (
+          <>
+            <ModalHeader>
+              <div className="flex flex-col">
+                <span>批量录入 sk-ant Token</span>
+                <span className="text-xs text-default-500 font-normal mt-0.5">
+                  type=setup-token · platform=anthropic · 名字按前缀自增,
+                  从已有最大值 +1 开始
+                </span>
+              </div>
+            </ModalHeader>
+            <ModalBody className="gap-3">
+              <Select
+                label="目标站点"
+                selectedKeys={
+                  form.siteAccountId ? [form.siteAccountId] : []
+                }
+                onSelectionChange={(keys) => {
+                  const v = String(Array.from(keys)[0] ?? "");
+                  setForm((f) => ({ ...f, siteAccountId: v }));
+                }}
+              >
+                {sites.map((s) => (
+                  <SelectItem key={String(s.id)}>{s.name}</SelectItem>
+                ))}
+              </Select>
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  size="sm"
+                  label="名称前缀"
+                  placeholder="例如 max"
+                  description="新账号名 = 前缀-N (N 自动续上数据库里的最大值)"
+                  value={form.namePrefix}
+                  onValueChange={(v) =>
+                    setForm((f) => ({ ...f, namePrefix: v }))
+                  }
+                />
+                <Input
+                  size="sm"
+                  label="分组 IDs (可选)"
+                  placeholder="逗号/空格分隔, 如 1,2,3"
+                  value={form.groupIds}
+                  onValueChange={(v) =>
+                    setForm((f) => ({ ...f, groupIds: v }))
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <Input
+                  type="number"
+                  size="sm"
+                  label="并发数"
+                  min={1}
+                  value={form.concurrency}
+                  onValueChange={(v) =>
+                    setForm((f) => ({ ...f, concurrency: v }))
+                  }
+                />
+                <Input
+                  type="number"
+                  size="sm"
+                  label="5h 金额上限 USD"
+                  description="0 = 不启用"
+                  min={0}
+                  step="0.5"
+                  value={form.windowCostLimit}
+                  onValueChange={(v) =>
+                    setForm((f) => ({ ...f, windowCostLimit: v }))
+                  }
+                />
+                <Input
+                  type="number"
+                  size="sm"
+                  label="倍率"
+                  min={0}
+                  step="0.01"
+                  value={form.rateMultiplier}
+                  onValueChange={(v) =>
+                    setForm((f) => ({ ...f, rateMultiplier: v }))
+                  }
+                />
+              </div>
+              <Textarea
+                label="sk-ant Token 列表"
+                description="一行一个; 自动忽略空行 + 前后空格 + 不以 sk-ant- 开头的会标记失败"
+                minRows={6}
+                value={form.tokens}
+                onValueChange={(v) =>
+                  setForm((f) => ({ ...f, tokens: v }))
+                }
+                placeholder={"sk-ant-...\nsk-ant-...\nsk-ant-..."}
+              />
+
+              {results && (
+                <div className="border border-divider/60 rounded-lg p-2">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="text-xs">
+                      <span className="text-success">
+                        成功 {results.filter((r) => r.ok).length}
+                      </span>
+                      <span className="text-default-400 mx-2">·</span>
+                      <span className="text-danger">
+                        失败 {results.filter((r) => !r.ok).length}
+                      </span>
+                      {startIdx != null && (
+                        <span className="text-default-400 ml-2">
+                          (起始编号 {startIdx})
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      className="h-7 px-2 text-[11px]"
+                      onPress={copyFailedTokens}
+                    >
+                      复制失败行
+                    </Button>
+                  </div>
+                  <Table removeWrapper aria-label="results">
+                    <TableHeader>
+                      <TableColumn>状态</TableColumn>
+                      <TableColumn>账号名</TableColumn>
+                      <TableColumn>token</TableColumn>
+                      <TableColumn>错误</TableColumn>
+                    </TableHeader>
+                    <TableBody>
+                      {results.map((r, i) => (
+                        <TableRow key={i}>
+                          <TableCell>
+                            <Chip
+                              size="sm"
+                              variant="flat"
+                              color={r.ok ? "success" : "danger"}
+                            >
+                              {r.ok ? "成功" : "失败"}
+                            </Chip>
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-mono text-xs">{r.name}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-mono text-xs text-default-500">
+                              {r.tokenMasked}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-xs text-danger break-all">
+                              {r.error ?? ""}
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={close}>
+                关闭
+              </Button>
+              <Button color="primary" isLoading={busy} onPress={submit}>
+                提交录入
               </Button>
             </ModalFooter>
           </>
