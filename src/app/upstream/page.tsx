@@ -1999,33 +1999,35 @@ export default function UpstreamPage() {
                     <SelectItem key={String(s.id)}>{s.name}</SelectItem>
                   ))}
                 </Select>
-                <Select
+                <Autocomplete
                   label={
                     loadingTemplates
                       ? "模板账号(加载中…)"
                       : `模板账号(共 ${templateAccounts.length} 个)`
                   }
                   isDisabled={!bulkPushForm.siteAccountId || loadingTemplates}
-                  selectedKeys={
-                    bulkPushForm.templateRemoteAccountId
-                      ? [bulkPushForm.templateRemoteAccountId]
-                      : []
+                  placeholder="输入名字搜索…"
+                  defaultItems={templateAccounts.map((t) => ({
+                    key: String(t.remoteAccountId),
+                    label: t.name,
+                  }))}
+                  selectedKey={
+                    bulkPushForm.templateRemoteAccountId || null
                   }
-                  onSelectionChange={(keys) => {
-                    const v = String(Array.from(keys)[0] ?? "");
+                  onSelectionChange={(k) => {
                     setBulkPushForm((f) => ({
                       ...f,
-                      templateRemoteAccountId: v,
+                      templateRemoteAccountId: k != null ? String(k) : "",
                     }));
                   }}
                   description="新账号的 platform / 并发 / 优先级 / 倍率 / 分组 / model_mapping 等都会跟此账号一致"
                 >
-                  {templateAccounts.map((t) => (
-                    <SelectItem key={String(t.remoteAccountId)}>
-                      {t.name}
-                    </SelectItem>
-                  ))}
-                </Select>
+                  {(item) => (
+                    <AutocompleteItem key={item.key}>
+                      {item.label}
+                    </AutocompleteItem>
+                  )}
+                </Autocomplete>
                 <div className="grid grid-cols-2 gap-2">
                   <Input
                     size="sm"
