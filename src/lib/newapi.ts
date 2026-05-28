@@ -37,7 +37,12 @@ export interface NewApiPersistHook {
   ) => Promise<void>;
 }
 
-const QUOTA_PER_USD = 500_000;
+// new-api 的 quota → USD 换算因子: 上游可以在 settings 里改 (common.QuotaPerUnit
+// 不是常量, 是 operation_setting), 不同部署可能差 10 倍 (500_000 vs 50_000)。
+// 写死 500_000 → 计费会差 10 倍 (例: 暖冬的实例就是这种情况)。改成开启
+// 每次 listKeys / getMe 前从 /api/status?quota_per_unit 拉一次, 缓存到实例上。
+// 这是公开接口不要 auth, 一次 client 实例只查一次。
+const DEFAULT_QUOTA_PER_USD = 500_000;
 
 interface Envelope<T> {
   success: boolean;
@@ -90,6 +95,14 @@ interface NewApiLogRow {
 export class NewApiClient {
   private base: string;
   private tokensCache: NewApiTokenRow[] | null = null;
+  // 用户自身分组(/api/user/self.group)。new-api 计费在 token.group==""
+  // 时实际用 userGroup 算费率(middleware/auth.go:383-398); 我们的费率换算
+  // 必须用这个 fallback 才能跟上游真实扣费一致。getMe / listKeys 调用时
+  // 自动更新这个缓存。
+  private userGroup: string | null = null;
+  // quota → USD 换算因子。从上游 /api/status 拿, 上游可改。第一次用之前
+  // 现拉, 之后整个 client 实例复用。失败回退默认 500_000。
+  private quotaPerUsd: number | null = null;
 
   constructor(
     private readonly creds: NewApiCredsState,
@@ -200,20 +213,67 @@ export class NewApiClient {
       role: number;
       // newapi convention: `quota` on /user/self is the **current remaining**
       // (it decreases as the user spends), NOT lifetime allocation. So
-      // balance = quota / QUOTA_PER_USD directly.
+      // balance = quota / quotaPerUsd directly.
       // `used_quota` is lifetime consumption — useful for dashboards but
       // unrelated to the remaining-balance figure.
       quota: number;
       used_quota: number;
       group?: string;
     }>("GET", `/api/user/self`);
+    // 缓存用户分组, 给 listKeys 用作 token.group==="" 时的费率 fallback。
+    if (typeof data.group === "string" && data.group) {
+      this.userGroup = data.group;
+    }
+    const quotaPerUsd = await this.getQuotaPerUsd();
     return {
       id: data.id,
       email: data.email ?? this.creds.email,
       username: data.username,
-      balance: Math.max(0, data.quota ?? 0) / QUOTA_PER_USD,
+      balance: Math.max(0, data.quota ?? 0) / quotaPerUsd,
       role: data.role >= 10 ? "admin" : "user",
     };
+  }
+
+  // 从 new-api /api/status 拿 quota_per_unit (这是公开接口, 不要 auth)。
+  // 500_000 是默认值, 但很多部署改成 50_000, 写死会让费用差 10 倍。
+  private async getQuotaPerUsd(): Promise<number> {
+    if (this.quotaPerUsd != null) return this.quotaPerUsd;
+    try {
+      const res = await fetch(`${this.base}/api/status`, {
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) {
+        const j = (await res.json()) as {
+          data?: { quota_per_unit?: number };
+        };
+        const v = Number(j?.data?.quota_per_unit);
+        if (Number.isFinite(v) && v > 0) {
+          this.quotaPerUsd = v;
+          return v;
+        }
+      }
+    } catch (e) {
+      console.warn(
+        `[newapi] /api/status quota_per_unit fetch failed, falling back to ${DEFAULT_QUOTA_PER_USD}:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+    this.quotaPerUsd = DEFAULT_QUOTA_PER_USD;
+    return this.quotaPerUsd;
+  }
+
+  // 用户自己的 default 分组(/api/user/self.group)。listKeys 在 token.group
+  // 为空时用它来标注 group 名 — 因为 new-api 计费就是用这个 group 的费率,
+  // 我们的 userRates 查询必须用同样的 name 才对得上号。
+  private async getUserGroup(): Promise<string> {
+    if (this.userGroup) return this.userGroup;
+    // 触发一次 getMe 刷新缓存(代价低, 顺便也确认 session 还活)。
+    try {
+      await this.getMe();
+    } catch {
+      // ignore — fall back to "default" below
+    }
+    return this.userGroup || "default";
   }
 
   async listKeys(): Promise<KeyItem[]> {
@@ -231,6 +291,11 @@ export class NewApiClient {
     // 调 POST /api/token/batch/keys (限 100 id/批)。否则我们存到 DB 的
     // apiKey 永远是 null, 后续"加入本站"等需要 raw key 的功能会失败。
     const fullKeysById = await this.fetchFullKeys(tokens.map((t) => t.id));
+    // 用户的 default 分组 — token.group 为空时计费实际用这个 (middleware/
+    // auth.go:383-398), 我们的 groupName 也必须落到同一个 key 上, 否则
+    // userRates 查表对不上号, effectiveRateMultiplier 会错算成 1, 1× 基价
+    // 就会算成 actual cost (而不是 actual / 真实费率)。
+    const userGroup = await this.getUserGroup();
     return tokens.map((t) => ({
       id: t.id,
       user_id: t.user_id,
@@ -241,7 +306,10 @@ export class NewApiClient {
       group_id: 0,
       group: {
         id: 0,
-        name: t.group || "default",
+        // token.group 为空 → 用 user 自身分组; token.group 非空且不是 "auto"
+        // → 用 token.group; "auto" 没法预测真实路由, 退回 user 分组兜底
+        name:
+          !t.group || t.group === "auto" ? userGroup : t.group,
         // Filled by refreshUpstreamAccount via getUserGroupRates output.
         // Default to 1 so behavior degrades gracefully if rates missing.
         rate_multiplier: 1,
@@ -323,10 +391,11 @@ export class NewApiClient {
       todayByTokenId.set(tid, (todayByTokenId.get(tid) ?? 0) + q);
     }
 
+    const quotaPerUsd = await this.getQuotaPerUsd();
     const out: Record<string, KeyUsageItem> = {};
     for (const id of ids) {
-      const today = (todayByTokenId.get(id) ?? 0) / QUOTA_PER_USD;
-      const total = (tokensById.get(id)?.used_quota ?? 0) / QUOTA_PER_USD;
+      const today = (todayByTokenId.get(id) ?? 0) / quotaPerUsd;
+      const total = (tokensById.get(id)?.used_quota ?? 0) / quotaPerUsd;
       out[String(id)] = {
         api_key_id: id,
         today_actual_cost: today,
@@ -390,13 +459,16 @@ export class NewApiClient {
     }>("GET", `/api/log/self/stat?${qs.toString()}`);
     const totalQuota = Number(resp?.data?.quota ?? 0);
 
-    const actualCost = totalQuota / QUOTA_PER_USD;
+    const quotaPerUsd = await this.getQuotaPerUsd();
+    const actualCost = totalQuota / quotaPerUsd;
     // Estimate 1× base via current group rate (good enough; historical
-    // rate changes are rare in practice).
+    // rate changes are rare in practice). token.group 为空时跟 listKeys
+    // 一样退回 user 分组(计费实际用的就是这个 — middleware/auth.go:383)。
     let rate = 1;
     try {
       const rates = await this.getUserGroupRates();
-      const r = rates[token.group || ""];
+      const tg = token.group || (await this.getUserGroup());
+      const r = rates[tg];
       if (typeof r === "number" && r > 0) rate = r;
     } catch {
       // ignore — fall back to 1×
