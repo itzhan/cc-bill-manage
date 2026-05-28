@@ -33,6 +33,21 @@ const MANIFEST = [
 // 整张新表(prisma migrate 没接入, 用幂等 CREATE TABLE IF NOT EXISTS)
 const NEW_TABLES = [
   {
+    name: "SiteGroupPreset",
+    sql: `CREATE TABLE IF NOT EXISTS "SiteGroupPreset" (
+      "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+      "siteAccountId" INTEGER NOT NULL,
+      "name" TEXT NOT NULL,
+      "groupIdsJson" TEXT NOT NULL,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY ("siteAccountId") REFERENCES "SiteAccount"("id") ON DELETE CASCADE
+    )`,
+    indexes: [
+      `CREATE INDEX IF NOT EXISTS "SiteGroupPreset_siteAccountId_idx" ON "SiteGroupPreset"("siteAccountId")`,
+    ],
+  },
+  {
     name: "VeridropRun",
     sql: `CREATE TABLE IF NOT EXISTS "VeridropRun" (
       "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

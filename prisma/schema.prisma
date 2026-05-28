@@ -165,9 +165,10 @@ model SiteAccount {
   lastSyncError  String?
   createdAt      DateTime  @default(now())
 
-  accounts SiteBoundAccount[]
-  users    SiteUser[]
-  azPreset AzPreset?
+  accounts     SiteBoundAccount[]
+  users        SiteUser[]
+  azPreset     AzPreset?
+  groupPresets SiteGroupPreset[]
 }
 
 model SiteUser {
@@ -545,6 +546,23 @@ model Project {
   updatedAt   DateTime @updatedAt
 
   @@index([type, status])
+}
+
+// 站点维度的"分组集合"预设。每个 sub2api 站点上有一堆 admin 分组
+// (claude / claude-max / windsurf / kiro / 等), 用户经常需要在创建账号
+// 或批量录入 sk-ant 时反复选同一组分组。这张表把这种常用组合存下来,
+// 选预设一次性回填 group_ids。
+model SiteGroupPreset {
+  id            Int      @id @default(autoincrement())
+  siteAccountId Int
+  name          String // "claude 全套" / "max only" 这种描述
+  groupIdsJson  String // JSON: number[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  siteAccount SiteAccount @relation(fields: [siteAccountId], references: [id], onDelete: Cascade)
+
+  @@index([siteAccountId])
 }
 
 // veridrop (开源 AI relay 真伪检测) 单次跑的结果。跟 BenchRun 平级,

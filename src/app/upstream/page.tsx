@@ -148,6 +148,7 @@ export default function UpstreamPage() {
   const keysDlg = useDisclosure();
   const balanceAlertDlg = useDisclosure();
   const importSkAntDlg = useDisclosure();
+  const groupPresetDlg = useDisclosure();
   const [editing, setEditing] = useState<UpstreamAccount | null>(null);
   const [editTab, setEditTab] = useState<string>("creds");
   const [form, setForm] = useState({
@@ -1032,6 +1033,14 @@ export default function UpstreamPage() {
           </Button>
           <Button
             variant="flat"
+            startContent={<Package size={14} />}
+            onPress={() => groupPresetDlg.onOpen()}
+            title="按本站分组维护可复用的分组集合, 录入 sk-ant / 推到本站时一键套用"
+          >
+            分组预设
+          </Button>
+          <Button
+            variant="flat"
             startContent={<KeyRound size={14} />}
             onPress={() => importSkAntDlg.onOpen()}
           >
@@ -1058,6 +1067,10 @@ export default function UpstreamPage() {
       <ImportSkAntModal
         isOpen={importSkAntDlg.isOpen}
         onOpenChange={importSkAntDlg.onOpenChange}
+      />
+      <GroupPresetsModal
+        isOpen={groupPresetDlg.isOpen}
+        onOpenChange={groupPresetDlg.onOpenChange}
       />
 
       <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -3135,6 +3148,9 @@ function ImportSkAntModal({
     Array<{ id: number; name: string; rate_multiplier?: number }>
   >([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
+  const [presets, setPresets] = useState<
+    Array<{ id: number; name: string; groupIds: number[] }>
+  >([]);
   const [form, setForm] = useState({
     siteAccountId: "",
     namePrefix: "",
@@ -3167,37 +3183,51 @@ function ImportSkAntModal({
       });
   }, [isOpen]);
 
-  // 切换站点时拉该站点的分组列表
+  // 切换站点时拉该站点的分组列表 + 预设列表
   useEffect(() => {
     if (!isOpen) return;
     const sid = Number(form.siteAccountId);
     if (!sid) {
       setGroups([]);
+      setPresets([]);
       setForm((f) => ({ ...f, groupIds: [] }));
       return;
     }
     setLoadingGroups(true);
-    fetch(`/api/site/${sid}/groups`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => {
-        if (j.error) throw new Error(j.error);
-        setGroups(
-          (j.items ?? []) as Array<{
-            id: number;
-            name: string;
-            rate_multiplier?: number;
-          }>,
-        );
+    Promise.allSettled([
+      fetch(`/api/site/${sid}/groups`, { cache: "no-store" }).then((r) =>
+        r.json(),
+      ),
+      fetch(`/api/site-group-presets?siteAccountId=${sid}`, {
+        cache: "no-store",
+      }).then((r) => r.json()),
+    ])
+      .then(([gRes, pRes]) => {
+        if (gRes.status === "fulfilled" && !gRes.value.error) {
+          setGroups(
+            (gRes.value.items ?? []) as Array<{
+              id: number;
+              name: string;
+              rate_multiplier?: number;
+            }>,
+          );
+        } else {
+          setGroups([]);
+          addToast({ title: "加载分组失败", color: "danger" });
+        }
+        if (pRes.status === "fulfilled") {
+          setPresets(
+            (pRes.value.items ?? []) as Array<{
+              id: number;
+              name: string;
+              groupIds: number[];
+            }>,
+          );
+        } else {
+          setPresets([]);
+        }
         // 切站点清空已选, 避免把别的站点的 group id 误带过去
         setForm((f) => ({ ...f, groupIds: [] }));
-      })
-      .catch((e) => {
-        addToast({
-          title: "加载分组失败",
-          description: String(e),
-          color: "danger",
-        });
-        setGroups([]);
       })
       .finally(() => setLoadingGroups(false));
   }, [isOpen, form.siteAccountId]);
@@ -3208,11 +3238,8 @@ function ImportSkAntModal({
       addToast({ title: "请选择目标站点", color: "warning" });
       return;
     }
+    // namePrefix 可空 — 后端留空时直接用 sk 当账号名
     const namePrefix = form.namePrefix.trim();
-    if (!namePrefix) {
-      addToast({ title: "请填名称前缀", color: "warning" });
-      return;
-    }
     const concurrency = Math.max(1, Math.floor(Number(form.concurrency) || 0));
     if (!concurrency) {
       addToast({ title: "并发数非法", color: "warning" });
@@ -3359,6 +3386,47 @@ function ImportSkAntModal({
                   ))}
                 </Select>
               </div>
+              {form.siteAccountId && presets.length > 0 && (
+                <Select
+                  size="sm"
+                  label={`套用预设 (该站 ${presets.length} 个可选)`}
+                  description="选预设 = 一键回填分组; 选后还能手动加/减"
+                  selectedKeys={[]}
+                  onSelectionChange={(keys) => {
+                    const v = String(Array.from(keys)[0] ?? "");
+                    const preset = presets.find((p) => String(p.id) === v);
+                    if (!preset) return;
+                    const valid = new Set(groups.map((g) => g.id));
+                    const arr = preset.groupIds.filter((n) => valid.has(n));
+                    setForm((f) => ({ ...f, groupIds: arr }));
+                    if (arr.length < preset.groupIds.length) {
+                      addToast({
+                        title: `预设里 ${preset.groupIds.length - arr.length} 个分组当前站点不存在, 已忽略`,
+                        color: "warning",
+                      });
+                    }
+                  }}
+                >
+                  {presets.map((p) => (
+                    <SelectItem
+                      key={String(p.id)}
+                      textValue={p.name}
+                    >
+                      <div className="flex flex-col">
+                        <span>{p.name}</span>
+                        <span className="text-[10px] text-default-400">
+                          {p.groupIds
+                            .map((gid) => {
+                              const g = groups.find((x) => x.id === gid);
+                              return g ? g.name : `#${gid}`;
+                            })
+                            .join(", ")}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </Select>
+              )}
               <div className="grid grid-cols-3 gap-2">
                 <Input
                   type="number"
@@ -3503,6 +3571,378 @@ function ImportSkAntModal({
               </Button>
               <Button color="primary" isLoading={busy} onPress={submit}>
                 提交录入
+              </Button>
+            </ModalFooter>
+          </>
+        )}
+      </ModalContent>
+    </Modal>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// 分组预设管理 modal
+// 选 site → 列该 site 的预设 + 在线增删改。每个预设 = (name, groupIds[])。
+// 后续 ImportSkAntModal / push-to-site 选预设时一键填 groupIds。
+// ──────────────────────────────────────────────────────────────────
+
+interface PresetRow {
+  id: number;
+  siteAccountId: number;
+  name: string;
+  groupIds: number[];
+}
+
+function GroupPresetsModal({
+  isOpen,
+  onOpenChange,
+}: {
+  isOpen: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [sites, setSites] = useState<Array<{ id: number; name: string }>>([]);
+  const [siteId, setSiteId] = useState<string>("");
+  const [groups, setGroups] = useState<
+    Array<{ id: number; name: string; rate_multiplier?: number }>
+  >([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [presets, setPresets] = useState<PresetRow[]>([]);
+  const [loadingPresets, setLoadingPresets] = useState(false);
+  const [editing, setEditing] = useState<{
+    id: number | null;
+    name: string;
+    groupIds: number[];
+  } | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch("/api/site", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) =>
+        setSites(
+          (j.items ?? []).map((s: { id: number; name: string }) => ({
+            id: s.id,
+            name: s.name,
+          })),
+        ),
+      )
+      .catch(() => {
+        addToast({ title: "加载站点失败", color: "danger" });
+      });
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !siteId) {
+      setGroups([]);
+      setPresets([]);
+      setEditing(null);
+      return;
+    }
+    const sid = Number(siteId);
+    setLoadingGroups(true);
+    setLoadingPresets(true);
+    Promise.allSettled([
+      fetch(`/api/site/${sid}/groups`, { cache: "no-store" }).then((r) =>
+        r.json(),
+      ),
+      fetch(`/api/site-group-presets?siteAccountId=${sid}`, {
+        cache: "no-store",
+      }).then((r) => r.json()),
+    ])
+      .then(([gRes, pRes]) => {
+        if (gRes.status === "fulfilled") {
+          setGroups(
+            (gRes.value.items ?? []) as Array<{
+              id: number;
+              name: string;
+              rate_multiplier?: number;
+            }>,
+          );
+        } else {
+          setGroups([]);
+          addToast({ title: "加载分组失败", color: "danger" });
+        }
+        if (pRes.status === "fulfilled") {
+          setPresets((pRes.value.items ?? []) as PresetRow[]);
+        } else {
+          setPresets([]);
+        }
+      })
+      .finally(() => {
+        setLoadingGroups(false);
+        setLoadingPresets(false);
+      });
+  }, [isOpen, siteId]);
+
+  function startNew() {
+    setEditing({ id: null, name: "", groupIds: [] });
+  }
+
+  function startEdit(p: PresetRow) {
+    setEditing({ id: p.id, name: p.name, groupIds: [...p.groupIds] });
+  }
+
+  async function save() {
+    if (!editing) return;
+    const sid = Number(siteId);
+    if (!sid) return;
+    const name = editing.name.trim();
+    if (!name) {
+      addToast({ title: "预设名必填", color: "warning" });
+      return;
+    }
+    if (editing.groupIds.length === 0) {
+      addToast({ title: "至少选 1 个分组", color: "warning" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = editing.id
+        ? await fetch(`/api/site-group-presets/${editing.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name,
+              groupIds: editing.groupIds,
+            }),
+          })
+        : await fetch(`/api/site-group-presets`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              siteAccountId: sid,
+              name,
+              groupIds: editing.groupIds,
+            }),
+          });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        addToast({
+          title: "保存失败",
+          description: String(j.error || r.status),
+          color: "danger",
+        });
+        return;
+      }
+      addToast({ title: "已保存", color: "success" });
+      setEditing(null);
+      const list = await fetch(
+        `/api/site-group-presets?siteAccountId=${sid}`,
+        { cache: "no-store" },
+      ).then((x) => x.json());
+      setPresets(list.items ?? []);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(p: PresetRow) {
+    if (!confirm(`删除预设「${p.name}」?`)) return;
+    const r = await fetch(`/api/site-group-presets/${p.id}`, {
+      method: "DELETE",
+    });
+    if (!r.ok) {
+      addToast({ title: "删除失败", color: "danger" });
+      return;
+    }
+    setPresets((arr) => arr.filter((x) => x.id !== p.id));
+    addToast({ title: "已删除", color: "success" });
+  }
+
+  const groupName = (id: number): string => {
+    const g = groups.find((x) => x.id === id);
+    return g ? g.name : `#${id}`;
+  };
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+      size="3xl"
+      scrollBehavior="inside"
+    >
+      <ModalContent>
+        {(close) => (
+          <>
+            <ModalHeader>
+              <div className="flex flex-col">
+                <span>分组预设管理</span>
+                <span className="text-xs text-default-500 font-normal mt-0.5">
+                  按本站维护常用分组集合 · 录入 sk-ant 等场景一键回填
+                </span>
+              </div>
+            </ModalHeader>
+            <ModalBody className="gap-3">
+              <Select
+                label="本站"
+                selectedKeys={siteId ? [siteId] : []}
+                onSelectionChange={(keys) => {
+                  setSiteId(String(Array.from(keys)[0] ?? ""));
+                  setEditing(null);
+                }}
+              >
+                {sites.map((s) => (
+                  <SelectItem key={String(s.id)}>{s.name}</SelectItem>
+                ))}
+              </Select>
+
+              {!siteId ? (
+                <p className="text-xs text-default-500 py-4 text-center">
+                  请先选一个本站
+                </p>
+              ) : loadingPresets || loadingGroups ? (
+                <div className="flex justify-center py-4">
+                  <Spinner />
+                </div>
+              ) : (
+                <>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-default-500">
+                      共 {presets.length} 个预设
+                    </span>
+                    <Button
+                      size="sm"
+                      color="primary"
+                      variant="flat"
+                      startContent={<Plus size={12} />}
+                      onPress={startNew}
+                    >
+                      新建预设
+                    </Button>
+                  </div>
+
+                  {editing && (
+                    <Card className="border border-primary/40 bg-primary-50/30">
+                      <CardBody className="gap-2">
+                        <div className="text-xs text-default-700 font-medium">
+                          {editing.id ? `编辑预设 #${editing.id}` : "新建预设"}
+                        </div>
+                        <Input
+                          size="sm"
+                          label="预设名称"
+                          placeholder="例: claude 全套"
+                          value={editing.name}
+                          onValueChange={(v) =>
+                            setEditing((e) =>
+                              e ? { ...e, name: v } : e,
+                            )
+                          }
+                        />
+                        <Select
+                          size="sm"
+                          label={`分组(共 ${groups.length} 个, 可多选)`}
+                          selectionMode="multiple"
+                          selectedKeys={editing.groupIds.map((n) =>
+                            String(n),
+                          )}
+                          onSelectionChange={(keys) => {
+                            const arr = Array.from(keys as Set<string>)
+                              .map((x) => Number(x))
+                              .filter((n) => Number.isFinite(n) && n > 0);
+                            setEditing((e) =>
+                              e ? { ...e, groupIds: arr } : e,
+                            );
+                          }}
+                        >
+                          {groups.map((g) => (
+                            <SelectItem key={String(g.id)}>
+                              {g.name}
+                              {g.rate_multiplier != null
+                                ? ` ×${g.rate_multiplier}`
+                                : ""}
+                            </SelectItem>
+                          ))}
+                        </Select>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="light"
+                            onPress={() => setEditing(null)}
+                          >
+                            取消
+                          </Button>
+                          <Button
+                            size="sm"
+                            color="primary"
+                            isLoading={saving}
+                            onPress={save}
+                          >
+                            保存
+                          </Button>
+                        </div>
+                      </CardBody>
+                    </Card>
+                  )}
+
+                  {presets.length === 0 && !editing ? (
+                    <p className="text-xs text-default-500 py-4 text-center">
+                      还没有预设, 点「新建预设」开始
+                    </p>
+                  ) : presets.length > 0 ? (
+                    <Table removeWrapper aria-label="presets">
+                      <TableHeader>
+                        <TableColumn>名称</TableColumn>
+                        <TableColumn>包含分组</TableColumn>
+                        <TableColumn>{" "}</TableColumn>
+                      </TableHeader>
+                      <TableBody>
+                        {presets.map((p) => (
+                          <TableRow key={p.id}>
+                            <TableCell>
+                              <span className="text-sm font-medium">
+                                {p.name}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-wrap gap-1">
+                                {p.groupIds.map((gid) => (
+                                  <Chip
+                                    key={gid}
+                                    size="sm"
+                                    variant="flat"
+                                    classNames={{
+                                      base: "h-5",
+                                      content: "text-[10px] px-1.5",
+                                    }}
+                                  >
+                                    {groupName(gid)}
+                                  </Chip>
+                                ))}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="light"
+                                  className="h-7 px-2 text-[11px]"
+                                  onPress={() => startEdit(p)}
+                                >
+                                  编辑
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="light"
+                                  color="danger"
+                                  className="h-7 px-2 text-[11px]"
+                                  onPress={() => remove(p)}
+                                >
+                                  删除
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : null}
+                </>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={close}>
+                关闭
               </Button>
             </ModalFooter>
           </>
