@@ -346,8 +346,16 @@ export class NewApiClient {
     return out;
   }
 
-  // Aggregate today's per-token spend in ONE call, plus pull lifetime from
-  // the cached tokens list (token.used_quota → total_actual_cost USD).
+  // 每个 token 单独调一次 /api/log/self/stat?type=0&token_name=X 拿今日聚合
+  // quota。lifetime 仍用 listKeys 缓存里的 token.used_quota。
+  //
+  // 早期实现是翻 /api/log/self?type=2&size=5000 然后客户端 sum, 但是:
+  //   1. 高流量账号一天 >5000 条日志直接被截断
+  //   2. type=2 不一定覆盖所有计费类型, 漏统
+  // 表现就是我们站点上看到的总额比 newapi UI 上小一两个数量级
+  // (暖冬实测: newapi=$220, 我们=$1.4)。服务端聚合 /stat 没这两个问题。
+  //
+  // 代价: token 数量个 HTTP, 限制 5 路并发。22 token ~5 批 = 1-3s。
   async getKeysUsage(ids: number[]): Promise<Record<string, KeyUsageItem>> {
     if (!ids.length) return {};
     if (!this.tokensCache) {
@@ -356,42 +364,54 @@ export class NewApiClient {
     }
     const tokens = this.tokensCache ?? [];
     const tokensById = new Map(tokens.map((t) => [t.id, t]));
-    const nameToId = new Map(tokens.map((t) => [t.name, t.id]));
-
     const startTs = todayMidnightSec();
     const endTs = Math.floor(Date.now() / 1000);
-    // type=2 typically means "consume" log type in new-api. Pull a wide
-    // size to avoid pagination round-trips on busy days; 5000 is a safe cap.
-    const qs = new URLSearchParams({
-      type: "2",
-      start_timestamp: String(startTs),
-      end_timestamp: String(endTs),
-      p: "0",
-      size: "5000",
-    });
-    const resp = await this.request<
-      | {
-          items?: NewApiLogRow[];
-          data?: NewApiLogRow[];
-          records?: NewApiLogRow[];
-        }
-      | NewApiLogRow[]
-    >("GET", `/api/log/self?${qs.toString()}`);
-    const rows: NewApiLogRow[] = Array.isArray(resp)
-      ? resp
-      : (resp.items ?? resp.records ?? resp.data ?? []);
-
-    // Aggregate today's quota by token_id (via token_name → id lookup).
-    const todayByTokenId = new Map<number, number>();
-    for (const r of rows) {
-      const name = r.token_name ?? r.tokenName ?? "";
-      const tid = nameToId.get(name);
-      if (tid == null) continue;
-      const q = Number(r.quota ?? 0);
-      todayByTokenId.set(tid, (todayByTokenId.get(tid) ?? 0) + q);
-    }
-
     const quotaPerUsd = await this.getQuotaPerUsd();
+
+    const todayByTokenId = new Map<number, number>();
+    const targets = ids
+      .map((id) => tokensById.get(id))
+      .filter((t): t is NewApiTokenRow => t != null);
+
+    // 简易并发限流: 5 路。
+    const concurrency = 5;
+    let cursor = 0;
+    async function worker(self: NewApiClient) {
+      while (true) {
+        const i = cursor++;
+        if (i >= targets.length) return;
+        const t = targets[i];
+        try {
+          const qs = new URLSearchParams({
+            type: "0",
+            token_name: t.name,
+            model_name: "",
+            start_timestamp: String(startTs),
+            end_timestamp: String(endTs),
+            group: "",
+          });
+          const resp = await self.request<{
+            data?: { quota?: number };
+          }>("GET", `/api/log/self/stat?${qs.toString()}`);
+          const q = Number(resp?.data?.quota ?? 0);
+          if (Number.isFinite(q) && q >= 0) {
+            todayByTokenId.set(t.id, q);
+          }
+        } catch (e) {
+          console.warn(
+            `[newapi] /stat for token "${t.name}" failed:`,
+            e instanceof Error ? e.message : e,
+          );
+          // 0 兜底, 不阻塞其他 token
+        }
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, targets.length) }, () =>
+        worker(this),
+      ),
+    );
+
     const out: Record<string, KeyUsageItem> = {};
     for (const id of ids) {
       const today = (todayByTokenId.get(id) ?? 0) / quotaPerUsd;
