@@ -1,0 +1,22 @@
+[Unit]
+Description=Veridrop — Claude API relay station detector web service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/veridrop
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/veridrop/venv/bin/python -m uvicorn web.server:app \
+  --host 127.0.0.1 --port 8765 \
+  --workers 1 \
+  --log-level info \
+  --proxy-headers \
+  --forwarded-allow-ips='*'
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+User=root
+
+[Install]
+WantedBy=multi-user.target

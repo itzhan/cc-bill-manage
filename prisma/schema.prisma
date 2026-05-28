@@ -325,8 +325,9 @@ model BenchChannelKey {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  channel BenchChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  runs    BenchRun[]
+  channel      BenchChannel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  runs         BenchRun[]
+  veridropRuns VeridropRun[]
 
   @@index([channelId])
 }
@@ -544,6 +545,37 @@ model Project {
   updatedAt   DateTime @updatedAt
 
   @@index([type, status])
+}
+
+// veridrop (开源 AI relay 真伪检测) 单次跑的结果。跟 BenchRun 平级,
+// 不混淆 SWE-Atlas 那套字段。reportJson 存 veridrop 输出的完整 JSON
+// (相当于 cli `relay-detector detect -o file.json` 的内容), 解析交给前端。
+// 跑一次 full ~70s + ~$0.02。
+model VeridropRun {
+  id           Int      @id @default(autoincrement())
+  channelKeyId Int
+  // anthropic | openai | gemini
+  protocol     String
+  // quick | standard | full
+  mode         String
+  model        String
+  // queued | running | done | error
+  status       String   @default("queued")
+  // 解析自 reportJson 的几个顶层字段, 便于列表展示, 不用每行都解析 blob
+  totalScore   Float?
+  verdict      String? // passed | marginal | failed
+  summary      String? // "优秀" / "通过" / "基本合格" / "未达标"
+  // 完整 veridrop JSON 报告 (~10-50KB)。errorText 是 spawn/run 失败时的错误。
+  reportJson   String?
+  errorText    String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime @default(now())
+
+  channelKey BenchChannelKey @relation(fields: [channelKeyId], references: [id], onDelete: Cascade)
+
+  @@index([channelKeyId])
+  @@index([createdAt])
 }
 
 // 自定义分组：把 sub2api 上的多个原生分组聚合到一个虚拟分组里，

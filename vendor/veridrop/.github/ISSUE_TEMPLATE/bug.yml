@@ -1,0 +1,78 @@
+name: 🐛 Bug report
+description: Veridrop reported something wrong, or behaved unexpectedly
+title: "[Bug] "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! The single most useful thing you can give us is the
+        **/r/{job_id} URL** if you ran on veridrop.org — it captures the full state.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did Veridrop report, vs. what you expected?
+      placeholder: |
+        I sent api-key=sk-xxx, model=claude-sonnet-4-6, base_url=https://my-relay.com
+        Veridrop reported `long_context: fail`, but I'm pretty sure my relay does support it.
+    validations:
+      required: true
+
+  - type: input
+    id: report-url
+    attributes:
+      label: Report URL (most useful!)
+      description: Paste the `https://veridrop.org/r/{job_id}` URL if you ran on the hosted service
+      placeholder: https://veridrop.org/r/abc12345
+    validations:
+      required: false
+
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Which protocol?
+      options:
+        - Anthropic (Claude)
+        - OpenAI (GPT)
+        - Gemini
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model tested
+      placeholder: claude-haiku-4-5, gpt-4o-mini, gemini-2.5-flash, ...
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did you run?
+      options:
+        - Hosted service (veridrop.org)
+        - Self-hosted (this repo)
+        - CLI (./venv/bin/relay-detector)
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Logs, screenshots, JSON snippets, hypothesis about what's wrong
+      placeholder: |
+        Attach the full report.json if running locally:
+          ./venv/bin/relay-detector detect ... -o report.json
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I redacted my API key from any logs / JSON I'm pasting
+          required: true
+        - label: I searched existing issues for a similar report
+          required: true

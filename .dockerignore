@@ -2,7 +2,7 @@ node_modules
 .next
 .git
 .gitignore
-*.md
+# vendor/veridrop/README.md 是 pip install 必需的 — 不再统一忽略 *.md
 data
 prisma/dev.db
 prisma/dev.db-journal

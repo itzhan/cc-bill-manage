@@ -40,6 +40,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Shell from "@/components/Shell";
+import VeridropModal from "@/components/VeridropModal";
 import { copyToClipboard } from "@/lib/clipboard";
 import { fmtDate } from "@/lib/format";
 
@@ -114,6 +115,8 @@ export default function BenchPage() {
     channelId: number;
     key: ChannelKey;
   } | null>(null);
+  const [veridropKey, setVeridropKey] = useState<ChannelKey | null>(null);
+  const [veridropDlgOpen, setVeridropDlgOpen] = useState(false);
 
   async function load() {
     try {
@@ -342,6 +345,10 @@ export default function BenchPage() {
                               infoDlg.onOpen();
                             }}
                             onCancel={() => cancelRun(k)}
+                            onVeridrop={() => {
+                              setVeridropKey(k);
+                              setVeridropDlgOpen(true);
+                            }}
                           />
                         ))}
                       </div>
@@ -418,6 +425,11 @@ export default function BenchPage() {
         }}
         keyId={infoKeyId}
       />
+      <VeridropModal
+        isOpen={veridropDlgOpen}
+        onClose={() => setVeridropDlgOpen(false)}
+        channelKey={veridropKey}
+      />
     </Shell>
   );
 }
@@ -430,6 +442,7 @@ function KeyRow({
   onOpen,
   onInfo,
   onCancel,
+  onVeridrop,
 }: {
   channelId: number;
   data: ChannelKey;
@@ -439,6 +452,7 @@ function KeyRow({
   onOpen: () => void;
   onInfo: () => void;
   onCancel: () => void;
+  onVeridrop: () => void;
 }) {
   const lr = data.latestRun;
   const running =
@@ -531,6 +545,15 @@ function KeyRow({
             详情
           </Button>
         )}
+        <Button
+          size="sm"
+          color="secondary"
+          variant="flat"
+          onPress={onVeridrop}
+          title="veridrop 真伪 / 协议合规检测 (~70s)"
+        >
+          veridrop
+        </Button>
         <Button
           size="sm"
           isIconOnly
