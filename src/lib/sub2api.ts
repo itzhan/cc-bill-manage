@@ -414,6 +414,34 @@ export class Sub2ApiClient {
     return this.request("DELETE", `/api/v1/admin/accounts/${id}`);
   }
 
+  // Setup-token cookie auth: 把用户的 session key 拿给 Claude 换出真正的
+  // oauth token 信息。后端会调 Claude 拿 access_token / refresh_token /
+  // expires_at / org_uuid / account_uuid / email_address。
+  // 我们再拿这个 tokenInfo 去 createAdminAccount 建账号。
+  async setupTokenCookieAuth(
+    sessionKey: string,
+    opts?: { proxyId?: number | null },
+  ): Promise<{
+    access_token?: string;
+    refresh_token?: string;
+    expires_at?: string;
+    org_uuid?: string;
+    account_uuid?: string;
+    email_address?: string;
+    [k: string]: unknown;
+  }> {
+    const body: Record<string, unknown> = {
+      session_id: "",
+      code: sessionKey,
+    };
+    if (opts?.proxyId != null) body.proxy_id = opts.proxyId;
+    return this.request(
+      "POST",
+      `/api/v1/admin/accounts/setup-token-cookie-auth`,
+      body,
+    );
+  }
+
   async bulkUpdateAdminAccounts(body: {
     account_ids: number[];
     [k: string]: unknown;

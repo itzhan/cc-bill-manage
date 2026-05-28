@@ -3118,6 +3118,7 @@ interface ImportSkAntResultRow {
   tokenMasked: string;
   name: string;
   ok: boolean;
+  stage?: "cookie-auth" | "create";
   error?: string;
   remoteAccountId?: number;
 }
@@ -3136,7 +3137,7 @@ function ImportSkAntModal({
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [form, setForm] = useState({
     siteAccountId: "",
-    namePrefix: "max",
+    namePrefix: "",
     concurrency: "10",
     windowCostLimit: "0",
     rateMultiplier: "1",
@@ -3296,10 +3297,10 @@ function ImportSkAntModal({
           <>
             <ModalHeader>
               <div className="flex flex-col">
-                <span>批量录入 sk-ant Token</span>
+                <span>批量录入 sk-ant Token (setup-token)</span>
                 <span className="text-xs text-default-500 font-normal mt-0.5">
-                  type=setup-token · platform=anthropic · 名字按前缀自增,
-                  从已有最大值 +1 开始
+                  每个 sk 走完整 2 步:cookie-auth 换 oauth → 创建账号 ·
+                  失败行会标 cookie-auth/create 哪个阶段挂了
                 </span>
               </div>
             </ModalHeader>
@@ -3321,9 +3322,9 @@ function ImportSkAntModal({
               <div className="grid grid-cols-2 gap-2">
                 <Input
                   size="sm"
-                  label="名称前缀"
-                  placeholder="例如 max"
-                  description="新账号名 = 前缀-N (N 自动续上数据库里的最大值)"
+                  label="名称前缀(可空)"
+                  placeholder="留空 = 用 sk 当账号名"
+                  description="留空: 账号名 = sk 字符串 (方便人工对账)。填了: prefix-N, N 自动续上已有最大值。"
                   value={form.namePrefix}
                   onValueChange={(v) =>
                     setForm((f) => ({ ...f, namePrefix: v }))
@@ -3433,6 +3434,7 @@ function ImportSkAntModal({
                   <Table removeWrapper aria-label="results">
                     <TableHeader>
                       <TableColumn>状态</TableColumn>
+                      <TableColumn>阶段</TableColumn>
                       <TableColumn>账号名</TableColumn>
                       <TableColumn>token</TableColumn>
                       <TableColumn>错误</TableColumn>
@@ -3450,7 +3452,33 @@ function ImportSkAntModal({
                             </Chip>
                           </TableCell>
                           <TableCell>
-                            <span className="font-mono text-xs">{r.name}</span>
+                            {r.stage ? (
+                              <Chip
+                                size="sm"
+                                variant="flat"
+                                color={
+                                  r.stage === "cookie-auth"
+                                    ? "warning"
+                                    : "primary"
+                                }
+                              >
+                                {r.stage}
+                              </Chip>
+                            ) : (
+                              <span className="text-default-400 text-xs">
+                                —
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className="font-mono text-xs break-all"
+                              title={r.name}
+                            >
+                              {r.name.length > 28
+                                ? `${r.name.slice(0, 16)}...${r.name.slice(-8)}`
+                                : r.name}
+                            </span>
                           </TableCell>
                           <TableCell>
                             <span className="font-mono text-xs text-default-500">

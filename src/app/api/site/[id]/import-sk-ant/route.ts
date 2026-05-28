@@ -4,31 +4,37 @@ import { makeSiteClient } from "@/lib/az-server";
 import { refreshSiteAccount } from "@/lib/sync";
 
 export const runtime = "nodejs";
-// 顺序创建 N 个 setup-token 账号, 给 3 分钟裕量。
+// 每个 token 要 cookie-auth + create 两步, 都跨 Claude 网络 — 留 3 分钟裕量。
 export const maxDuration = 180;
 
 // POST /api/site/[id]/import-sk-ant
 // body: {
-//   tokens: string[],               // 一行一个 sk-ant-... (会自动 trim & 去空行)
-//   namePrefix: string,             // 例如 "max" → max-1 / max-2 / ...
-//   concurrency: number,            // sub2api admin account concurrency
+//   tokens: string[],               // sub2api session key (sk-ant-sid01-...), 一行一个
+//   namePrefix?: string,            // 留空 = 直接用 sk 当账号名(方便人工对账)
+//                                   // 非空 = "prefix-N", N 从已有最大 +1 续上
+//   concurrency: number,
 //   windowCostLimit: number,        // 5h 金额上限 USD, 0 = 不启用
-//   windowCostStickyReserve?: number, // 默认 0
-//   rateMultiplier?: number,        // 默认 1
-//   groupIds?: number[],            // 默认 []
+//   windowCostStickyReserve?: number,
+//   rateMultiplier?: number,
+//   groupIds?: number[],
 // }
 //
-// 行为:
-//   1. 拿当前站点所有同前缀(search=namePrefix)账号, 解析 `^${prefix}-(\d+)$`
-//      取最大数字 + 1 作为起点; 没有则从 1 开始
-//   2. 顺序对每个 token 创建 admin account, 名字 = prefix-{nextIdx},
-//      创建无论成败 nextIdx 都 +1(避免名字冲突死循环 & 给售后留可追溯线索)
-//   3. 创建 body: platform=anthropic / type=setup-token / credentials=
-//      { access_token, refresh_token: "", expires_at: now+1y }; extra=
-//      { window_cost_limit, window_cost_sticky_reserve }
-//   4. 全部跑完一次 refreshSiteAccount, 让本地 SiteBoundAccount 表同步
-//   5. 返回 { total, success, failed, results: [{ tokenMasked, name, ok, error?, remoteAccountId? }] }
-//      给前端列哪些成功 / 哪些失败, 方便售后定位。
+// 行为(对每个 session key 走完整 setup-token 流程):
+//   step1: setupTokenCookieAuth(sk) → 后端去 Claude 换出
+//          { access_token, refresh_token, expires_at, org_uuid,
+//            account_uuid, email_address }
+//   step2: createAdminAccount(type=setup-token, credentials={...tokenInfo},
+//          extra={ org_uuid, account_uuid, email_address, window_cost_limit })
+//
+// 命名:
+//   - 留空前缀: 账号名 = sk 字符串本身 (跟我们之前的 setup-token 流程一致,
+//     方便售后直接拿 sk 在 sub2api admin UI 里搜)
+//   - 有前缀  : prefix-N, 用 listAdminAccountsFiltered 找已有最大 +1
+//   不论成功失败 N 都 +1, 避免名字冲突死循环。
+//
+// 返回 { total, success, failed, startIdx?, results }
+// results[i] = { tokenMasked, name, ok, stage?, error?, remoteAccountId? }
+//   stage 用于售后定位: "cookie-auth" 或 "create"
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -46,12 +52,9 @@ export async function POST(
   }>;
 
   const namePrefix = (body.namePrefix ?? "").trim();
-  if (!namePrefix) {
-    return NextResponse.json({ error: "namePrefix required" }, { status: 400 });
-  }
-  if (!/^[A-Za-z0-9._-]+$/.test(namePrefix)) {
+  if (namePrefix && !/^[A-Za-z0-9._-]+$/.test(namePrefix)) {
     return NextResponse.json(
-      { error: "namePrefix 只允许字母/数字/._-" },
+      { error: "namePrefix 只允许字母/数字/._-, 留空 = 直接用 sk" },
       { status: 400 },
     );
   }
@@ -88,70 +91,104 @@ export async function POST(
 
   const client = await makeSiteClient(siteId);
 
-  // === 找当前 max(同前缀数字) ===
+  // 只有走 prefix 模式时才需要算起始 idx
   let startIdx = 1;
-  try {
-    const list = await client.listAdminAccountsFiltered({
-      search: namePrefix,
-      page_size: 1000,
-    });
-    const re = new RegExp(`^${escapeRegex(namePrefix)}-(\\d+)$`);
-    let maxN = 0;
-    for (const a of list.items ?? []) {
-      const m = re.exec(a.name ?? "");
-      if (!m) continue;
-      const n = Number(m[1]);
-      if (Number.isFinite(n) && n > maxN) maxN = n;
+  if (namePrefix) {
+    try {
+      const list = await client.listAdminAccountsFiltered({
+        search: namePrefix,
+        page_size: 1000,
+      });
+      const re = new RegExp(`^${escapeRegex(namePrefix)}-(\\d+)$`);
+      let maxN = 0;
+      for (const a of list.items ?? []) {
+        const m = re.exec(a.name ?? "");
+        if (!m) continue;
+        const n = Number(m[1]);
+        if (Number.isFinite(n) && n > maxN) maxN = n;
+      }
+      startIdx = maxN + 1;
+    } catch (e) {
+      // 拉不到列表不阻塞, 从 1 起步
+      console.error("[import-sk-ant] list filter failed:", e);
     }
-    startIdx = maxN + 1;
-  } catch (e) {
-    // 拉不到列表也别阻塞, 从 1 起步 + 让用户售后调整。
-    console.error("[import-sk-ant] list filter failed:", e);
   }
 
   type Result = {
     tokenMasked: string;
     name: string;
     ok: boolean;
+    stage?: "cookie-auth" | "create";
     error?: string;
     remoteAccountId?: number;
   };
 
   const results: Result[] = [];
   let nextIdx = startIdx;
-  // 1 年后的 expires_at(setup-token 有效期 1 年, sub2api 内部刷新策略不动它)
-  const expiresAt = new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString();
 
-  // 顺序处理 — 避免 sub2api 内部 race 写 conflicting 名字;
-  // 这部分批量真不大(典型几十到几百), 串行成本可接受。
   for (const token of tokens) {
     const tokenMasked = maskToken(token);
-    const name = `${namePrefix}-${nextIdx}`;
-    nextIdx++;
+    const name = namePrefix ? `${namePrefix}-${nextIdx}` : token;
+    if (namePrefix) nextIdx++; // 不论成败都续 — 避免名字冲突死循环
 
     if (!token.startsWith("sk-ant-")) {
       results.push({
         tokenMasked,
         name,
         ok: false,
-        error: "token 不以 sk-ant- 开头, 跳过(避免误录)",
+        stage: "cookie-auth",
+        error: "token 不以 sk-ant- 开头, 跳过",
       });
       continue;
     }
 
+    // === Step 1: cookie auth → tokenInfo ===
+    let tokenInfo: Awaited<ReturnType<typeof client.setupTokenCookieAuth>>;
     try {
-      const credentials: Record<string, unknown> = {
-        access_token: token,
-        refresh_token: "",
-        expires_at: expiresAt,
-      };
+      tokenInfo = await client.setupTokenCookieAuth(token);
+    } catch (e) {
+      results.push({
+        tokenMasked,
+        name,
+        ok: false,
+        stage: "cookie-auth",
+        error: e instanceof Error ? e.message.slice(0, 300) : String(e),
+      });
+      continue;
+    }
+    if (!tokenInfo || typeof tokenInfo.access_token !== "string" || !tokenInfo.access_token) {
+      results.push({
+        tokenMasked,
+        name,
+        ok: false,
+        stage: "cookie-auth",
+        error: "Claude 未返回 access_token, 可能 sessionKey 已失效",
+      });
+      continue;
+    }
+
+    // === Step 2: createAdminAccount ===
+    try {
       const extra: Record<string, unknown> = {};
+      if (typeof tokenInfo.org_uuid === "string" && tokenInfo.org_uuid)
+        extra.org_uuid = tokenInfo.org_uuid;
+      if (typeof tokenInfo.account_uuid === "string" && tokenInfo.account_uuid)
+        extra.account_uuid = tokenInfo.account_uuid;
+      if (
+        typeof tokenInfo.email_address === "string" &&
+        tokenInfo.email_address
+      )
+        extra.email_address = tokenInfo.email_address;
       if (windowCostLimit > 0) {
         extra.window_cost_limit = windowCostLimit;
         if (windowCostStickyReserve > 0) {
           extra.window_cost_sticky_reserve = windowCostStickyReserve;
         }
       }
+      // credentials 直接 spread tokenInfo, 跟 sub2api 前端
+      // CreateAccountModal.vue:5241 行为一致 — 它把全部 tokenInfo 字段
+      // 都塞进 credentials (access_token / refresh_token / expires_at 等)。
+      const credentials: Record<string, unknown> = { ...tokenInfo };
       const createBody: Record<string, unknown> = {
         name,
         platform: "anthropic",
@@ -176,12 +213,13 @@ export async function POST(
         tokenMasked,
         name,
         ok: false,
+        stage: "create",
         error: e instanceof Error ? e.message.slice(0, 300) : String(e),
       });
     }
   }
 
-  // 跑一次 refresh 让 SiteBoundAccount 跟进, 失败也无所谓 — 用户下一次同步会拉到。
+  // 一次 refresh, 让 SiteBoundAccount 跟进 — 失败也无所谓
   try {
     await refreshSiteAccount(siteId);
   } catch (e) {
@@ -193,7 +231,7 @@ export async function POST(
     total: results.length,
     success,
     failed: results.length - success,
-    startIdx,
+    startIdx: namePrefix ? startIdx : null,
     results,
   });
 }
