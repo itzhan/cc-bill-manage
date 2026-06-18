@@ -169,6 +169,27 @@ model SiteAccount {
   users        SiteUser[]
   azPreset     AzPreset?
   groupPresets SiteGroupPreset[]
+  publicShares PublicShare[]
+}
+
+// 对外展示链接：用 8 位随机 shareId 暴露某个 SiteAccount 的实时 RPM/TPM、
+// 指定用户的并发 + 分组 RPM + 今日/累计消费。免登录访问。
+//   userIdsJson  — 允许展示的 SiteUser.remoteUserId 列表 (JSON number[])
+//   groupIdsJson — 允许展示的 sub2api 分组 id 列表 (JSON number[])
+// 留空 = 不展示任何 (安全默认)。
+model PublicShare {
+  id            Int      @id @default(autoincrement())
+  shareId       String   @unique
+  siteAccountId Int
+  name          String   @default("")
+  userIdsJson   String   @default("[]")
+  groupIdsJson  String   @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  siteAccount SiteAccount @relation(fields: [siteAccountId], references: [id], onDelete: Cascade)
+
+  @@index([siteAccountId])
 }
 
 model SiteUser {

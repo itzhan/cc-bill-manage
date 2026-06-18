@@ -48,6 +48,24 @@ const NEW_TABLES = [
     ],
   },
   {
+    name: "PublicShare",
+    sql: `CREATE TABLE IF NOT EXISTS "PublicShare" (
+      "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+      "shareId" TEXT NOT NULL,
+      "siteAccountId" INTEGER NOT NULL,
+      "name" TEXT NOT NULL DEFAULT '',
+      "userIdsJson" TEXT NOT NULL DEFAULT '[]',
+      "groupIdsJson" TEXT NOT NULL DEFAULT '[]',
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY ("siteAccountId") REFERENCES "SiteAccount"("id") ON DELETE CASCADE
+    )`,
+    indexes: [
+      `CREATE UNIQUE INDEX IF NOT EXISTS "PublicShare_shareId_key" ON "PublicShare"("shareId")`,
+      `CREATE INDEX IF NOT EXISTS "PublicShare_siteAccountId_idx" ON "PublicShare"("siteAccountId")`,
+    ],
+  },
+  {
     name: "VeridropRun",
     sql: `CREATE TABLE IF NOT EXISTS "VeridropRun" (
       "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

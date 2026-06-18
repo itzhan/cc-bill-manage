@@ -25,6 +25,10 @@ export async function middleware(req: NextRequest) {
   if (PUBLIC_PATHS.includes(pathname)) {
     return NextResponse.next();
   }
+  // 对外分享链接：/share/<8位id> 页面 + /api/public/share/<id>/... 都免登录。
+  if (pathname.startsWith("/share/") || pathname.startsWith("/api/public/")) {
+    return NextResponse.next();
+  }
 
   const token = req.cookies.get(COOKIE_NAME)?.value;
   const ok = await verify(token);

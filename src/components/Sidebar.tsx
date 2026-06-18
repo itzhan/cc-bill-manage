@@ -14,6 +14,7 @@ import {
   Activity,
   Gauge,
   Briefcase,
+  Share2,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -34,6 +35,7 @@ export const navItems: NavItem[] = [
   { href: "/az", label: "az 管理", icon: <Wand2 size={18} /> },
   { href: "/bench", label: "基准测试", icon: <Gauge size={18} /> },
   { href: "/projects", label: "项目跟踪", icon: <Briefcase size={18} /> },
+  { href: "/site-shares", label: "对外展示", icon: <Share2 size={18} /> },
   { href: "/settings", label: "设置", icon: <Settings size={18} /> },
 ];
 
