@@ -152,19 +152,6 @@ export default function PublicSharePage({
           </div>
         </header>
 
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <StatBox
-            label="当前 RPM"
-            value={stats ? stats.site.rpm.toLocaleString() : "—"}
-            accent="primary"
-          />
-          <StatBox
-            label="当前 TPM"
-            value={stats ? stats.site.tpm.toLocaleString() : "—"}
-            accent="success"
-          />
-        </div>
-
         {config.users.length === 0 ? (
           <Card>
             <CardBody className="text-default-500 text-center p-8">
@@ -202,6 +189,18 @@ export default function PublicSharePage({
                       (b.limit ?? 0) - (a.limit ?? 0) ||
                       a.group_id - b.group_id,
                   );
+                  const rpmUsed = rpm?.user_rpm_used ?? 0;
+                  const rpmLimit = rpm?.user_rpm_limit ?? 0;
+                  const rpmPct =
+                    rpmLimit > 0
+                      ? Math.min(100, Math.round((rpmUsed / rpmLimit) * 100))
+                      : 0;
+                  const rpmBar =
+                    rpmPct >= 90
+                      ? "bg-danger"
+                      : rpmPct >= 70
+                        ? "bg-warning"
+                        : "bg-success";
                   return (
                     <div
                       key={u.id}
@@ -214,7 +213,7 @@ export default function PublicSharePage({
                         >
                           {u.name}
                         </span>
-                        <span className="text-xs tabular-nums shrink-0">
+                        <span className="text-xs tabular-nums shrink-0 text-default-500">
                           <Activity
                             size={11}
                             className="inline mr-0.5 text-default-400"
@@ -225,15 +224,56 @@ export default function PublicSharePage({
                           )}
                         </span>
                       </div>
-                      {cap > 0 && (
-                        <div className="mb-2 h-1.5 rounded bg-default-100 overflow-hidden">
-                          <div
-                            className={`h-full ${concBar}`}
-                            style={{ width: `${concPct}%` }}
-                          />
+
+                      <div className="mb-2 rounded-lg bg-success/5 border border-success/15 p-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-default-500">
+                            当前 RPM
+                          </span>
+                          <span className="text-xs text-default-400 tabular-nums">
+                            {rpmLimit > 0 ? `${rpmPct}%` : ""}
+                          </span>
                         </div>
+                        <div className="flex items-baseline gap-1 mt-0.5">
+                          <span className="text-2xl font-bold tabular-nums">
+                            {rpmUsed.toLocaleString()}
+                          </span>
+                          {rpmLimit > 0 && (
+                            <span className="text-xs text-default-400 tabular-nums">
+                              / {rpmLimit.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                        {rpmLimit > 0 && (
+                          <div className="mt-1.5 h-1 rounded bg-default-100 overflow-hidden">
+                            <div
+                              className={`h-full ${rpmBar}`}
+                              style={{ width: `${rpmPct}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {cap > 0 && (
+                        <>
+                          <div className="flex items-center justify-between text-[11px] text-default-500 mb-1">
+                            <span>并发</span>
+                            <span className="tabular-nums">
+                              {used} / {cap}
+                            </span>
+                          </div>
+                          <div className="mb-2 h-1.5 rounded bg-default-100 overflow-hidden">
+                            <div
+                              className={`h-full ${concBar}`}
+                              style={{ width: `${concPct}%` }}
+                            />
+                          </div>
+                        </>
                       )}
                       <div className="flex flex-col gap-0.5 mb-2">
+                        <p className="text-[11px] text-default-400 mb-0.5">
+                          分组 RPM
+                        </p>
                         {perGroup.length === 0 ? (
                           <span className="text-[11px] text-default-400">
                             {rpm ? "暂无可见分组" : "加载中…"}
@@ -307,25 +347,3 @@ export default function PublicSharePage({
   );
 }
 
-function StatBox({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent: "primary" | "success";
-}) {
-  const ring =
-    accent === "primary"
-      ? "ring-primary/20 from-primary/10"
-      : "ring-success/20 from-success/10";
-  return (
-    <div
-      className={`rounded-xl bg-gradient-to-br ${ring} to-transparent ring-1 p-4`}
-    >
-      <p className="text-xs text-default-500">{label}</p>
-      <p className="text-3xl font-bold tabular-nums mt-1">{value}</p>
-    </div>
-  );
-}
