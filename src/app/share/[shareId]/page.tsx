@@ -57,6 +57,47 @@ export default function PublicSharePage({
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // 伪滑动窗口: sub2api 的 RPM 是"按分钟桶"存的, 整点会归零, 显示就会
+  // 看到从 N 跳回 0 然后又涨。这里给每个被观察的计数 (per-user 总 RPM /
+  // 每个分组) 记录上一次的 used; 检测到下降 = 到了整点切换, 把切换前
+  // 的最终值 stash 起来。展示时按本分钟内秒数线性混合:
+  //   displayed = current + prev_final × (60 − sec_into_minute) / 60
+  // 假设每分钟内流量均匀, 视觉上把跳变变平滑。整体上数字更接近"过去
+  // 一分钟的真实 RPM"而不是"本分钟到目前为止的累计"。
+  const rollingRef = useRef<
+    Map<string, { lastValue: number; prevMinuteFinal: number }>
+  >(new Map());
+
+  function recordRolling(key: string, cur: number) {
+    const prev = rollingRef.current.get(key);
+    if (prev && cur < prev.lastValue) {
+      rollingRef.current.set(key, {
+        lastValue: cur,
+        prevMinuteFinal: prev.lastValue,
+      });
+    } else {
+      rollingRef.current.set(key, {
+        lastValue: cur,
+        prevMinuteFinal: prev?.prevMinuteFinal ?? 0,
+      });
+    }
+  }
+
+  function getSlidingValue(key: string, raw: number): number {
+    const r = rollingRef.current.get(key);
+    if (!r) return raw;
+    const sec = Math.floor(Date.now() / 1000) % 60;
+    const decay = (60 - sec) / 60;
+    return Math.round(r.lastValue + r.prevMinuteFinal * decay);
+  }
+
+  // tick 用于推动滑动窗口每秒重渲染, 否则 60→0 的衰减不会动。
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   // 启动 / 卸载时管理 2s 轮询。404 不重试。
   const aliveRef = useRef(true);
   useEffect(() => {
@@ -91,7 +132,18 @@ export default function PublicSharePage({
         }
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = (await r.json()) as StatsResponse;
-        if (aliveRef.current) setStats(j);
+        if (aliveRef.current) {
+          // 喂给滑动窗口: per-user 总 RPM + 每个分组 RPM 都追踪。
+          for (const [uid, rpmRow] of Object.entries(j.userRpm)) {
+            if (typeof rpmRow.user_rpm_used === "number") {
+              recordRolling(`u:${uid}`, rpmRow.user_rpm_used);
+            }
+            for (const g of rpmRow.per_group ?? []) {
+              recordRolling(`u:${uid}:g:${g.group_id}`, g.used);
+            }
+          }
+          setStats(j);
+        }
       } catch {
         // soft-fail; next tick will retry
       } finally {
@@ -183,13 +235,24 @@ export default function PublicSharePage({
                       : concPct >= 70
                         ? "bg-warning"
                         : "bg-primary";
-                  const perGroup = [...(rpm?.per_group ?? [])].sort(
-                    (a, b) =>
-                      b.used - a.used ||
-                      (b.limit ?? 0) - (a.limit ?? 0) ||
-                      a.group_id - b.group_id,
+                  const perGroup = [...(rpm?.per_group ?? [])]
+                    .map((g) => ({
+                      ...g,
+                      slidingUsed: getSlidingValue(
+                        `u:${u.id}:g:${g.group_id}`,
+                        g.used,
+                      ),
+                    }))
+                    .sort(
+                      (a, b) =>
+                        b.slidingUsed - a.slidingUsed ||
+                        (b.limit ?? 0) - (a.limit ?? 0) ||
+                        a.group_id - b.group_id,
+                    );
+                  const rpmUsed = getSlidingValue(
+                    `u:${u.id}`,
+                    rpm?.user_rpm_used ?? 0,
                   );
-                  const rpmUsed = rpm?.user_rpm_used ?? 0;
                   const rpmLimit = rpm?.user_rpm_limit ?? 0;
                   const rpmPct =
                     rpmLimit > 0
@@ -291,7 +354,7 @@ export default function PublicSharePage({
                                 {g.group_name || `#${g.group_id}`}
                               </span>
                               <span className="tabular-nums text-default-500 shrink-0 ml-2">
-                                {g.used}
+                                {g.slidingUsed}
                                 {g.limit != null && g.limit > 0 && (
                                   <span className="text-default-400">
                                     {" "}
