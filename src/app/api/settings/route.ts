@@ -29,6 +29,7 @@ export async function PATCH(req: Request) {
     errorRateThreshold: number;
     errorRateCooldownMinutes: number;
     schedulingExcludePrefixes: string | null;
+    schedulingDefaultSiteId: number | null;
     unboundExcludePrefixes: string | null;
     unboundExcludeSuffixes: string | null;
     defaultAzSiteAccountId: number | null;
@@ -67,6 +68,8 @@ export async function PATCH(req: Request) {
     );
   if (body.schedulingExcludePrefixes !== undefined)
     data.schedulingExcludePrefixes = body.schedulingExcludePrefixes;
+  if ("schedulingDefaultSiteId" in body)
+    data.schedulingDefaultSiteId = body.schedulingDefaultSiteId;
   if (body.unboundExcludePrefixes !== undefined)
     data.unboundExcludePrefixes = body.unboundExcludePrefixes;
   if (body.unboundExcludeSuffixes !== undefined)

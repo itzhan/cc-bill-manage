@@ -10,8 +10,12 @@ import {
 import { LogOut, Menu, Wallet } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { navItems } from "./Sidebar";
+import { sidebarEntries, navItems, type NavItem, type NavGroup } from "./Sidebar";
 import ThemeToggle from "./ThemeToggle";
+
+function isGroup(e: (typeof sidebarEntries)[number]): e is NavGroup {
+  return "group" in e;
+}
 
 export default function MobileNav() {
   const pathname = usePathname();
@@ -24,6 +28,28 @@ export default function MobileNav() {
   }
 
   const current = navItems.find((it) => it.href === pathname);
+
+  function renderItem(it: NavItem) {
+    const active = pathname === it.href;
+    return (
+      <Link
+        key={it.href}
+        href={it.href}
+        onClick={onClose}
+        className={[
+          "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors",
+          active
+            ? "bg-content2 text-foreground font-medium"
+            : "text-default-500 hover:text-foreground hover:bg-default-100",
+        ].join(" ")}
+      >
+        <span className={active ? "text-foreground" : "text-default-400"}>
+          {it.icon}
+        </span>
+        <span className="flex-1">{it.label}</span>
+      </Link>
+    );
+  }
 
   return (
     <>
@@ -65,32 +91,22 @@ export default function MobileNav() {
             </div>
           </DrawerHeader>
           <DrawerBody className="px-3 pb-4">
-            <nav className="flex flex-col gap-1">
-              {navItems.map((it) => {
-                const active = pathname === it.href;
-                return (
-                  <Link
-                    key={it.href}
-                    href={it.href}
-                    onClick={onClose}
-                    className={[
-                      "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors",
-                      active
-                        ? "bg-content2 text-foreground font-medium"
-                        : "text-default-500 hover:text-foreground hover:bg-default-100",
-                    ].join(" ")}
-                  >
-                    <span
-                      className={
-                        active ? "text-foreground" : "text-default-400"
-                      }
-                    >
-                      {it.icon}
-                    </span>
-                    <span className="flex-1">{it.label}</span>
-                  </Link>
-                );
-              })}
+            <nav className="flex flex-col gap-0.5">
+              {sidebarEntries.map((entry) =>
+                isGroup(entry) ? (
+                  <div key={entry.group} className="mt-1">
+                    <div className="flex items-center gap-2 px-3 py-1.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-default-400">
+                        {entry.group}
+                      </span>
+                      <div className="flex-1 h-px bg-divider/40" />
+                    </div>
+                    {entry.items.map(renderItem)}
+                  </div>
+                ) : (
+                  renderItem(entry)
+                ),
+              )}
             </nav>
             <div className="mt-auto pt-3 flex items-center gap-2 border-t border-divider/50">
               <ThemeToggle />

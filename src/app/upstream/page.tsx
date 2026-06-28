@@ -96,6 +96,7 @@ interface UpstreamAccount {
   balanceUpdatedAt: string | null;
   notes: string | null;
   inventory: string | null;
+  hidden: boolean;
   todayCost?: number;
   _count?: { keys: number };
 }
@@ -167,6 +168,7 @@ export default function UpstreamPage() {
   const [collapsedSuppliers, setCollapsedSuppliers] = useState<Set<string>>(
     new Set(),
   );
+  const [showHidden, setShowHidden] = useState(false);
   // 当前 Tab; 历史渠道 db push 时自动落到 claude, 默认显示 claude。
   const [categoryFilter, setCategoryFilter] = useState<string>(TAB_ALL);
   // 用户自定义的分类列表 — 决定 Tab 显示
@@ -227,7 +229,7 @@ export default function UpstreamPage() {
     setLoading(true);
     try {
       const [acctRes, catRes] = await Promise.all([
-        fetch("/api/upstream", { cache: "no-store" }),
+        fetch(`/api/upstream?hidden=${showHidden ? "1" : "0"}`, { cache: "no-store" }),
         fetch("/api/upstream/categories", { cache: "no-store" }),
       ]);
       const acctJ = await acctRes.json();
@@ -688,6 +690,16 @@ export default function UpstreamPage() {
     await load();
   }
 
+  async function toggleHidden(id: number, hidden: boolean) {
+    await fetch(`/api/upstream/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hidden }),
+    });
+    addToast({ title: hidden ? "已隐藏" : "已显示", color: "success" });
+    await load();
+  }
+
   function openNew() {
     setForm({
       name: "",
@@ -927,7 +939,7 @@ export default function UpstreamPage() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [showHidden]);
 
   // 分类只属于货源条目, 渠道本身不再带分类。Tab 过滤逻辑:
   //   - 全部 tab: 所有渠道都显示, 所有货源都展示
@@ -1053,6 +1065,13 @@ export default function UpstreamPage() {
             isLoading={busyAll}
           >
             一键刷新同步
+          </Button>
+          <Button
+            variant="flat"
+            startContent={showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+            onPress={() => setShowHidden((v) => !v)}
+          >
+            {showHidden ? "查看启用" : "查看已隐藏"}
           </Button>
           <Button color="primary" startContent={<Plus size={14} />} onPress={openNew}>
             新建
@@ -1481,6 +1500,15 @@ export default function UpstreamPage() {
                       title="编辑"
                     >
                       <Pencil size={14} />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="light"
+                      isIconOnly
+                      onPress={() => toggleHidden(a.id, !a.hidden)}
+                      title={a.hidden ? "取消隐藏" : "隐藏"}
+                    >
+                      {a.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
                     </Button>
                     <Button
                       size="sm"

@@ -45,6 +45,7 @@ interface SiteAccount {
   apiKey: string | null;
   lastSyncAt: string | null;
   lastSyncError: string | null;
+  hidden: boolean;
   _count?: { accounts: number };
 }
 
@@ -96,6 +97,7 @@ export default function SitePage() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const [busyRefresh, setBusyRefresh] = useState<number | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
   const [showZero, setShowZero] = useState(false);
   const [bound, setBound] = useState<Record<number, BoundAccount[]>>({});
   const [users, setUsers] = useState<Record<number, SiteUserRow[]>>({});
@@ -117,7 +119,7 @@ export default function SitePage() {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch("/api/site", { cache: "no-store" });
+      const res = await fetch(`/api/site?hidden=${showHidden ? "1" : "0"}`, { cache: "no-store" });
       const j = await res.json();
       setAccounts(j.items || []);
     } finally {
@@ -186,6 +188,16 @@ export default function SitePage() {
       return;
     }
     addToast({ title: "已删除", color: "success" });
+    await load();
+  }
+
+  async function toggleHidden(id: number, hidden: boolean) {
+    await fetch(`/api/site/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hidden }),
+    });
+    addToast({ title: hidden ? "已隐藏" : "已显示", color: "success" });
     await load();
   }
 
@@ -276,7 +288,7 @@ export default function SitePage() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [showHidden]);
 
   return (
     <Shell>
@@ -287,9 +299,17 @@ export default function SitePage() {
             收入侧：拉取 admin/accounts 和 today-stats
           </p>
         </div>
-        <Button color="primary" onPress={openNew}>
-          + 新建
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="flat"
+            onPress={() => setShowHidden((v) => !v)}
+          >
+            {showHidden ? "查看启用" : "查看已隐藏"}
+          </Button>
+          <Button color="primary" onPress={openNew}>
+            + 新建
+          </Button>
+        </div>
       </div>
 
       {loading && !accounts.length ? (
@@ -370,6 +390,13 @@ export default function SitePage() {
                   </Button>
                   <Button size="sm" variant="flat" onPress={() => openEdit(a)}>
                     编辑
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    onPress={() => toggleHidden(a.id, !a.hidden)}
+                  >
+                    {a.hidden ? "显示" : "隐藏"}
                   </Button>
                   <Button
                     size="sm"

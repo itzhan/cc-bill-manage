@@ -156,6 +156,7 @@ interface TemplateRow {
 export default function SchedulingPage() {
   const [sites, setSites] = useState<SiteRow[]>([]);
   const [siteId, setSiteId] = useState<number | null>(null);
+  const [defaultSiteId, setDefaultSiteId] = useState<number | null>(null);
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [concurrency, setConcurrency] = useState<ConcurrencyState>({});
@@ -308,7 +309,12 @@ export default function SchedulingPage() {
       .then((j) => {
         const items = (j.items || []) as SiteRow[];
         setSites(items);
-        if (items.length && siteId == null) setSiteId(items[0].id);
+        setDefaultSiteId(j.defaultSiteId ?? null);
+        if (items.length && siteId == null) {
+          const defId = j.defaultSiteId;
+          const hasDefault = defId && items.some((s) => s.id === defId);
+          setSiteId(hasDefault ? defId : items[0].id);
+        }
       });
   }, [siteId]);
 
@@ -846,6 +852,26 @@ export default function SchedulingPage() {
               <SelectItem key={String(s.id)}>{s.name}</SelectItem>
             ))}
           </Select>
+          {siteId != null && siteId !== defaultSiteId && (
+            <Button
+              size="sm"
+              variant="flat"
+              onPress={async () => {
+                await fetch("/api/settings", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ schedulingDefaultSiteId: siteId }),
+                });
+                setDefaultSiteId(siteId);
+                addToast({ title: "已设为默认站点", color: "success" });
+              }}
+            >
+              设为默认
+            </Button>
+          )}
+          {siteId != null && siteId === defaultSiteId && (
+            <Chip size="sm" variant="flat" color="primary">默认</Chip>
+          )}
           <Button
             size="sm"
             variant="flat"

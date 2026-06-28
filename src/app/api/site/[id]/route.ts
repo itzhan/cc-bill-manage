@@ -34,6 +34,7 @@ export async function PATCH(
     email: string;
     password: string;
     apiKey: string | null;
+    hidden: boolean;
   }>;
   const data: Record<string, unknown> = {};
   if (body.name != null) data.name = body.name;
@@ -46,10 +47,10 @@ export async function PATCH(
   }
   if (body.apiKey !== undefined) {
     data.apiKey = body.apiKey;
-    // Switching to/from apiKey invalidates any cached login token.
     data.accessToken = null;
     data.tokenExpiresAt = null;
   }
+  if (body.hidden !== undefined) data.hidden = body.hidden;
   const item = await prisma.siteAccount.update({
     where: { id: numId },
     data,

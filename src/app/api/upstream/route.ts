@@ -21,7 +21,12 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   // ?category=claude — 过滤含此分类的渠道; "" / 缺省 = 全部
   const category = (url.searchParams.get("category") ?? "").trim();
+  // ?hidden=1 — 返回已隐藏的; 缺省只返回未隐藏的
+  const showHidden = url.searchParams.get("hidden") === "1";
+  // ?all=1 — 返回全部(不按 hidden 过滤), 用于账本等需要全量列表的场景
+  const showAll = url.searchParams.get("all") === "1";
   const accounts = await prisma.upstreamAccount.findMany({
+    where: showAll ? undefined : { hidden: showHidden },
     include: {
       _count: { select: { keys: true } },
       keys: {
@@ -36,7 +41,6 @@ export async function GET(req: Request) {
       const cats = parseCategories(categories, a.category);
       return { ...rest, categories: cats, todayCost };
     })
-    // 过滤: 同时兼容老 category 字段 (cats 来源就是 categories ?? [category])
     .filter((a) => (category ? a.categories.includes(category) : true))
     .sort((a, b) => b.todayCost - a.todayCost || a.id - b.id);
   return NextResponse.json({ items });

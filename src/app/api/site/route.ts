@@ -5,9 +5,13 @@ import { refreshSiteAccount } from "@/lib/sync";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: Request) {
   await ensureScheduler();
+  const url = new URL(req.url);
+  const showHidden = url.searchParams.get("hidden") === "1";
+  const showAll = url.searchParams.get("all") === "1";
   const items = await prisma.siteAccount.findMany({
+    where: showAll ? undefined : { hidden: showHidden },
     orderBy: { id: "asc" },
     include: { _count: { select: { accounts: true } } },
   });
