@@ -1,20 +1,25 @@
 "use client";
 import { Suspense, useMemo } from "react";
-import { Button, Card, CardBody, Chip, Spinner } from "@heroui/react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import Shell from "@/components/Shell";
 import SmartDispatchPanel from "@/components/SmartDispatchPanel";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
-// Deep-link fallback. The primary entry is now the modal on /scheduling
-// (per-group card or custom-group card → 智能调度 button → modal).
-// This page still renders so that bookmarked URLs continue to work, but it
-// doesn't try to thread the parent page's "exclude prefixes" filter — the
-// modal does that.
 export default function SmartDispatchPage() {
   return (
-    <Suspense fallback={<Shell><Spinner /></Shell>}>
+    <Suspense
+      fallback={
+        <Shell>
+          <div className="flex justify-center p-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        </Shell>
+      }
+    >
       <SmartDispatchInner />
     </Suspense>
   );
@@ -41,9 +46,9 @@ function SmartDispatchInner() {
     return (
       <Shell>
         <Card>
-          <CardBody className="text-danger text-sm">
+          <CardContent className="py-4 text-destructive text-sm">
             缺少 siteId 或 groupId / groupIds 参数
-          </CardBody>
+          </CardContent>
         </Card>
       </Shell>
     );
@@ -52,19 +57,16 @@ function SmartDispatchInner() {
   return (
     <Shell>
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <Button
-          as={Link}
-          href="/scheduling"
-          size="sm"
-          variant="light"
-          startContent={<ArrowLeft size={14} />}
-        >
-          返回
+        <Button variant="ghost" size="sm" asChild>
+          <Link href="/scheduling">
+            <ArrowLeft className="h-4 w-4" />
+            返回
+          </Link>
         </Button>
         <h1 className="text-xl font-semibold">智能调度</h1>
-        <Chip size="sm" variant="flat">
+        <Badge variant="secondary">
           {groupIds.length === 1 ? "单分组" : `${groupIds.length} 个分组`}
-        </Chip>
+        </Badge>
       </div>
 
       <SmartDispatchPanel siteId={siteId} groupIds={groupIds} />

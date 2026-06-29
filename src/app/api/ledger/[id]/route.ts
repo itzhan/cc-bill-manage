@@ -14,6 +14,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       userLinks: { include: { siteUser: { select: { id: true, remoteUserId: true, email: true, username: true, alias: true, siteAccountId: true } } } },
       categories: { include: { fixedCosts: true } },
       fixedCosts: { include: { category: true }, orderBy: { createdAt: "desc" } },
+      fixedIncomes: { orderBy: { createdAt: "desc" } },
     },
   });
   if (!ledger) return NextResponse.json({ error: "not found" }, { status: 404 });

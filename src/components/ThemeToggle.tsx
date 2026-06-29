@@ -1,5 +1,11 @@
 "use client";
-import { Button, Tooltip } from "@heroui/react";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Moon, Sun, Monitor } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
@@ -14,10 +20,9 @@ export default function ThemeToggle() {
   if (!mounted) {
     return (
       <Button
-        isIconOnly
-        variant="flat"
-        radius="full"
-        size="sm"
+        variant="secondary"
+        size="icon-sm"
+        className="rounded-full"
         aria-label="theme"
       >
         <Monitor size={14} />
@@ -35,17 +40,21 @@ export default function ThemeToggle() {
         ? "深色"
         : "浅色";
   return (
-    <Tooltip content={label} placement="right">
-      <Button
-        isIconOnly
-        variant="flat"
-        radius="full"
-        size="sm"
-        aria-label={`switch theme (current: ${current})`}
-        onPress={() => setTheme(next)}
-      >
-        <Icon size={14} />
-      </Button>
-    </Tooltip>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="secondary"
+            size="icon-sm"
+            className="rounded-full"
+            aria-label={`switch theme (current: ${current})`}
+            onClick={() => setTheme(next)}
+          >
+            <Icon size={14} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

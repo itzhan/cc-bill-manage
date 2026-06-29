@@ -3,11 +3,11 @@ import Sidebar from "./Sidebar";
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen bg-default-50/40 dark:bg-background relative">
+    <div className="flex min-h-screen bg-background relative">
       {/* Soft background glow — subtle, only behind content */}
       <div
         aria-hidden
-        className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(ellipse_at_top_right,_hsl(var(--heroui-primary)/0.06),_transparent_60%)]"
+        className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(ellipse_at_top_right,_hsl(var(--primary)/0.08),_transparent_50%),radial-gradient(ellipse_at_bottom_left,_hsl(var(--primary)/0.04),_transparent_50%)]"
       />
       <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col">

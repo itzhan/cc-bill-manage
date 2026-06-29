@@ -1,28 +1,35 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
-  Button,
-  Chip,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Progress,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
   Select,
+  SelectContent,
   SelectItem,
-  Spinner,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
-  TableColumn,
+  TableHead,
   TableHeader,
   TableRow,
-  Tab,
-  Tabs,
-  addToast,
-} from "@heroui/react";
+} from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface DetectorResult {
   name?: string;
@@ -120,7 +127,7 @@ export default function VeridropModal({
   const [view, setView] = useState<"new" | "current">("new");
   const pollTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // 模态关闭/key 切换 → 重置
+  // 模态关闭/key 切换 -> 重置
   useEffect(() => {
     if (!isOpen) {
       if (pollTimer.current) clearInterval(pollTimer.current);
@@ -145,7 +152,7 @@ export default function VeridropModal({
       const j = (await r.json()) as { items: PriorRun[] };
       setPriorRuns(j.items ?? []);
     } catch {
-      // ignore — listing failure not critical
+      // ignore -- listing failure not critical
     }
   }
 
@@ -187,10 +194,8 @@ export default function VeridropModal({
       );
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        addToast({
-          title: "启动失败",
+        toast.error("启动失败", {
           description: String(j.error || r.status),
-          color: "danger",
         });
         return;
       }
@@ -219,268 +224,253 @@ export default function VeridropModal({
     run && (run.status === "queued" || run.status === "running");
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="5xl" scrollBehavior="inside">
-      <ModalContent>
-        {(close) => (
-          <>
-            <ModalHeader>
-              <div className="flex flex-col">
-                <span>veridrop · 真伪 / 协议合规检测</span>
-                <span className="text-xs text-default-500 font-normal mt-0.5">
-                  {channelKey
-                    ? `${channelKey.name} · ${channelKey.apiKeyMasked}`
-                    : ""}
-                </span>
+    <Dialog open={isOpen} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-5xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>veridrop · 真伪 / 协议合规检测</DialogTitle>
+          <p className="text-xs text-muted-foreground font-normal mt-0.5">
+            {channelKey
+              ? `${channelKey.name} · ${channelKey.apiKeyMasked}`
+              : ""}
+          </p>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <Tabs value={view} onValueChange={(v) => setView(v as "new" | "current")}>
+            <TabsList>
+              <TabsTrigger value="new">新检测</TabsTrigger>
+              <TabsTrigger value="current">{runId ? `当前/历史 #${runId}` : "历史"}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {view === "new" && (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label>协议</Label>
+                  <Select
+                    value={form.protocol}
+                    onValueChange={(v) => setForm((f) => ({ ...f, protocol: v }))}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="anthropic">anthropic</SelectItem>
+                      <SelectItem value="openai">openai</SelectItem>
+                      <SelectItem value="gemini">gemini</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>模式</Label>
+                  <Select
+                    value={form.mode}
+                    onValueChange={(v) => setForm((f) => ({ ...f, mode: v }))}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="quick">quick (~15s)</SelectItem>
+                      <SelectItem value="standard">standard (~40s)</SelectItem>
+                      <SelectItem value="full">full (~70s)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>模型</Label>
+                  <Input
+                    className="h-8 text-xs"
+                    value={form.model}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, model: e.target.value }))
+                    }
+                    placeholder="claude-opus-4-7"
+                  />
+                </div>
               </div>
-            </ModalHeader>
-            <ModalBody className="gap-3">
-              <Tabs
-                selectedKey={view}
-                onSelectionChange={(k) => setView(String(k) as "new" | "current")}
-                size="sm"
-              >
-                <Tab key="new" title="新检测" />
-                <Tab key="current" title={runId ? `当前/历史 #${runId}` : "历史"} />
-              </Tabs>
-
-              {view === "new" && (
-                <>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Select
-                      label="协议"
-                      size="sm"
-                      selectedKeys={[form.protocol]}
-                      onSelectionChange={(k) => {
-                        const v = String(Array.from(k)[0] ?? "anthropic");
-                        setForm((f) => ({ ...f, protocol: v }));
-                      }}
-                    >
-                      <SelectItem key="anthropic">anthropic</SelectItem>
-                      <SelectItem key="openai">openai</SelectItem>
-                      <SelectItem key="gemini">gemini</SelectItem>
-                    </Select>
-                    <Select
-                      label="模式"
-                      size="sm"
-                      selectedKeys={[form.mode]}
-                      onSelectionChange={(k) => {
-                        const v = String(Array.from(k)[0] ?? "full");
-                        setForm((f) => ({ ...f, mode: v }));
-                      }}
-                    >
-                      <SelectItem key="quick">quick (~15s)</SelectItem>
-                      <SelectItem key="standard">standard (~40s)</SelectItem>
-                      <SelectItem key="full">full (~70s)</SelectItem>
-                    </Select>
-                    <Input
-                      size="sm"
-                      label="模型"
-                      value={form.model}
-                      onValueChange={(v) =>
-                        setForm((f) => ({ ...f, model: v }))
-                      }
-                      placeholder="claude-opus-4-7"
-                    />
+              {priorRuns.length > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    历史检测
                   </div>
-                  {priorRuns.length > 0 && (
-                    <div>
-                      <div className="text-xs text-default-500 mb-1">
-                        历史检测
-                      </div>
-                      <div className="border border-divider/50 rounded-lg overflow-hidden">
-                        <Table removeWrapper aria-label="prior runs">
-                          <TableHeader>
-                            <TableColumn>时间</TableColumn>
-                            <TableColumn>协议/模式</TableColumn>
-                            <TableColumn>模型</TableColumn>
-                            <TableColumn>状态</TableColumn>
-                            <TableColumn>得分</TableColumn>
-                            <TableColumn>verdict</TableColumn>
-                            <TableColumn>{" "}</TableColumn>
-                          </TableHeader>
-                          <TableBody>
-                            {priorRuns.map((r) => (
-                              <TableRow key={r.id}>
-                                <TableCell className="text-xs">
-                                  {new Date(r.createdAt).toLocaleString(
-                                    "zh-CN",
-                                  )}
-                                </TableCell>
-                                <TableCell className="text-xs">
-                                  {r.protocol} / {r.mode}
-                                </TableCell>
-                                <TableCell className="text-xs font-mono">
-                                  {r.model}
-                                </TableCell>
-                                <TableCell>
-                                  <StatusChip status={r.status} />
-                                </TableCell>
-                                <TableCell className="text-xs tabular-nums">
-                                  {r.totalScore != null
-                                    ? r.totalScore.toFixed(1)
-                                    : "—"}
-                                </TableCell>
-                                <TableCell>
-                                  {r.verdict ? (
-                                    <VerdictChip verdict={r.verdict} />
-                                  ) : (
-                                    <span className="text-default-400 text-xs">
-                                      —
-                                    </span>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <Button
-                                    size="sm"
-                                    variant="light"
-                                    className="h-7 px-2 text-[11px]"
-                                    onPress={() => openPriorRun(r.id)}
-                                  >
-                                    查看
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </div>
-                  )}
-                </>
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>时间</TableHead>
+                          <TableHead>协议/模式</TableHead>
+                          <TableHead>模型</TableHead>
+                          <TableHead>状态</TableHead>
+                          <TableHead>得分</TableHead>
+                          <TableHead>verdict</TableHead>
+                          <TableHead>{" "}</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {priorRuns.map((r) => (
+                          <TableRow key={r.id}>
+                            <TableCell className="text-xs">
+                              {new Date(r.createdAt).toLocaleString(
+                                "zh-CN",
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {r.protocol} / {r.mode}
+                            </TableCell>
+                            <TableCell className="text-xs font-mono">
+                              {r.model}
+                            </TableCell>
+                            <TableCell>
+                              <StatusBadge status={r.status} />
+                            </TableCell>
+                            <TableCell className="text-xs tabular-nums">
+                              {r.totalScore != null
+                                ? r.totalScore.toFixed(1)
+                                : "—"}
+                            </TableCell>
+                            <TableCell>
+                              {r.verdict ? (
+                                <VerdictBadge verdict={r.verdict} />
+                              ) : (
+                                <span className="text-muted-foreground text-xs">
+                                  —
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-[11px]"
+                                onClick={() => openPriorRun(r.id)}
+                              >
+                                查看
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
               )}
+            </>
+          )}
 
-              {view === "current" && (
-                <>
-                  {!run ? (
-                    <div className="flex justify-center py-8">
-                      <Spinner />
-                    </div>
-                  ) : (
-                    <RunDetail run={run} />
-                  )}
-                </>
+          {view === "current" && (
+            <>
+              {!run ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
+              ) : (
+                <RunDetailView run={run} />
               )}
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="light" onPress={close}>
-                关闭
-              </Button>
-              {view === "new" && (
-                <Button
-                  color="primary"
-                  isLoading={submitting}
-                  onPress={submit}
-                  isDisabled={!channelKey}
-                >
-                  开始检测
-                </Button>
-              )}
-              {view === "current" && !inProgress && run && (
-                <Button
-                  color="primary"
-                  variant="flat"
-                  onPress={() => {
-                    setView("new");
-                    setRunId(null);
-                    setRun(null);
-                  }}
-                >
-                  新一次检测
-                </Button>
-              )}
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+            </>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            关闭
+          </Button>
+          {view === "new" && (
+            <Button
+              disabled={submitting || !channelKey}
+              onClick={submit}
+            >
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              开始检测
+            </Button>
+          )}
+          {view === "current" && !inProgress && run && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setView("new");
+                setRunId(null);
+                setRun(null);
+              }}
+            >
+              新一次检测
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function StatusChip({ status }: { status: string }) {
+function StatusBadge({ status }: { status: string }) {
   const map: Record<
     string,
-    { color: "default" | "primary" | "success" | "warning" | "danger"; label: string }
+    { variant: "secondary" | "default" | "success" | "warning" | "destructive"; label: string }
   > = {
-    queued: { color: "default", label: "排队" },
-    running: { color: "primary", label: "运行中" },
-    done: { color: "success", label: "完成" },
-    error: { color: "danger", label: "失败" },
+    queued: { variant: "secondary", label: "排队" },
+    running: { variant: "default", label: "运行中" },
+    done: { variant: "success", label: "完成" },
+    error: { variant: "destructive", label: "失败" },
   };
-  const m = map[status] ?? { color: "default" as const, label: status };
-  return (
-    <Chip size="sm" color={m.color} variant="flat">
-      {m.label}
-    </Chip>
-  );
+  const m = map[status] ?? { variant: "secondary" as const, label: status };
+  return <Badge variant={m.variant}>{m.label}</Badge>;
 }
 
-function VerdictChip({ verdict }: { verdict: string }) {
+function VerdictBadge({ verdict }: { verdict: string }) {
   const map: Record<
     string,
-    { color: "success" | "warning" | "danger" | "default"; label: string }
+    { variant: "success" | "warning" | "destructive" | "secondary"; label: string }
   > = {
-    passed: { color: "success", label: "passed" },
-    marginal: { color: "warning", label: "marginal" },
-    failed: { color: "danger", label: "failed" },
+    passed: { variant: "success", label: "passed" },
+    marginal: { variant: "warning", label: "marginal" },
+    failed: { variant: "destructive", label: "failed" },
   };
-  const m = map[verdict] ?? { color: "default" as const, label: verdict };
-  return (
-    <Chip size="sm" color={m.color} variant="flat">
-      {m.label}
-    </Chip>
-  );
+  const m = map[verdict] ?? { variant: "secondary" as const, label: verdict };
+  return <Badge variant={m.variant}>{m.label}</Badge>;
 }
 
-function DetectorStatusChip({ status }: { status: string }) {
+function DetectorStatusBadge({ status }: { status: string }) {
   const map: Record<
     string,
-    { color: "success" | "warning" | "danger" | "default"; label: string }
+    { variant: "success" | "warning" | "destructive" | "secondary"; label: string }
   > = {
-    pass: { color: "success", label: "pass" },
-    fail: { color: "danger", label: "fail" },
-    skip: { color: "default", label: "skip" },
-    error: { color: "danger", label: "error" },
+    pass: { variant: "success", label: "pass" },
+    fail: { variant: "destructive", label: "fail" },
+    skip: { variant: "secondary", label: "skip" },
+    error: { variant: "destructive", label: "error" },
   };
-  const m = map[status] ?? { color: "default" as const, label: status };
-  return (
-    <Chip size="sm" color={m.color} variant="flat">
-      {m.label}
-    </Chip>
-  );
+  const m = map[status] ?? { variant: "secondary" as const, label: status };
+  return <Badge variant={m.variant}>{m.label}</Badge>;
 }
 
-function RunDetail({ run }: { run: RunState }) {
+function RunDetailView({ run }: { run: RunState }) {
   const progress = run.status === "running" || run.status === "queued";
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3 flex-wrap">
-        <StatusChip status={run.status} />
-        {run.verdict && <VerdictChip verdict={run.verdict} />}
-        <span className="text-xs text-default-500">
+        <StatusBadge status={run.status} />
+        {run.verdict && <VerdictBadge verdict={run.verdict} />}
+        <span className="text-xs text-muted-foreground">
           {run.protocol} / {run.mode}
         </span>
-        <span className="text-xs font-mono text-default-500">{run.model}</span>
+        <span className="text-xs font-mono text-muted-foreground">{run.model}</span>
         {run.totalScore != null && (
           <span className="text-sm font-bold">
             得分 <span className="tabular-nums">{run.totalScore.toFixed(1)}</span>
           </span>
         )}
         {run.summary && (
-          <span className="text-sm text-default-700">{run.summary}</span>
+          <span className="text-sm text-foreground">{run.summary}</span>
         )}
       </div>
 
       {progress && (
-        <Progress
-          size="sm"
-          isIndeterminate
-          aria-label="running"
-          color="primary"
-        />
+        <div className="h-2 rounded-full bg-muted overflow-hidden">
+          <div className="h-full rounded-full bg-primary animate-pulse w-full" />
+        </div>
       )}
 
       {run.status === "error" && run.errorText && (
-        <div className="text-xs text-danger whitespace-pre-wrap break-all border border-danger/30 bg-danger-50/30 rounded p-2">
+        <div className="text-xs text-destructive whitespace-pre-wrap break-all border border-destructive/30 bg-destructive/5 rounded p-2">
           {run.errorText}
         </div>
       )}
@@ -522,18 +512,18 @@ function ReportView({ report }: { report: Report }) {
 
       {report.detected_non_anthropic_brands &&
         report.detected_non_anthropic_brands.length > 0 && (
-          <div className="border border-warning/40 bg-warning-50/30 rounded p-2 text-xs">
-            <span className="text-warning font-medium">
+          <div className="border border-amber-500/40 bg-amber-500/5 rounded p-2 text-xs">
+            <span className="text-amber-600 dark:text-amber-400 font-medium">
               检测到非 Anthropic 品牌词
             </span>
-            <span className="ml-2 text-default-700">
+            <span className="ml-2 text-foreground">
               {report.detected_non_anthropic_brands.join("、")}
             </span>
           </div>
         )}
 
       {report.run_error && (
-        <div className="border border-danger/40 bg-danger-50/30 rounded p-2 text-xs text-danger">
+        <div className="border border-destructive/40 bg-destructive/5 rounded p-2 text-xs text-destructive">
           {report.run_error}
         </div>
       )}
@@ -551,7 +541,7 @@ function PerformanceView({ perf }: { perf: Performance }) {
   const u = perf.usage ?? {};
   return (
     <div>
-      <div className="text-xs text-default-500 mb-1">性能 & 用量</div>
+      <div className="text-xs text-muted-foreground mb-1">性能 & 用量</div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
         <Tile
           label="总耗时 ms"
@@ -618,18 +608,20 @@ function DetectorsTable({ results }: { results: DetectorResult[] }) {
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   return (
     <div>
-      <div className="text-xs text-default-500 mb-1">
+      <div className="text-xs text-muted-foreground mb-1">
         检测项 ({results.length})
       </div>
-      <Table removeWrapper aria-label="detectors">
+      <Table>
         <TableHeader>
-          <TableColumn>名称</TableColumn>
-          <TableColumn>状态</TableColumn>
-          <TableColumn>得分</TableColumn>
-          <TableColumn>权重</TableColumn>
-          <TableColumn>耗时 ms</TableColumn>
-          <TableColumn>错误</TableColumn>
-          <TableColumn>{" "}</TableColumn>
+          <TableRow>
+            <TableHead>名称</TableHead>
+            <TableHead>状态</TableHead>
+            <TableHead>得分</TableHead>
+            <TableHead>权重</TableHead>
+            <TableHead>耗时 ms</TableHead>
+            <TableHead>错误</TableHead>
+            <TableHead>{" "}</TableHead>
+          </TableRow>
         </TableHeader>
         <TableBody>
           {results.flatMap((r, i) => {
@@ -641,14 +633,14 @@ function DetectorsTable({ results }: { results: DetectorResult[] }) {
                       {r.display_name || r.name}
                     </span>
                     {r.display_name && r.name && (
-                      <span className="text-[10px] text-default-400 font-mono">
+                      <span className="text-[10px] text-muted-foreground font-mono">
                         {r.name}
                       </span>
                     )}
                   </div>
                 </TableCell>
                 <TableCell>
-                  <DetectorStatusChip status={r.status ?? "—"} />
+                  <DetectorStatusBadge status={r.status ?? "—"} />
                 </TableCell>
                 <TableCell className="text-xs tabular-nums">
                   {r.score != null ? r.score.toFixed(1) : "—"}
@@ -661,18 +653,18 @@ function DetectorsTable({ results }: { results: DetectorResult[] }) {
                     ? r.duration_ms.toLocaleString()
                     : "—"}
                 </TableCell>
-                <TableCell className="text-xs text-danger break-all max-w-[200px]">
+                <TableCell className="text-xs text-destructive break-all max-w-[200px]">
                   {r.error ?? ""}
                 </TableCell>
                 <TableCell>
                   <Button
                     size="sm"
-                    variant="light"
+                    variant="ghost"
                     className="h-7 px-2 text-[11px]"
-                    onPress={() =>
+                    onClick={() =>
                       setOpenIdx(openIdx === i ? null : i)
                     }
-                    isDisabled={!r.details}
+                    disabled={!r.details}
                   >
                     {openIdx === i ? "收起" : "details"}
                   </Button>
@@ -683,7 +675,7 @@ function DetectorsTable({ results }: { results: DetectorResult[] }) {
             return [
               row,
               <TableRow key={`d${i}`}>
-                <TableCell colSpan={7} className="bg-content2/30">
+                <TableCell colSpan={7} className="bg-muted/30">
                   <pre className="text-[11px] whitespace-pre-wrap break-all p-2 max-h-[300px] overflow-auto">
                     {JSON.stringify(r.details, null, 2)}
                   </pre>
@@ -711,12 +703,14 @@ function Tile({
   title?: string;
 }) {
   return (
-    <div className="border border-divider/50 rounded p-2">
-      <div className="text-[10px] text-default-500">{label}</div>
+    <div className="border border-border rounded p-2">
+      <div className="text-[10px] text-muted-foreground">{label}</div>
       <div
-        className={`${mono ? "font-mono" : ""} ${
-          truncate ? "truncate" : ""
-        } text-sm`}
+        className={cn(
+          "text-sm",
+          mono && "font-mono",
+          truncate && "truncate",
+        )}
         title={title}
       >
         {value}

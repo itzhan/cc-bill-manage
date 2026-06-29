@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 export async function GET() {
   const [upstreamKeys, siteBound] = await Promise.all([
     prisma.upstreamKey.findMany({
+      where: { upstreamAccount: { hidden: false } },
       orderBy: { id: "asc" },
       include: { upstreamAccount: true },
     }),

@@ -1,40 +1,51 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Checkbox,
-  Chip,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Select,
-  SelectItem,
-  Spinner,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
-  Textarea,
-  Tooltip,
-  addToast,
-  useDisclosure,
-} from "@heroui/react";
-import {
   ChevronRight,
+  Loader2,
   Pencil,
   StickyNote,
   Wallet,
 } from "lucide-react";
+import { toast } from "sonner";
 import Shell from "@/components/Shell";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface SiteAccount {
   id: number;
@@ -104,8 +115,8 @@ export default function SitePage() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [showZeroUsers, setShowZeroUsers] = useState(false);
 
-  const newDlg = useDisclosure();
-  const editDlg = useDisclosure();
+  const [newDlgOpen, setNewDlgOpen] = useState(false);
+  const [editDlgOpen, setEditDlgOpen] = useState(false);
   const [editing, setEditing] = useState<SiteAccount | null>(null);
   const [form, setForm] = useState({
     name: "",
@@ -145,9 +156,9 @@ export default function SitePage() {
       const res = await fetch(`/api/site/${id}/sync`, { method: "POST" });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        addToast({ title: "同步失败", description: j.error, color: "danger" });
+        toast.error("同步失败", { description: j.error });
       } else {
-        addToast({ title: "用量已更新", color: "success" });
+        toast.success("用量已更新");
         await load();
         if (expanded === id) {
           await loadBound(id);
@@ -165,9 +176,9 @@ export default function SitePage() {
       const res = await fetch(`/api/site/${id}/refresh`, { method: "POST" });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        addToast({ title: "刷新失败", description: j.error, color: "danger" });
+        toast.error("刷新失败", { description: j.error });
       } else {
-        addToast({ title: "结构已刷新", color: "success" });
+        toast.success("结构已刷新");
         await load();
         if (expanded === id) {
           await loadBound(id);
@@ -184,10 +195,10 @@ export default function SitePage() {
     const res = await fetch(`/api/site/${id}`, { method: "DELETE" });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      addToast({ title: "删除失败", description: j.error, color: "danger" });
+      toast.error("删除失败", { description: j.error });
       return;
     }
-    addToast({ title: "已删除", color: "success" });
+    toast.success("已删除");
     await load();
   }
 
@@ -197,7 +208,7 @@ export default function SitePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ hidden }),
     });
-    addToast({ title: hidden ? "已隐藏" : "已显示", color: "success" });
+    toast.success(hidden ? "已隐藏" : "已显示");
     await load();
   }
 
@@ -210,7 +221,7 @@ export default function SitePage() {
       password: "",
       apiKey: "",
     });
-    newDlg.onOpen();
+    setNewDlgOpen(true);
   }
   function openEdit(a: SiteAccount) {
     setEditing(a);
@@ -222,19 +233,16 @@ export default function SitePage() {
       password: "",
       apiKey: a.apiKey ?? "",
     });
-    editDlg.onOpen();
+    setEditDlgOpen(true);
   }
 
   async function submitNew() {
     if (!form.name || !form.baseUrl) {
-      addToast({ title: "名称和 Base URL 必填", color: "warning" });
+      toast.warning("名称和 Base URL 必填");
       return;
     }
     if (!form.apiKey && (!form.email || !form.password)) {
-      addToast({
-        title: "请填写 apiKey，或填写 email + password",
-        color: "warning",
-      });
+      toast.warning("请填写 apiKey，或填写 email + password");
       return;
     }
     const res = await fetch("/api/site", {
@@ -244,11 +252,11 @@ export default function SitePage() {
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      addToast({ title: "创建失败", description: j.error, color: "danger" });
+      toast.error("创建失败", { description: j.error });
       return;
     }
-    newDlg.onClose();
-    addToast({ title: "已创建", color: "success" });
+    setNewDlgOpen(false);
+    toast.success("已创建");
     await load();
   }
 
@@ -268,11 +276,11 @@ export default function SitePage() {
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      addToast({ title: "保存失败", description: j.error, color: "danger" });
+      toast.error("保存失败", { description: j.error });
       return;
     }
-    editDlg.onClose();
-    addToast({ title: "已保存", color: "success" });
+    setEditDlgOpen(false);
+    toast.success("已保存");
     await load();
   }
 
@@ -295,18 +303,18 @@ export default function SitePage() {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold">本站账号（管理员）</h1>
-          <p className="text-sm text-default-500">
+          <p className="text-sm text-muted-foreground">
             收入侧：拉取 admin/accounts 和 today-stats
           </p>
         </div>
         <div className="flex gap-2">
           <Button
-            variant="flat"
-            onPress={() => setShowHidden((v) => !v)}
+            variant="secondary"
+            onClick={() => setShowHidden((v) => !v)}
           >
             {showHidden ? "查看启用" : "查看已隐藏"}
           </Button>
-          <Button color="primary" onPress={openNew}>
+          <Button onClick={openNew}>
             + 新建
           </Button>
         </div>
@@ -314,11 +322,11 @@ export default function SitePage() {
 
       {loading && !accounts.length ? (
         <div className="flex justify-center p-12">
-          <Spinner />
+          <Loader2 className="h-5 w-5 animate-spin" />
         </div>
       ) : accounts.length === 0 ? (
         <Card>
-          <CardBody className="text-default-500">暂无本站账号</CardBody>
+          <CardContent className="text-muted-foreground">暂无本站账号</CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
@@ -338,34 +346,34 @@ export default function SitePage() {
                     toggleExpand(a.id);
                   }
                 }}
-                className="flex justify-between flex-wrap gap-2 cursor-pointer hover:bg-default-50 transition-colors"
+                className="flex justify-between flex-wrap gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-start gap-2">
                   <ChevronRight
                     size={16}
-                    className={`mt-1 text-default-400 transition-transform ${expanded === a.id ? "rotate-90" : ""}`}
+                    className={`mt-1 text-muted-foreground transition-transform ${expanded === a.id ? "rotate-90" : ""}`}
                   />
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-semibold">{a.name}</h3>
-                      <Chip size="sm" variant="flat">
+                      <Badge variant="secondary">
                         {a.type}
-                      </Chip>
-                      <Chip size="sm" variant="flat" color="default">
+                      </Badge>
+                      <Badge variant="outline">
                         {a._count?.accounts ?? 0} accounts
-                      </Chip>
+                      </Badge>
                       {a.lastSyncError && (
-                        <Chip size="sm" color="danger" variant="flat">
+                        <Badge variant="destructive">
                           同步失败
-                        </Chip>
+                        </Badge>
                       )}
                     </div>
-                    <p className="text-xs text-default-500 mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       {a.email} @ {a.baseUrl} · 最后同步:{" "}
                       {fmtDate(a.lastSyncAt)}
                     </p>
                     {a.lastSyncError && (
-                      <p className="text-xs text-danger mt-1 break-all">
+                      <p className="text-xs text-destructive mt-1 break-all">
                         {a.lastSyncError}
                       </p>
                     )}
@@ -374,42 +382,43 @@ export default function SitePage() {
                 <div className="flex gap-2 flex-wrap" data-stop-toggle>
                   <Button
                     size="sm"
-                    variant="flat"
-                    onPress={() => syncOne(a.id)}
-                    isLoading={busy === a.id}
+                    variant="secondary"
+                    onClick={() => syncOne(a.id)}
+                    disabled={busy === a.id}
                   >
+                    {busy === a.id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                     同步用量
                   </Button>
                   <Button
                     size="sm"
-                    variant="flat"
-                    onPress={() => refreshOne(a.id)}
-                    isLoading={busyRefresh === a.id}
+                    variant="secondary"
+                    onClick={() => refreshOne(a.id)}
+                    disabled={busyRefresh === a.id}
                   >
+                    {busyRefresh === a.id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                     结构刷新
                   </Button>
-                  <Button size="sm" variant="flat" onPress={() => openEdit(a)}>
+                  <Button size="sm" variant="secondary" onClick={() => openEdit(a)}>
                     编辑
                   </Button>
                   <Button
                     size="sm"
-                    variant="flat"
-                    onPress={() => toggleHidden(a.id, !a.hidden)}
+                    variant="secondary"
+                    onClick={() => toggleHidden(a.id, !a.hidden)}
                   >
                     {a.hidden ? "显示" : "隐藏"}
                   </Button>
                   <Button
                     size="sm"
-                    color="danger"
-                    variant="flat"
-                    onPress={() => remove(a.id)}
+                    variant="destructive"
+                    onClick={() => remove(a.id)}
                   >
                     删除
                   </Button>
                 </div>
               </CardHeader>
               {expanded === a.id && (
-                <CardBody>
+                <CardContent>
                   <UsersSection
                     siteAccountId={a.id}
                     rows={users[a.id]}
@@ -418,16 +427,16 @@ export default function SitePage() {
                     onChanged={() => loadUsers(a.id)}
                   />
 
-                  <div className="mt-6 pt-4 border-t border-divider/40">
+                  <div className="mt-6 pt-4 border-t border-border/40">
                     <h4 className="font-semibold mb-1">上游账号 / 分组</h4>
-                    <p className="text-xs text-default-500 mb-3">
+                    <p className="text-xs text-muted-foreground mb-3">
                       本站这边对接到上游的 admin/account 列表（按今日消费降序）
                     </p>
                   </div>
                   {!bound[a.id] ? (
-                    <Spinner size="sm" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : bound[a.id].length === 0 ? (
-                    <p className="text-default-500 text-sm">
+                    <p className="text-muted-foreground text-sm">
                       暂无 accounts。点同步先拉一次。
                     </p>
                   ) : (() => {
@@ -440,30 +449,32 @@ export default function SitePage() {
                     const hiddenCount = bound[a.id].length - filtered.length;
                     return (
                       <>
-                        <div className="flex items-center justify-between mb-2 text-xs text-default-500">
-                          <Checkbox
-                            size="sm"
-                            isSelected={showZero}
-                            onValueChange={setShowZero}
-                          >
-                            显示今日 0 消费的 account
-                          </Checkbox>
+                        <div className="flex items-center justify-between mb-2 text-xs text-muted-foreground">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <Checkbox
+                              checked={showZero}
+                              onCheckedChange={(v) => setShowZero(!!v)}
+                            />
+                            <span className="text-xs">显示今日 0 消费的 account</span>
+                          </label>
                           {!showZero && hiddenCount > 0 && (
                             <span>已隐藏 {hiddenCount} 个 0 消费 account</span>
                           )}
                         </div>
                         {filtered.length === 0 ? (
-                          <p className="text-default-500 text-sm">
+                          <p className="text-muted-foreground text-sm">
                             没有今日有消费的 account。勾选上方可显示全部。
                           </p>
                         ) : (
-                    <Table removeWrapper aria-label="bound accounts">
+                    <Table>
                       <TableHeader>
-                        <TableColumn>名称</TableColumn>
-                        <TableColumn>分组×倍率</TableColumn>
-                        <TableColumn>请求</TableColumn>
-                        <TableColumn>实际收入</TableColumn>
-                        <TableColumn>倍率覆盖</TableColumn>
+                        <TableRow>
+                          <TableHead>名称</TableHead>
+                          <TableHead>分组×倍率</TableHead>
+                          <TableHead>请求</TableHead>
+                          <TableHead>实际收入</TableHead>
+                          <TableHead>倍率覆盖</TableHead>
+                        </TableRow>
                       </TableHeader>
                       <TableBody>
                         {filtered.map((acc) => {
@@ -485,7 +496,7 @@ export default function SitePage() {
                                   <span className="text-sm font-medium">
                                     {acc.name}
                                   </span>
-                                  <span className="text-xs text-default-400">
+                                  <span className="text-xs text-muted-foreground">
                                     {bindNames
                                       ? `→ ${bindNames}`
                                       : "未绑定上游"}
@@ -504,7 +515,7 @@ export default function SitePage() {
                                   <span className="font-medium">
                                     {fmtMoneyShort(effectiveUC)}
                                   </span>
-                                  <span className="text-xs text-default-400">
+                                  <span className="text-xs text-muted-foreground">
                                     1× {fmtMoneyShort(acc.todayCost)}
                                     {acc.rateMultiplierOverride != null && (
                                       <span className="ml-1 line-through">
@@ -529,110 +540,142 @@ export default function SitePage() {
                       </>
                     );
                   })()}
-                </CardBody>
+                </CardContent>
               )}
             </Card>
           ))}
         </div>
       )}
 
-      <Modal isOpen={newDlg.isOpen} onClose={newDlg.onClose}>
-        <ModalContent>
-          <ModalHeader>新建本站账号</ModalHeader>
-          <ModalBody className="gap-3">
-            <Input
-              label="名称"
-              value={form.name}
-              onValueChange={(v) => setForm({ ...form, name: v })}
-            />
-            <Select
-              label="类型"
-              selectedKeys={new Set([form.type])}
-              onSelectionChange={(k) =>
-                setForm({ ...form, type: Array.from(k)[0] as string })
-              }
-            >
-              <SelectItem key="sub2api">sub2api</SelectItem>
-            </Select>
-            <Input
-              label="Base URL"
-              placeholder="http://your-site:8080"
-              value={form.baseUrl}
-              onValueChange={(v) => setForm({ ...form, baseUrl: v })}
-            />
-            <Input
-              label="Admin API Key（推荐）"
-              description="填写后请求走 x-api-key，免登录；email/password 仅作记录。也可只填 email/password 走登录流程。"
-              type="password"
-              value={form.apiKey}
-              onValueChange={(v) => setForm({ ...form, apiKey: v })}
-            />
-            <Input
-              label="Email（记录或登录）"
-              value={form.email}
-              onValueChange={(v) => setForm({ ...form, email: v })}
-            />
-            <Input
-              label="密码（记录或登录）"
-              type="password"
-              value={form.password}
-              onValueChange={(v) => setForm({ ...form, password: v })}
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={newDlg.onClose}>
+      <Dialog open={newDlgOpen} onOpenChange={setNewDlgOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>新建本站账号</DialogTitle>
+            <DialogDescription className="sr-only">创建新的本站账号</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>名称</Label>
+              <Input
+                placeholder="名称"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>类型</Label>
+              <Select
+                value={form.type}
+                onValueChange={(v) => setForm({ ...form, type: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sub2api">sub2api</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Base URL</Label>
+              <Input
+                placeholder="http://your-site:8080"
+                value={form.baseUrl}
+                onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Admin API Key（推荐）</Label>
+              <Input
+                type="password"
+                value={form.apiKey}
+                onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">填写后请求走 x-api-key，免登录；email/password 仅作记录。也可只填 email/password 走登录流程。</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Email（记录或登录）</Label>
+              <Input
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>密码（记录或登录）</Label>
+              <Input
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setNewDlgOpen(false)}>
               取消
             </Button>
-            <Button color="primary" onPress={submitNew}>
+            <Button onClick={submitNew}>
               创建
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      <Modal isOpen={editDlg.isOpen} onClose={editDlg.onClose}>
-        <ModalContent>
-          <ModalHeader>编辑本站账号</ModalHeader>
-          <ModalBody className="gap-3">
-            <Input
-              label="名称"
-              value={form.name}
-              onValueChange={(v) => setForm({ ...form, name: v })}
-            />
-            <Input
-              label="Base URL"
-              value={form.baseUrl}
-              onValueChange={(v) => setForm({ ...form, baseUrl: v })}
-            />
-            <Input
-              label="Admin API Key"
-              description="留空则使用 email + password 登录"
-              type="password"
-              value={form.apiKey}
-              onValueChange={(v) => setForm({ ...form, apiKey: v })}
-            />
-            <Input
-              label="Email"
-              value={form.email}
-              onValueChange={(v) => setForm({ ...form, email: v })}
-            />
-            <Input
-              label="新密码（留空则不修改）"
-              type="password"
-              value={form.password}
-              onValueChange={(v) => setForm({ ...form, password: v })}
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={editDlg.onClose}>
+      <Dialog open={editDlgOpen} onOpenChange={setEditDlgOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>编辑本站账号</DialogTitle>
+            <DialogDescription className="sr-only">编辑本站账号信息</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>名称</Label>
+              <Input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Base URL</Label>
+              <Input
+                value={form.baseUrl}
+                onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Admin API Key</Label>
+              <Input
+                type="password"
+                value={form.apiKey}
+                onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">留空则使用 email + password 登录</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Email</Label>
+              <Input
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>新密码（留空则不修改）</Label>
+              <Input
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setEditDlgOpen(false)}>
               取消
             </Button>
-            <Button color="primary" onPress={submitEdit}>
+            <Button onClick={submitEdit}>
               保存
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Shell>
   );
 }
@@ -661,7 +704,7 @@ function GroupCell({
   syncedRate: number;
 }) {
   if (groups.length === 0) {
-    return <span className="text-default-400">—</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
   const main = groups[0];
   const rest = groups.slice(1);
@@ -676,18 +719,14 @@ function GroupCell({
     >
       <div className="flex items-center gap-1.5">
         <span className="text-sm">{main.name}</span>
-        <span className="text-default-500">×{main.rate_multiplier}</span>
+        <span className="text-muted-foreground">×{main.rate_multiplier}</span>
         {rest.length > 0 && (
-          <Chip
-            size="sm"
-            variant="flat"
-            classNames={{ base: "h-4", content: "text-[10px] px-1" }}
-          >
+          <Badge variant="secondary" className="h-4 text-[10px] px-1 py-0">
             +{rest.length}
-          </Chip>
+          </Badge>
         )}
       </div>
-      <span className="text-default-400">
+      <span className="text-muted-foreground">
         实际 ×{syncedRate.toFixed(2)}
       </span>
     </div>
@@ -724,10 +763,10 @@ function RateOverrideEditor({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({ title: "保存失败", description: j.error, color: "danger" });
+        toast.error("保存失败", { description: j.error });
         return;
       }
-      addToast({ title: clear ? "已清除" : "已保存", color: "success" });
+      toast.success(clear ? "已清除" : "已保存");
       setEditing(false);
       onSaved();
     } finally {
@@ -739,17 +778,16 @@ function RateOverrideEditor({
     return (
       <div className="flex items-center gap-1.5">
         {account.rateMultiplierOverride != null ? (
-          <Chip size="sm" color="primary" variant="flat">
+          <Badge variant="default">
             ×{account.rateMultiplierOverride}
-          </Chip>
+          </Badge>
         ) : (
-          <span className="text-xs text-default-400">—</span>
+          <span className="text-xs text-muted-foreground">—</span>
         )}
         <Button
-          size="sm"
-          variant="light"
-          isIconOnly
-          onPress={() => {
+          size="icon-sm"
+          variant="ghost"
+          onClick={() => {
             setVal(
               account.rateMultiplierOverride != null
                 ? String(account.rateMultiplierOverride)
@@ -767,36 +805,35 @@ function RateOverrideEditor({
   return (
     <div className="flex items-center gap-1">
       <Input
-        size="sm"
         type="number"
         step="0.01"
         value={val}
-        onValueChange={setVal}
+        onChange={(e) => setVal(e.target.value)}
         placeholder="例 1.7"
-        className="w-24"
+        className="w-24 h-8 text-xs"
       />
       <Button
         size="sm"
-        color="primary"
-        variant="flat"
-        isLoading={saving}
-        onPress={() => save(false)}
+        variant="secondary"
+        disabled={saving}
+        onClick={() => save(false)}
       >
+        {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
         保存
       </Button>
       <Button
         size="sm"
-        variant="light"
-        onPress={() => save(true)}
-        isDisabled={saving}
+        variant="ghost"
+        onClick={() => save(true)}
+        disabled={saving}
       >
         清除
       </Button>
       <Button
         size="sm"
-        variant="light"
-        onPress={() => setEditing(false)}
-        isDisabled={saving}
+        variant="ghost"
+        onClick={() => setEditing(false)}
+        disabled={saving}
       >
         取消
       </Button>
@@ -820,7 +857,7 @@ function UsersSection({
   if (!rows) {
     return (
       <div>
-        <Spinner size="sm" />
+        <Loader2 className="h-4 w-4 animate-spin" />
       </div>
     );
   }
@@ -881,21 +918,21 @@ function UsersSection({
   return (
     <div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-        <div className="rounded-lg bg-content2 p-3">
-          <p className="text-xs text-default-500">总实际计费</p>
+        <div className="rounded-lg bg-card border border-border p-3">
+          <p className="text-xs text-muted-foreground">总实际计费</p>
           <p className="text-lg font-bold mt-1">
             {fmtMoneyShort(totalEffective)}
           </p>
-          <p className="text-xs text-default-400 mt-0.5">
+          <p className="text-xs text-muted-foreground/60 mt-0.5">
             {afterShowZero.length} 个用户
           </p>
         </div>
-        <div className="rounded-lg bg-content2 p-3">
-          <p className="text-xs text-default-500">总已结款</p>
-          <p className="text-lg font-bold text-success mt-1">
+        <div className="rounded-lg bg-card border border-border p-3">
+          <p className="text-xs text-muted-foreground">总已结款</p>
+          <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 mt-1">
             {fmtMoneyShort(totalSettled)}
           </p>
-          <p className="text-xs text-default-400 mt-0.5">
+          <p className="text-xs text-muted-foreground/60 mt-0.5">
             占比{" "}
             {totalEffective > 0
               ? ((totalSettled / totalEffective) * 100).toFixed(1)
@@ -903,23 +940,23 @@ function UsersSection({
             %
           </p>
         </div>
-        <div className="rounded-lg bg-danger/10 p-3 border border-danger/20">
-          <p className="text-xs text-danger/80">总欠款</p>
-          <p className="text-lg font-bold text-danger mt-1">
+        <div className="rounded-lg bg-destructive/10 p-3 border border-destructive/20">
+          <p className="text-xs text-destructive/80">总欠款</p>
+          <p className="text-lg font-bold text-destructive mt-1">
             {fmtMoneyShort(totalOwed)}
           </p>
-          <p className="text-xs text-danger/60 mt-0.5">
+          <p className="text-xs text-destructive/60 mt-0.5">
             {debtors.length} 个客户欠款
           </p>
         </div>
-        <div className="rounded-lg bg-content2 p-3">
-          <p className="text-xs text-default-500">多付/预存</p>
+        <div className="rounded-lg bg-card border border-border p-3">
+          <p className="text-xs text-muted-foreground">多付/预存</p>
           <p
-            className={`text-lg font-bold mt-1 ${overpayers.length > 0 ? "text-warning" : "text-default-400"}`}
+            className={`text-lg font-bold mt-1 ${overpayers.length > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}
           >
             {fmtMoneyShort(totalOverpaid)}
           </p>
-          <p className="text-xs text-default-400 mt-0.5">
+          <p className="text-xs text-muted-foreground/60 mt-0.5">
             {overpayers.length} 个用户
           </p>
         </div>
@@ -928,48 +965,47 @@ function UsersSection({
       <div className="flex items-end justify-between mb-3 gap-3 flex-wrap">
         <div>
           <h4 className="font-semibold">用户</h4>
-          <p className="text-xs text-default-500">
+          <p className="text-xs text-muted-foreground">
             总消费 = 总充值 − 当前余额（× 你设定的倍率）
           </p>
         </div>
-        <div className="flex items-center gap-3 text-xs text-default-500">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <Input
-            size="sm"
             placeholder="按邮箱 / 别名 / username 搜索"
             value={search}
-            onValueChange={setSearch}
-            isClearable
-            onClear={() => setSearch("")}
-            className="w-64"
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-64 h-8 text-xs"
           />
           {!showZero && hiddenZero > 0 && (
             <span>已隐藏 {hiddenZero} 个 0 消费用户</span>
           )}
-          <Checkbox
-            size="sm"
-            isSelected={showZero}
-            onValueChange={onToggleShowZero}
-          >
-            显示无充值的用户
-          </Checkbox>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <Checkbox
+              checked={showZero}
+              onCheckedChange={(v) => onToggleShowZero(!!v)}
+            />
+            <span className="text-xs">显示无充值的用户</span>
+          </label>
         </div>
       </div>
       {filtered.length === 0 ? (
-        <p className="text-default-500 text-sm">
+        <p className="text-muted-foreground text-sm">
           {q
             ? `没有匹配 "${search}" 的用户`
             : "没有有充值的用户。勾选上方可显示全部。"}
         </p>
       ) : (
-        <Table removeWrapper aria-label="users">
+        <Table>
           <TableHeader>
-            <TableColumn>用户</TableColumn>
-            <TableColumn>备注</TableColumn>
-            <TableColumn>今日消费</TableColumn>
-            <TableColumn>累计实际计费</TableColumn>
-            <TableColumn>已结款</TableColumn>
-            <TableColumn>欠款</TableColumn>
-            <TableColumn>操作</TableColumn>
+            <TableRow>
+              <TableHead>用户</TableHead>
+              <TableHead>备注</TableHead>
+              <TableHead>今日消费</TableHead>
+              <TableHead>累计实际计费</TableHead>
+              <TableHead>已结款</TableHead>
+              <TableHead>欠款</TableHead>
+              <TableHead>操作</TableHead>
+            </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.map((u) => {
@@ -983,33 +1019,23 @@ function UsersSection({
                           {u.alias || u.username || u.email}
                         </span>
                         {u.alias && (
-                          <Chip
-                            size="sm"
-                            color="secondary"
-                            variant="flat"
-                            classNames={{
-                              base: "h-4",
-                              content: "text-[10px] px-1",
-                            }}
+                          <Badge
+                            variant="secondary"
+                            className="h-4 text-[10px] px-1 py-0"
                           >
                             别名
-                          </Chip>
+                          </Badge>
                         )}
                         {inactive && (
-                          <Chip
-                            size="sm"
-                            variant="flat"
-                            color="default"
-                            classNames={{
-                              base: "h-4",
-                              content: "text-[10px]",
-                            }}
+                          <Badge
+                            variant="outline"
+                            className="h-4 text-[10px] px-1 py-0"
                           >
                             {u.status}
-                          </Chip>
+                          </Badge>
                         )}
                       </div>
-                      <span className="text-xs text-default-400">
+                      <span className="text-xs text-muted-foreground">
                         {u.email} · 余额 {fmtMoneyShort(u.balance)} · 总充{" "}
                         {fmtMoneyShort(u.totalRecharged)}
                       </span>
@@ -1017,25 +1043,26 @@ function UsersSection({
                   </TableCell>
                   <TableCell>
                     {u.notes ? (
-                      <Tooltip
-                        content={
-                          <div className="max-w-md whitespace-pre-wrap break-words p-1 text-xs">
-                            {u.notes}
-                          </div>
-                        }
-                        placement="top"
-                        delay={150}
-                      >
-                        <span className="flex items-center gap-1 max-w-[180px] text-xs text-default-600 cursor-help">
-                          <StickyNote
-                            size={12}
-                            className="shrink-0 text-default-400"
-                          />
-                          <span className="truncate">{u.notes}</span>
-                        </span>
-                      </Tooltip>
+                      <TooltipProvider delayDuration={150}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex items-center gap-1 max-w-[180px] text-xs text-muted-foreground cursor-help">
+                              <StickyNote
+                                size={12}
+                                className="shrink-0 text-muted-foreground"
+                              />
+                              <span className="truncate">{u.notes}</span>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            <div className="max-w-md whitespace-pre-wrap break-words p-1 text-xs">
+                              {u.notes}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     ) : (
-                      <span className="text-xs text-default-300">—</span>
+                      <span className="text-xs text-muted-foreground/40">—</span>
                     )}
                   </TableCell>
                   <TableCell>
@@ -1044,13 +1071,13 @@ function UsersSection({
                         className={
                           u.todayActualCost > 0
                             ? "font-medium"
-                            : "text-default-400"
+                            : "text-muted-foreground"
                         }
                       >
                         {fmtMoneyShort(u.todayActualCost)}
                       </span>
                       {u.todayCost > 0 && (
-                        <span className="text-xs text-default-400">
+                        <span className="text-xs text-muted-foreground">
                           1× {fmtMoneyShort(u.todayCost)}
                         </span>
                       )}
@@ -1061,7 +1088,7 @@ function UsersSection({
                       <span className="font-medium">
                         {fmtMoneyShort(u.effectiveConsumed)}
                       </span>
-                      <span className="text-xs text-default-400">
+                      <span className="text-xs text-muted-foreground">
                         {u.rateMultiplierOverride != null &&
                         u.rateMultiplierOverride !== 1 ? (
                           <>
@@ -1080,11 +1107,11 @@ function UsersSection({
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col leading-tight">
-                      <span className="text-success font-medium">
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">
                         {fmtMoneyShort(u.settledTotal)}
                       </span>
                       {u.settlementCount > 0 && (
-                        <span className="text-xs text-default-400">
+                        <span className="text-xs text-muted-foreground">
                           {u.settlementCount} 笔
                         </span>
                       )}
@@ -1094,10 +1121,10 @@ function UsersSection({
                     <span
                       className={
                         u.owed > 0.01
-                          ? "text-danger font-semibold text-lg"
+                          ? "text-destructive font-semibold text-lg"
                           : u.owed < -0.01
-                            ? "text-warning font-semibold"
-                            : "text-default-400"
+                            ? "text-amber-600 dark:text-amber-400 font-semibold"
+                            : "text-muted-foreground"
                       }
                     >
                       {fmtMoneyShort(u.owed)}
@@ -1126,7 +1153,7 @@ function UserRateEditor({
   user: SiteUserRow;
   onSaved: () => void;
 }) {
-  const dlg = useDisclosure();
+  const [dlgOpen, setDlgOpen] = useState(false);
   const [alias, setAlias] = useState(user.alias ?? "");
   const [rate, setRate] = useState(
     user.rateMultiplierOverride != null
@@ -1144,7 +1171,7 @@ function UserRateEditor({
         : "",
     );
     setNotes(user.notes ?? "");
-    dlg.onOpen();
+    setDlgOpen(true);
   }
 
   async function save() {
@@ -1162,11 +1189,11 @@ function UserRateEditor({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({ title: "保存失败", description: j.error, color: "danger" });
+        toast.error("保存失败", { description: j.error });
         return;
       }
-      addToast({ title: "已保存", color: "success" });
-      dlg.onClose();
+      toast.success("已保存");
+      setDlgOpen(false);
       onSaved();
     } finally {
       setSaving(false);
@@ -1177,55 +1204,62 @@ function UserRateEditor({
     <>
       <Button
         size="sm"
-        variant="flat"
-        startContent={<Pencil size={13} />}
-        onPress={open}
+        variant="secondary"
+        onClick={open}
       >
+        <Pencil size={13} />
         编辑
       </Button>
-      <Modal isOpen={dlg.isOpen} onClose={dlg.onClose} size="lg">
-        <ModalContent>
-          <ModalHeader className="flex flex-col gap-1">
-            <span>编辑用户</span>
-            <span className="text-xs text-default-500 font-normal">
+      <Dialog open={dlgOpen} onOpenChange={setDlgOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>编辑用户</DialogTitle>
+            <DialogDescription>
               {user.email}
-            </span>
-          </ModalHeader>
-          <ModalBody className="gap-3">
-            <Input
-              label="别名"
-              description="留空则显示同步过来的 username / email"
-              placeholder="例 大客户A"
-              value={alias}
-              onValueChange={setAlias}
-            />
-            <Input
-              type="number"
-              step="0.01"
-              label="结算倍率覆盖"
-              description="留空 = ×1.00（按原价）"
-              placeholder="例 0.8"
-              value={rate}
-              onValueChange={setRate}
-            />
-            <Textarea
-              label="备注"
-              placeholder="任何想记的：联系方式、对接情况、合同号…"
-              minRows={2}
-              value={notes}
-              onValueChange={setNotes}
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={dlg.onClose}>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>别名</Label>
+              <Input
+                placeholder="例 大客户A"
+                value={alias}
+                onChange={(e) => setAlias(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">留空则显示同步过来的 username / email</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>结算倍率覆盖</Label>
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="例 0.8"
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">留空 = ×1.00（按原价）</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>备注</Label>
+              <Textarea
+                placeholder="任何想记的：联系方式、对接情况、合同号…"
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setDlgOpen(false)}>
               取消
             </Button>
-            <Button color="primary" onPress={save} isLoading={saving}>
+            <Button onClick={save} disabled={saving}>
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               保存
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -1241,7 +1275,7 @@ function SettlementButton({
   };
   onChanged: () => void;
 }) {
-  const dlg = useDisclosure();
+  const [dlgOpen, setDlgOpen] = useState(false);
   const [list, setList] = useState<Settlement[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [amount, setAmount] = useState("");
@@ -1251,7 +1285,7 @@ function SettlementButton({
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
-  async function load() {
+  async function loadSettlements() {
     setLoading(true);
     try {
       const r = await fetch(`/api/site-users/${user.id}/settlements`, {
@@ -1264,15 +1298,15 @@ function SettlementButton({
     }
   }
 
-  async function open() {
-    dlg.onOpen();
-    await load();
+  async function openDlg() {
+    setDlgOpen(true);
+    await loadSettlements();
   }
 
   async function add() {
     const a = Number(amount);
     if (!Number.isFinite(a) || a <= 0) {
-      addToast({ title: "金额必须大于 0", color: "warning" });
+      toast.warning("金额必须大于 0");
       return;
     }
     setSaving(true);
@@ -1288,13 +1322,13 @@ function SettlementButton({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({ title: "添加失败", description: j.error, color: "danger" });
+        toast.error("添加失败", { description: j.error });
         return;
       }
-      addToast({ title: "已添加", color: "success" });
+      toast.success("已添加");
       setAmount("");
       setNotes("");
-      await load();
+      await loadSettlements();
       onChanged();
     } finally {
       setSaving(false);
@@ -1305,17 +1339,17 @@ function SettlementButton({
     if (!confirm("确定删除该笔结款？")) return;
     const r = await fetch(`/api/settlements/${id}`, { method: "DELETE" });
     if (!r.ok) {
-      addToast({ title: "删除失败", color: "danger" });
+      toast.error("删除失败");
       return;
     }
-    await load();
+    await loadSettlements();
     onChanged();
   }
 
   async function settleAll() {
     const owed = user.owed;
     if (owed <= 0.01) {
-      addToast({ title: "当前没有欠款", color: "default" });
+      toast("当前没有欠款");
       return;
     }
     if (!confirm(`确认一次性结清 ${fmtMoneyShort(owed)}？`)) return;
@@ -1332,11 +1366,11 @@ function SettlementButton({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({ title: "结清失败", description: j.error, color: "danger" });
+        toast.error("结清失败", { description: j.error });
         return;
       }
-      addToast({ title: "已结清", color: "success" });
-      await load();
+      toast.success("已结清");
+      await loadSettlements();
       onChanged();
     } finally {
       setSaving(false);
@@ -1347,43 +1381,43 @@ function SettlementButton({
     <>
       <Button
         size="sm"
-        variant="flat"
-        startContent={<Wallet size={13} />}
-        onPress={open}
+        variant="secondary"
+        onClick={openDlg}
       >
+        <Wallet size={13} />
         结款
       </Button>
-      <Modal isOpen={dlg.isOpen} onClose={dlg.onClose} size="2xl">
-        <ModalContent>
-          <ModalHeader className="flex flex-col gap-1">
-            <span>{user.username || user.email} · 结款记录</span>
-            <span className="text-xs text-default-500 font-normal">
+      <Dialog open={dlgOpen} onOpenChange={setDlgOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{user.username || user.email} · 结款记录</DialogTitle>
+            <DialogDescription>
               {user.email}
-            </span>
-          </ModalHeader>
-          <ModalBody className="gap-4">
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-content2">
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
               <div className="flex-1 grid grid-cols-3 gap-3">
                 <div>
-                  <p className="text-xs text-default-500">实际计费</p>
+                  <p className="text-xs text-muted-foreground">实际计费</p>
                   <p className="font-semibold">
                     {fmtMoneyShort(user.effectiveConsumed)}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-default-500">已结款</p>
-                  <p className="font-semibold text-success">
+                  <p className="text-xs text-muted-foreground">已结款</p>
+                  <p className="font-semibold text-emerald-600 dark:text-emerald-400">
                     {fmtMoneyShort(user.settledTotal)}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-default-500">欠款</p>
+                  <p className="text-xs text-muted-foreground">欠款</p>
                   <p
                     className={
                       user.owed > 0.01
-                        ? "font-semibold text-danger"
+                        ? "font-semibold text-destructive"
                         : user.owed < -0.01
-                          ? "font-semibold text-warning"
+                          ? "font-semibold text-amber-600 dark:text-amber-400"
                           : "font-semibold"
                     }
                   >
@@ -1394,49 +1428,56 @@ function SettlementButton({
               {user.owed > 0.01 && (
                 <Button
                   size="sm"
-                  color="success"
-                  variant="flat"
-                  onPress={settleAll}
-                  isLoading={saving}
+                  variant="secondary"
+                  onClick={settleAll}
+                  disabled={saving}
+                  className="text-emerald-600 dark:text-emerald-400"
                 >
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   一键结清 {fmtMoneyShort(user.owed)}
                 </Button>
               )}
             </div>
 
-            <div className="border border-divider/40 rounded-lg p-3">
+            <div className="border border-border/40 rounded-lg p-3">
               <p className="text-sm font-medium mb-2">登记一笔结款</p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <Input
-                  size="sm"
-                  type="number"
-                  step="0.01"
-                  label="金额"
-                  placeholder="例 1000"
-                  value={amount}
-                  onValueChange={setAmount}
-                />
-                <Input
-                  size="sm"
-                  type="date"
-                  label="结款日期"
-                  value={paidAt}
-                  onValueChange={setPaidAt}
-                />
-                <Input
-                  size="sm"
-                  label="备注（可空）"
-                  value={notes}
-                  onValueChange={setNotes}
-                />
+                <div className="space-y-1.5">
+                  <Label className="text-xs">金额</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="例 1000"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">结款日期</Label>
+                  <Input
+                    type="date"
+                    value={paidAt}
+                    onChange={(e) => setPaidAt(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">备注（可空）</Label>
+                  <Input
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
               </div>
               <div className="mt-2 flex justify-end">
                 <Button
                   size="sm"
-                  color="primary"
-                  onPress={add}
-                  isLoading={saving}
+                  onClick={add}
+                  disabled={saving}
                 >
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   添加结款
                 </Button>
               </div>
@@ -1445,16 +1486,18 @@ function SettlementButton({
             <div>
               <p className="text-sm font-medium mb-2">历史记录</p>
               {loading ? (
-                <Spinner size="sm" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : !list || list.length === 0 ? (
-                <p className="text-sm text-default-500">暂无结款记录</p>
+                <p className="text-sm text-muted-foreground">暂无结款记录</p>
               ) : (
-                <Table removeWrapper aria-label="settlements">
+                <Table>
                   <TableHeader>
-                    <TableColumn>日期</TableColumn>
-                    <TableColumn>金额</TableColumn>
-                    <TableColumn>备注</TableColumn>
-                    <TableColumn>操作</TableColumn>
+                    <TableRow>
+                      <TableHead>日期</TableHead>
+                      <TableHead>金额</TableHead>
+                      <TableHead>备注</TableHead>
+                      <TableHead>操作</TableHead>
+                    </TableRow>
                   </TableHeader>
                   <TableBody>
                     {list.map((s) => (
@@ -1462,18 +1505,18 @@ function SettlementButton({
                         <TableCell className="text-sm">
                           {fmtDate(s.paidAt)}
                         </TableCell>
-                        <TableCell className="text-success font-medium">
+                        <TableCell className="text-emerald-600 dark:text-emerald-400 font-medium">
                           {fmtMoneyShort(s.amount)}
                         </TableCell>
-                        <TableCell className="text-xs text-default-500">
+                        <TableCell className="text-xs text-muted-foreground">
                           {s.notes || "—"}
                         </TableCell>
                         <TableCell>
                           <Button
                             size="sm"
-                            variant="light"
-                            color="danger"
-                            onPress={() => remove(s.id)}
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => remove(s.id)}
                           >
                             删除
                           </Button>
@@ -1484,14 +1527,14 @@ function SettlementButton({
                 </Table>
               )}
             </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={dlg.onClose}>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setDlgOpen(false)}>
               关闭
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

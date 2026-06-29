@@ -59,9 +59,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   }
   upstreamKeys.sort((a, b) => b.cost - a.cost);
 
-  // ── 今日收入：仅计算已关联的用户 ──
-  const siteAccountIds = ledger.siteLinks.map((l) => l.siteAccountId);
+  // ── 收入：仅计算已关联的用户 ──
   let todayRevenue = 0;
+  let totalUserRevenue = 0;
   const siteUsers: {
     userId: number;
     siteUserId: number;
@@ -69,6 +69,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     username: string;
     alias: string | null;
     todayCost: number;
+    totalConsumed: number;
+    totalRevenue: number;
     multiplier: number;
     revenue: number;
     accountName: string;
@@ -84,23 +86,28 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
   for (const link of userLinks) {
     const u = link.siteUser;
-    const cost = u.todayActualCost;
-    const rev = cost * link.multiplier;
-    todayRevenue += rev;
+    const todayCost = u.todayActualCost;
+    const todayRev = todayCost * link.multiplier;
+    const totalConsumed = Math.max(0, u.totalRecharged - u.balance);
+    const totalRev = totalConsumed * link.multiplier;
+    todayRevenue += todayRev;
+    totalUserRevenue += totalRev;
     siteUsers.push({
       userId: u.remoteUserId,
       siteUserId: u.id,
       email: u.email,
       username: u.username,
       alias: u.alias,
-      todayCost: cost,
+      todayCost,
+      totalConsumed,
+      totalRevenue: totalRev,
       multiplier: link.multiplier,
-      revenue: rev,
+      revenue: todayRev,
       accountName: u.siteAccount.name,
       lastSyncAt: u.todayStatsAt?.toISOString() ?? null,
     });
   }
-  siteUsers.sort((a, b) => b.revenue - a.revenue);
+  siteUsers.sort((a, b) => b.totalRevenue - a.totalRevenue);
 
   // ── 自建成本（项目总额） ──
   let totalFixedCost = 0;
@@ -120,6 +127,29 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       amount: fc.amount,
       note: fc.note,
       createdAt: fc.createdAt.toISOString(),
+    });
+  }
+
+  // ── 自定义收入（项目总额） ──
+  const fixedIncomes = await prisma.ledgerFixedIncome.findMany({
+    where: { ledgerId },
+    orderBy: { createdAt: "desc" },
+  });
+  let totalFixedIncome = 0;
+  const fixedIncomeDetails: {
+    id: number;
+    amount: number;
+    note: string | null;
+    createdAt: string;
+  }[] = [];
+
+  for (const fi of fixedIncomes) {
+    totalFixedIncome += fi.amount;
+    fixedIncomeDetails.push({
+      id: fi.id,
+      amount: fi.amount,
+      note: fi.note,
+      createdAt: fi.createdAt.toISOString(),
     });
   }
 
@@ -154,14 +184,16 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
   const totalUpstreamCost = dailyData.reduce((s, d) => s + d.cost, 0);
   const totalCost = totalUpstreamCost + totalFixedCost;
+  const totalRevenue = totalUserRevenue + totalFixedIncome;
   const todayProfit = todayRevenue - todayCost;
 
   return NextResponse.json({
     today: { date: today, cost: todayCost, revenue: todayRevenue, profit: todayProfit },
-    total: { cost: totalCost, revenue: todayRevenue, profit: todayRevenue - totalCost, fixedCost: totalFixedCost },
+    total: { cost: totalCost, revenue: totalRevenue, profit: totalRevenue - totalCost, fixedCost: totalFixedCost, fixedIncome: totalFixedIncome },
     upstreamKeys,
     siteUsers,
     fixedCostDetails,
+    fixedIncomeDetails,
     dailyData: dailyData.slice(0, 30),
   });
 }

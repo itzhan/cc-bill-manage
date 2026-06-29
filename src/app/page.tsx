@@ -1,40 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Checkbox,
-  Chip,
-  Dropdown,
-  DropdownItem,
-  DropdownMenu,
-  DropdownTrigger,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Pagination,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  Select,
-  SelectItem,
-  Spinner,
-  Tab,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
-  Tabs,
-  Textarea,
-  addToast,
-} from "@heroui/react";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 import {
   RefreshCw,
   RotateCw,
@@ -45,6 +12,48 @@ import {
   Wallet,
   AlertTriangle,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Table,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import Shell from "@/components/Shell";
 import StatCard from "@/components/StatCard";
 import TopBar from "@/components/TopBar";
@@ -205,7 +214,7 @@ export default function DashboardPage() {
       setDaily((d.items || []) as DailyProfitRow[]);
     } catch (e) {
       if (mySeq !== loadSeqRef.current) return;
-      addToast({ title: "加载失败", description: String(e), color: "danger" });
+      toast.error("加载失败", { description: String(e) });
     } finally {
       if (mySeq === loadSeqRef.current) setLoading(false);
     }
@@ -226,17 +235,15 @@ export default function DashboardPage() {
       };
       const failed = [...j.upstream, ...j.site].filter((x) => !x.ok);
       if (failed.length) {
-        addToast({
-          title: "部分失败",
+        toast.warning("部分失败", {
           description: failed.map((f) => `${f.name}: ${f.error}`).join("; "),
-          color: "warning",
         });
       } else {
-        addToast({ title: successTitle, color: "success" });
+        toast.success(successTitle);
       }
       await loadAll();
     } catch (e) {
-      addToast({ title: "失败", description: String(e), color: "danger" });
+      toast.error("失败", { description: String(e) });
     } finally {
       setBusy(false);
     }
@@ -248,11 +255,11 @@ export default function DashboardPage() {
 
   async function runBackfill() {
     if (!backfillStart || !backfillEnd) {
-      addToast({ title: "请选择起止日期", color: "warning" });
+      toast.warning("请选择起止日期");
       return;
     }
     if (backfillStart > backfillEnd) {
-      addToast({ title: "起始日期晚于结束日期", color: "warning" });
+      toast.warning("起始日期晚于结束日期");
       return;
     }
     setBackfilling(true);
@@ -264,7 +271,7 @@ export default function DashboardPage() {
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({ title: "回填失败", description: j.error, color: "danger" });
+        toast.error("回填失败", { description: j.error });
         return;
       }
       const j = (await r.json()) as {
@@ -272,17 +279,19 @@ export default function DashboardPage() {
         totals: { days: number; profit: number };
         errors: { date: string; kind: string; id: number; error: string }[];
       };
-      addToast({
-        title: `回填完成 ${j.totals.days} 天`,
-        description:
-          (j.errors.length
-            ? `${j.errors.length} 条失败 · `
-            : "") + `区间利润 ${j.totals.profit.toFixed(2)}`,
-        color: j.errors.length ? "warning" : "success",
-      });
+      if (j.errors.length) {
+        toast.warning(`回填完成 ${j.totals.days} 天`, {
+          description:
+            `${j.errors.length} 条失败 · 区间利润 ${j.totals.profit.toFixed(2)}`,
+        });
+      } else {
+        toast.success(`回填完成 ${j.totals.days} 天`, {
+          description: `区间利润 ${j.totals.profit.toFixed(2)}`,
+        });
+      }
       await loadAll();
     } catch (e) {
-      addToast({ title: "失败", description: String(e), color: "danger" });
+      toast.error("失败", { description: String(e) });
     } finally {
       setBackfilling(false);
     }
@@ -335,81 +344,71 @@ export default function DashboardPage() {
 
       <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
         <Tabs
-          aria-label="dashboard view"
-          radius="full"
-          color="default"
-          variant="solid"
-          selectedKey={view}
-          onSelectionChange={(k) => setView(String(k))}
-          classNames={{
-            tabList: "bg-content2 p-1",
-            cursor: "bg-content1 shadow-sm",
-            tab: "px-4 h-9 data-[selected=true]:text-foreground text-default-500",
-          }}
+          value={view}
+          onValueChange={(k) => setView(k)}
         >
-          <Tab key="overview" title="总览" />
-          <Tab key="revenue" title="收入" />
-          <Tab key="expense" title="支出" />
+          <TabsList>
+            <TabsTrigger value="overview" className="px-4 h-9">总览</TabsTrigger>
+            <TabsTrigger value="revenue" className="px-4 h-9">收入</TabsTrigger>
+            <TabsTrigger value="expense" className="px-4 h-9">支出</TabsTrigger>
+          </TabsList>
         </Tabs>
 
         <div className="flex items-center gap-2 flex-wrap">
           <Button
-            isIconOnly
-            variant="flat"
-            radius="full"
+            size="icon"
+            variant="secondary"
+            className="rounded-full"
             aria-label="reload"
-            onPress={() => loadAll()}
-            isLoading={loading}
+            onClick={() => loadAll()}
+            disabled={loading}
           >
-            <RefreshCw size={14} />
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw size={14} />}
           </Button>
-          <Dropdown>
-            <DropdownTrigger>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <Button
-                variant="flat"
-                radius="full"
-                startContent={<Calendar size={14} />}
-                endContent={<ChevronDown size={14} />}
+                variant="secondary"
+                className="rounded-full"
               >
+                <Calendar size={14} />
                 <span className="hidden sm:inline">
                   {RANGE_LABELS[range] ?? range}
                 </span>
                 <span className="sm:hidden">{range}</span>
+                <ChevronDown size={14} />
               </Button>
-            </DropdownTrigger>
-            <DropdownMenu
-              aria-label="range"
-              selectedKeys={new Set([range])}
-              selectionMode="single"
-              onAction={(k) => {
-                const r = String(k);
-                setRange(r);
-                loadAll(r);
-              }}
-            >
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
               {Object.entries(RANGE_LABELS).map(([k, l]) => (
-                <DropdownItem key={k}>{l}</DropdownItem>
+                <DropdownMenuItem
+                  key={k}
+                  onClick={() => {
+                    setRange(k);
+                    loadAll(k);
+                  }}
+                >
+                  {l}
+                </DropdownMenuItem>
               ))}
-            </DropdownMenu>
-          </Dropdown>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
-            variant="flat"
-            radius="full"
-            isIconOnly={false}
-            onPress={refreshNow}
-            isLoading={refreshing}
-            startContent={<RefreshCw size={14} />}
+            variant="secondary"
+            className="rounded-full"
+            onClick={refreshNow}
+            disabled={refreshing}
           >
+            {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw size={14} />}
             <span className="hidden sm:inline">完整刷新</span>
             <span className="sm:hidden">刷新</span>
           </Button>
           <Button
-            color="primary"
-            radius="full"
-            startContent={<RotateCw size={14} />}
-            onPress={syncNow}
-            isLoading={syncing}
+            className="rounded-full"
+            onClick={syncNow}
+            disabled={syncing}
           >
+            {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw size={14} />}
             <span className="hidden sm:inline">立即同步</span>
             <span className="sm:hidden">同步</span>
           </Button>
@@ -418,7 +417,7 @@ export default function DashboardPage() {
 
       {!data ? (
         <div className="flex justify-center p-12">
-          <Spinner />
+          <Loader2 className="h-5 w-5 animate-spin" />
         </div>
       ) : (
         <>
@@ -488,7 +487,7 @@ export default function DashboardPage() {
           </div>
 
           {view === "overview" && daily.length > 0 && (
-            <Card className="bg-content1 border border-divider/50 shadow-none mb-6">
+            <Card className="bg-card border border-border shadow-sm mb-6">
               <CardHeader className="flex justify-between items-center pb-1">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
@@ -498,7 +497,7 @@ export default function DashboardPage() {
                     <h2 className="font-semibold leading-tight">
                       近一周利润趋势
                     </h2>
-                    <p className="text-xs text-default-500 mt-0.5">
+                    <p className="text-xs text-muted-foreground mt-0.5">
                       按 Asia/Shanghai 日期
                     </p>
                   </div>
@@ -507,14 +506,14 @@ export default function DashboardPage() {
                   const last7 = daily.slice(0, 7);
                   const sum = last7.reduce((s, d) => s + d.profit, 0);
                   return (
-                    <span className="text-xs text-default-500">
+                    <span className="text-xs text-muted-foreground">
                       7 日累计{" "}
                       <b
                         className={
                           sum > 0
-                            ? "text-success"
+                            ? "text-emerald-600 dark:text-emerald-400"
                             : sum < 0
-                              ? "text-danger"
+                              ? "text-destructive"
                               : "text-foreground"
                         }
                       >
@@ -524,80 +523,80 @@ export default function DashboardPage() {
                   );
                 })()}
               </CardHeader>
-              <CardBody className="pt-2">
+              <CardContent className="pt-2">
                 <DailyProfitChart data={daily.slice(0, 7)} />
-              </CardBody>
+              </CardContent>
             </Card>
           )}
 
           {view !== "overview" && (
             <div className="grid grid-cols-1 gap-4 mb-6">
               {view === "expense" && (
-                <Card className="bg-content1 border border-divider/50 shadow-none">
+                <Card className="bg-card border border-border shadow-sm">
                   <CardHeader className="flex justify-between items-center pb-1">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-lg bg-danger/10 text-danger flex items-center justify-center">
+                      <div className="w-8 h-8 rounded-lg bg-destructive/10 text-destructive flex items-center justify-center">
                         <TrendingDown size={16} />
                       </div>
                       <div>
                         <h2 className="font-semibold leading-tight">
                           支出 Top（按上游 Key）
                         </h2>
-                        <p className="text-xs text-default-500 mt-0.5">
+                        <p className="text-xs text-muted-foreground mt-0.5">
                           今日 today_actual_cost
                         </p>
                       </div>
                     </div>
-                    <Chip variant="flat" size="sm">
+                    <Badge variant="secondary">
                       {topExpense.length} keys
-                    </Chip>
+                    </Badge>
                   </CardHeader>
-                  <CardBody className="pt-2">
+                  <CardContent className="pt-2">
                     <ExpenseBarChart data={topExpense} />
-                  </CardBody>
+                  </CardContent>
                 </Card>
               )}
 
               {view === "revenue" && (
-                <Card className="bg-content1 border border-divider/50 shadow-none">
+                <Card className="bg-card border border-border shadow-sm">
                   <CardHeader className="flex justify-between items-center pb-1 gap-3 flex-wrap">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-lg bg-success/10 text-success flex items-center justify-center">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
                         <TrendingUp size={16} />
                       </div>
                       <div>
                         <h2 className="font-semibold leading-tight">每日收入</h2>
-                        <p className="text-xs text-default-500 mt-0.5">
+                        <p className="text-xs text-muted-foreground mt-0.5">
                           按 Asia/Shanghai 日期 · 最近 {daily.length} 天
                         </p>
                       </div>
                     </div>
                   </CardHeader>
-                  <CardBody className="pt-2">
+                  <CardContent className="pt-2">
                     <DailyRevenueChart data={daily} />
-                  </CardBody>
+                  </CardContent>
                 </Card>
               )}
             </div>
           )}
 
           {view === "overview" && (
-          <Card className="bg-content1 border border-divider/50 shadow-none">
+          <Card className="bg-card border border-border shadow-sm">
             <CardHeader className="flex justify-between items-center flex-wrap gap-2">
               <div>
                 <h2 className="font-semibold">利润明细</h2>
-                <p className="text-xs text-default-500 mt-0.5">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   上游绑定（含差异）+ az 站点账号
                 </p>
               </div>
-              <div className="flex items-center gap-3 text-xs text-default-500">
-                <Checkbox
-                  size="sm"
-                  isSelected={showUnusedBindings}
-                  onValueChange={setShowUnusedBindings}
-                >
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <Checkbox
+                    checked={showUnusedBindings}
+                    onCheckedChange={(v) => setShowUnusedBindings(v === true)}
+                  />
                   <span className="text-xs">显示今日无使用</span>
-                </Checkbox>
+                </label>
                 <span>
                   本站 1× <b className="text-foreground">{fmtMoneyShort(data.totalSiteCostBase)}</b>
                 </span>
@@ -607,8 +606,8 @@ export default function DashboardPage() {
                 </span>
               </div>
             </CardHeader>
-            <CardBody>
-              <div className="text-xs font-medium text-default-500 mb-2">
+            <CardContent>
+              <div className="text-xs font-medium text-muted-foreground mb-2">
                 上游绑定
               </div>
               {(() => {
@@ -619,28 +618,30 @@ export default function DashboardPage() {
                     );
                 if (data.bindings.length === 0) {
                   return (
-                    <p className="text-default-500 text-sm">
+                    <p className="text-muted-foreground text-sm">
                       暂无绑定。先在「绑定」页配置。
                     </p>
                   );
                 }
                 if (visibleBindings.length === 0) {
                   return (
-                    <p className="text-default-500 text-sm">
+                    <p className="text-muted-foreground text-sm">
                       今日暂无使用记录。勾选「显示今日无使用」查看全部 {data.bindings.length} 个绑定。
                     </p>
                   );
                 }
                 return (
-                <Table aria-label="bindings" removeWrapper>
+                <Table>
                   <TableHeader>
-                    <TableColumn>本站 → 上游</TableColumn>
-                    <TableColumn>收入</TableColumn>
-                    <TableColumn>支出</TableColumn>
-                    <TableColumn>利润</TableColumn>
-                    <TableColumn>本站 1×</TableColumn>
-                    <TableColumn>上游 1×</TableColumn>
-                    <TableColumn>差异 (1×)</TableColumn>
+                    <TableRow>
+                      <TableHead>本站 → 上游</TableHead>
+                      <TableHead>收入</TableHead>
+                      <TableHead>支出</TableHead>
+                      <TableHead>利润</TableHead>
+                      <TableHead>本站 1×</TableHead>
+                      <TableHead>上游 1×</TableHead>
+                      <TableHead>差异 (1×)</TableHead>
+                    </TableRow>
                   </TableHeader>
                   <TableBody>
                     {visibleBindings.map((b) => {
@@ -663,18 +664,18 @@ export default function DashboardPage() {
                               <span className="text-sm font-medium">
                                 {b.upstreamKeyName}
                               </span>
-                              <span className="text-xs text-default-400">
+                              <span className="text-xs text-muted-foreground/70">
                                 {b.upstreamGroupName} ×
                                 {b.upstreamEffectiveMultiplier}
                                 {b.upstreamHasExclusiveRate && (
                                   <span className="text-primary">（专属）</span>
                                 )}
                               </span>
-                              <span className="text-xs text-default-500 mt-0.5">
+                              <span className="text-xs text-muted-foreground mt-0.5">
                                 ← {b.siteAccounts.length} 个本站绑定
                                 {b.siteAccounts.length > 1 && (
                                   <span
-                                    className="ml-1 text-default-400"
+                                    className="ml-1 text-muted-foreground/70"
                                     title={b.siteAccounts
                                       .map((s) => s.name)
                                       .join("\n")}
@@ -684,11 +685,11 @@ export default function DashboardPage() {
                                 )}
                               </span>
                               {b.siteAccounts.length === 1 ? (
-                                <span className="text-xs text-default-400">
+                                <span className="text-xs text-muted-foreground/70">
                                   · {b.siteAccounts[0].name}
                                 </span>
                               ) : (
-                                <span className="text-xs text-default-400 truncate max-w-md">
+                                <span className="text-xs text-muted-foreground/70 truncate max-w-md">
                                   ·{" "}
                                   {b.siteAccounts
                                     .map((s) => s.name)
@@ -702,7 +703,7 @@ export default function DashboardPage() {
                               <span className="font-medium">
                                 {fmtMoneyShort(b.siteUserCost)}
                               </span>
-                              <span className="text-xs text-default-400">
+                              <span className="text-xs text-muted-foreground/70">
                                 ×{avgRate.toFixed(2)}
                                 {hasOverride && (
                                   <span className="text-primary ml-1">
@@ -721,10 +722,10 @@ export default function DashboardPage() {
                             <span
                               className={
                                 profit > 0
-                                  ? "font-semibold text-success"
+                                  ? "font-semibold text-emerald-600 dark:text-emerald-400"
                                   : profit < 0
-                                    ? "font-semibold text-danger"
-                                    : "text-default-500"
+                                    ? "font-semibold text-destructive"
+                                    : "text-muted-foreground"
                               }
                             >
                               {fmtMoneyShort(profit)}
@@ -750,8 +751,8 @@ export default function DashboardPage() {
                             <span
                               className={
                                 diffOver
-                                  ? "text-danger font-semibold"
-                                  : "text-default-500"
+                                  ? "text-destructive font-semibold"
+                                  : "text-muted-foreground"
                               }
                               title={`本站 1× ${fmtMoney(b.siteCostBase)} · 上游 1× ${fmtMoney(b.upstreamTodayCostBase)}`}
                             >
@@ -766,17 +767,17 @@ export default function DashboardPage() {
                 );
               })()}
 
-              <div className="text-xs font-medium text-default-500 mt-6 mb-2 flex items-center gap-2">
+              <div className="text-xs font-medium text-muted-foreground mt-6 mb-2 flex items-center gap-2">
                 <span>az 站点账号</span>
-                <span className="text-default-400 font-normal">
+                <span className="text-muted-foreground/70 font-normal">
                   收入 {fmtMoneyShort(data.totalAzRevenue)} · 成本{" "}
                   {fmtMoneyShort(data.totalAzExpense)} · 利润{" "}
                   <b
                     className={
                       data.totalAzProfit > 0
-                        ? "text-success"
+                        ? "text-emerald-600 dark:text-emerald-400"
                         : data.totalAzProfit < 0
-                          ? "text-danger"
+                          ? "text-destructive"
                           : ""
                     }
                   >
@@ -793,26 +794,28 @@ export default function DashboardPage() {
                 );
                 if (data.azAccounts.length === 0) {
                   return (
-                    <p className="text-default-500 text-sm">
+                    <p className="text-muted-foreground text-sm">
                       暂无 az 账号。在「az 管理」页批量创建后会自动出现。
                     </p>
                   );
                 }
                 if (visibleAz.length === 0) {
                   return (
-                    <p className="text-default-500 text-sm">
+                    <p className="text-muted-foreground text-sm">
                       今日 az 暂无使用。共{" "}
                       {data.azAccounts.length} 个 az 账号。
                     </p>
                   );
                 }
                 return (
-                  <Table aria-label="az accounts" removeWrapper>
+                  <Table>
                     <TableHeader>
-                      <TableColumn>账号</TableColumn>
-                      <TableColumn>收入</TableColumn>
-                      <TableColumn>成本</TableColumn>
-                      <TableColumn>利润</TableColumn>
+                      <TableRow>
+                        <TableHead>账号</TableHead>
+                        <TableHead>收入</TableHead>
+                        <TableHead>成本</TableHead>
+                        <TableHead>利润</TableHead>
+                      </TableRow>
                     </TableHeader>
                     <TableBody>
                       {visibleAz.map((a) => (
@@ -822,7 +825,7 @@ export default function DashboardPage() {
                               <span className="text-sm font-medium">
                                 {a.name}
                               </span>
-                              <span className="text-xs text-default-400">
+                              <span className="text-xs text-muted-foreground/70">
                                 {a.siteAccountName}
                               </span>
                             </div>
@@ -832,7 +835,7 @@ export default function DashboardPage() {
                               <span className="font-medium">
                                 {fmtMoneyShort(a.todayUserCost)}
                               </span>
-                              <span className="text-xs text-default-400">
+                              <span className="text-xs text-muted-foreground/70">
                                 ×{a.rateEffective.toFixed(2)}
                                 {a.rateMultiplierOverride != null && (
                                   <span className="text-primary ml-1">
@@ -848,7 +851,7 @@ export default function DashboardPage() {
                                 {fmtMoneyShort(a.todayCost)}
                               </span>
                               {a.fixedCost != null && (
-                                <span className="text-xs text-default-400">
+                                <span className="text-xs text-muted-foreground/70">
                                   固定
                                 </span>
                               )}
@@ -858,10 +861,10 @@ export default function DashboardPage() {
                             <span
                               className={
                                 a.profit > 0
-                                  ? "font-semibold text-success"
+                                  ? "font-semibold text-emerald-600 dark:text-emerald-400"
                                   : a.profit < 0
-                                    ? "font-semibold text-danger"
-                                    : "text-default-500"
+                                    ? "font-semibold text-destructive"
+                                    : "text-muted-foreground"
                               }
                             >
                               {fmtMoneyShort(a.profit)}
@@ -873,43 +876,45 @@ export default function DashboardPage() {
                   </Table>
                 );
               })()}
-            </CardBody>
+            </CardContent>
           </Card>
           )}
 
-          <Card className="bg-content1 border border-divider/50 shadow-none mt-6">
+          <Card className="bg-card border border-border shadow-sm mt-6">
             <CardHeader className="flex flex-col items-start gap-3">
               <div className="flex justify-between items-start flex-wrap gap-3 w-full">
               <div>
                 <h2 className="font-semibold">每日利润</h2>
-                <p className="text-xs text-default-500 mt-0.5">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   按 Asia/Shanghai 日期。当天的行随每次同步刷新；跨天后自然冻结。可选起止日期回填历史
                 </p>
               </div>
               <div className="flex items-end gap-2 flex-wrap">
-                <Input
-                  type="date"
-                  size="sm"
-                  label="起"
-                  value={backfillStart}
-                  onValueChange={setBackfillStart}
-                  className="w-[150px]"
-                />
-                <Input
-                  type="date"
-                  size="sm"
-                  label="止"
-                  value={backfillEnd}
-                  onValueChange={setBackfillEnd}
-                  className="w-[150px]"
-                />
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">起</label>
+                  <Input
+                    type="date"
+                    value={backfillStart}
+                    onChange={(e) => setBackfillStart(e.target.value)}
+                    className="w-[150px] h-8 text-sm"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">止</label>
+                  <Input
+                    type="date"
+                    value={backfillEnd}
+                    onChange={(e) => setBackfillEnd(e.target.value)}
+                    className="w-[150px] h-8 text-sm"
+                  />
+                </div>
                 <Button
                   size="sm"
-                  color="primary"
-                  variant="flat"
-                  onPress={runBackfill}
-                  isLoading={backfilling}
+                  variant="secondary"
+                  onClick={runBackfill}
+                  disabled={backfilling}
                 >
+                  {backfilling && <Loader2 className="h-4 w-4 animate-spin" />}
                   回填
                 </Button>
                 {(() => {
@@ -931,15 +936,15 @@ export default function DashboardPage() {
                     (d) => d.siteCostBase > d.upstreamCostBase,
                   ).length;
                   return (
-                    <span className="text-xs text-default-500 self-center ml-2 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span className="text-xs text-muted-foreground self-center ml-2 flex flex-wrap gap-x-3 gap-y-0.5">
                       <span>
                         累计利润{" "}
                         <b
                           className={
                             grossProfit > 0
-                              ? "text-success"
+                              ? "text-emerald-600 dark:text-emerald-400"
                               : grossProfit < 0
-                                ? "text-danger"
+                                ? "text-destructive"
                                 : "text-foreground"
                           }
                         >
@@ -950,7 +955,7 @@ export default function DashboardPage() {
                         <>
                           <span>
                             扣 az 投入{" "}
-                            <b className="text-warning">
+                            <b className="text-amber-600 dark:text-amber-400">
                               −{fmtMoneyShort(azInvestment)}
                             </b>
                           </span>
@@ -959,9 +964,9 @@ export default function DashboardPage() {
                             <b
                               className={
                                 netProfit > 0
-                                  ? "text-success"
+                                  ? "text-emerald-600 dark:text-emerald-400"
                                   : netProfit < 0
-                                    ? "text-danger"
+                                    ? "text-destructive"
                                     : "text-foreground"
                               }
                             >
@@ -972,20 +977,20 @@ export default function DashboardPage() {
                       )}
                       <span>
                         累计盈余{" "}
-                        <b className="text-success">
+                        <b className="text-emerald-600 dark:text-emerald-400">
                           +{fmtMoneyShort(totalSurplus)}
                         </b>
                         {surplusDays > 0 && (
-                          <span className="text-default-400 ml-0.5">
+                          <span className="text-muted-foreground/70 ml-0.5">
                             · {surplusDays} 天
                           </span>
                         )}
                       </span>
                       <span>
                         累计差异{" "}
-                        <b className="text-danger">−{fmtMoneyShort(totalLoss)}</b>
+                        <b className="text-destructive">−{fmtMoneyShort(totalLoss)}</b>
                         {lossDays > 0 && (
-                          <span className="text-default-400 ml-0.5">
+                          <span className="text-muted-foreground/70 ml-0.5">
                             · {lossDays} 天
                           </span>
                         )}
@@ -996,37 +1001,30 @@ export default function DashboardPage() {
               </div>
               </div>
               <Tabs
-                size="sm"
-                selectedKey={dailyView}
-                onSelectionChange={(k) =>
-                  setDailyView(String(k) as "by-date" | "unbound")
+                value={dailyView}
+                onValueChange={(k) =>
+                  setDailyView(k as "by-date" | "unbound")
                 }
               >
-                <Tab key="by-date" title="按日期" />
-                <Tab
-                  key="unbound"
-                  title={
+                <TabsList className="h-8">
+                  <TabsTrigger value="by-date" className="text-xs px-3 h-7">按日期</TabsTrigger>
+                  <TabsTrigger value="unbound" className="text-xs px-3 h-7">
                     <span className="flex items-center gap-1.5">
                       未绑定账号
                       {unbound && unbound.items.length > 0 && (
-                        <Chip
-                          size="sm"
-                          color="warning"
-                          variant="flat"
-                          classNames={{
-                            base: "h-4",
-                            content: "text-[10px] px-1",
-                          }}
+                        <Badge
+                          variant="warning"
+                          className="h-4 px-1 text-[10px]"
                         >
                           {unbound.items.length}
-                        </Chip>
+                        </Badge>
                       )}
                     </span>
-                  }
-                />
+                  </TabsTrigger>
+                </TabsList>
               </Tabs>
             </CardHeader>
-            <CardBody>
+            <CardContent>
               {dailyView === "unbound" ? (
                 <UnboundView
                   data={unbound}
@@ -1039,19 +1037,21 @@ export default function DashboardPage() {
                   onRefresh={() => loadUnbound(unboundDays)}
                 />
               ) : daily.length === 0 ? (
-                <p className="text-default-500 text-sm">
+                <p className="text-muted-foreground text-sm">
                   暂无每日记录。每次同步会写入当天的累计值
                 </p>
               ) : (
                 <>
-                <Table removeWrapper aria-label="daily profit">
+                <Table>
                   <TableHeader>
-                    <TableColumn>日期</TableColumn>
-                    <TableColumn>收入</TableColumn>
-                    <TableColumn>支出</TableColumn>
-                    <TableColumn>利润</TableColumn>
-                    <TableColumn>差异 / 盈余 (1×)</TableColumn>
-                    <TableColumn>更新时间</TableColumn>
+                    <TableRow>
+                      <TableHead>日期</TableHead>
+                      <TableHead>收入</TableHead>
+                      <TableHead>支出</TableHead>
+                      <TableHead>利润</TableHead>
+                      <TableHead>差异 / 盈余 (1×)</TableHead>
+                      <TableHead>更新时间</TableHead>
+                    </TableRow>
                   </TableHeader>
                   <TableBody>
                     {dailyPageSlice.map((d, idx) => {
@@ -1060,7 +1060,7 @@ export default function DashboardPage() {
                       return (
                         <TableRow
                           key={d.id}
-                          className="cursor-pointer hover:bg-content2/60 transition-colors"
+                          className="cursor-pointer hover:bg-muted/60 transition-colors"
                           onClick={() => setDetailDate(d.date)}
                         >
                           <TableCell>
@@ -1069,17 +1069,12 @@ export default function DashboardPage() {
                                 {d.date}
                               </span>
                               {isToday && (
-                                <Chip
-                                  size="sm"
-                                  color="primary"
-                                  variant="flat"
-                                  classNames={{
-                                    base: "h-4",
-                                    content: "text-[10px] px-1",
-                                  }}
+                                <Badge
+                                  variant="default"
+                                  className="h-4 px-1 text-[10px]"
                                 >
                                   今天
-                                </Chip>
+                                </Badge>
                               )}
                             </div>
                           </TableCell>
@@ -1089,9 +1084,9 @@ export default function DashboardPage() {
                             <span
                               className={
                                 d.profit > 0
-                                  ? "font-semibold text-success"
+                                  ? "font-semibold text-emerald-600 dark:text-emerald-400"
                                   : d.profit < 0
-                                    ? "font-semibold text-danger"
+                                    ? "font-semibold text-destructive"
                                     : ""
                               }
                             >
@@ -1107,7 +1102,7 @@ export default function DashboardPage() {
                               if (d.diff > 0) {
                                 return (
                                   <span
-                                    className="text-danger font-medium"
+                                    className="text-destructive font-medium"
                                     title={`上游 1× ${fmtMoneyShort(d.upstreamCostBase)} > 本站 1× ${fmtMoneyShort(d.siteCostBase)}`}
                                   >
                                     −{fmtMoneyShort(d.diff)}
@@ -1117,7 +1112,7 @@ export default function DashboardPage() {
                               if (surplus > 0) {
                                 return (
                                   <span
-                                    className="text-success font-medium"
+                                    className="text-emerald-600 dark:text-emerald-400 font-medium"
                                     title={`本站 1× ${fmtMoneyShort(d.siteCostBase)} > 上游 1× ${fmtMoneyShort(d.upstreamCostBase)}`}
                                   >
                                     +{fmtMoneyShort(surplus)}
@@ -1125,11 +1120,11 @@ export default function DashboardPage() {
                                 );
                               }
                               return (
-                                <span className="text-default-400">0</span>
+                                <span className="text-muted-foreground/70">0</span>
                               );
                             })()}
                           </TableCell>
-                          <TableCell className="text-xs text-default-400">
+                          <TableCell className="text-xs text-muted-foreground/70">
                             {fmtDate(d.updatedAt)}
                           </TableCell>
                         </TableRow>
@@ -1137,46 +1132,46 @@ export default function DashboardPage() {
                     })}
                   </TableBody>
                 </Table>
-                <div className="flex items-center justify-between flex-wrap gap-3 mt-3 pt-3 border-t border-divider/50">
-                  <div className="flex items-center gap-2 text-xs text-default-500">
+                <div className="flex items-center justify-between flex-wrap gap-3 mt-3 pt-3 border-t border-border/50">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span>
                       共 {daily.length} 天 · 起 {DAILY_START_DATE}
                     </span>
-                    <span className="text-default-400">·</span>
+                    <span className="text-muted-foreground/70">·</span>
                     <span>每页</span>
                     <Select
-                      size="sm"
-                      aria-label="每页条数"
-                      className="w-20"
-                      selectedKeys={[String(dailyPageSize)]}
-                      onSelectionChange={(keys) => {
-                        const v = Number(Array.from(keys)[0]);
-                        if (!Number.isFinite(v) || v <= 0) return;
-                        setDailyPageSize(v);
+                      value={String(dailyPageSize)}
+                      onValueChange={(v) => {
+                        const n = Number(v);
+                        if (!Number.isFinite(n) || n <= 0) return;
+                        setDailyPageSize(n);
                         setDailyPage(1);
                       }}
                     >
-                      <SelectItem key="20">20</SelectItem>
-                      <SelectItem key="30">30</SelectItem>
-                      <SelectItem key="50">50</SelectItem>
-                      <SelectItem key="100">100</SelectItem>
-                      <SelectItem key="200">200</SelectItem>
+                      <SelectTrigger className="w-20 h-7 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="30">30</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                        <SelectItem value="200">200</SelectItem>
+                      </SelectContent>
                     </Select>
                     <span>条</span>
                   </div>
                   {dailyTotalPages > 1 && (
-                    <Pagination
-                      size="sm"
-                      showControls
-                      total={dailyTotalPages}
-                      page={dailyPageClamped}
-                      onChange={setDailyPage}
-                    />
+                    <div className="flex items-center justify-center gap-2">
+                      <Button size="sm" variant="outline" disabled={dailyPageClamped <= 1} onClick={() => setDailyPage(dailyPageClamped - 1)}>上一页</Button>
+                      <span className="text-sm text-muted-foreground">{dailyPageClamped} / {dailyTotalPages}</span>
+                      <Button size="sm" variant="outline" disabled={dailyPageClamped >= dailyTotalPages} onClick={() => setDailyPage(dailyPageClamped + 1)}>下一页</Button>
+                    </div>
                   )}
                 </div>
                 </>
               )}
-            </CardBody>
+            </CardContent>
           </Card>
         </>
       )}
@@ -1291,7 +1286,7 @@ function UnboundView({
   async function saveFixedCost(id: number, clear: boolean) {
     const v = clear ? null : Number(fcDraft[id]);
     if (!clear && (!Number.isFinite(v as number) || (v as number) < 0)) {
-      addToast({ title: "数值非法", color: "warning" });
+      toast.warning("数值非法");
       return;
     }
     setFcSaving((s) => ({ ...s, [id]: true }));
@@ -1303,13 +1298,10 @@ function UnboundView({
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        addToast({ title: "保存失败", description: j.error, color: "danger" });
+        toast.error("保存失败", { description: j.error });
         return;
       }
-      addToast({
-        title: clear ? "已清除一次性投入" : "已保存一次性投入",
-        color: "success",
-      });
+      toast.success(clear ? "已清除一次性投入" : "已保存一次性投入");
       setFcOpenId(null);
       onRefresh();
     } finally {
@@ -1323,10 +1315,8 @@ function UnboundView({
       const r = await fetch("/api/bindings/auto-match", { method: "POST" });
       const j = (await r.json()) as AutoMatchPlan;
       if (!r.ok) {
-        addToast({
-          title: "匹配失败",
+        toast.error("匹配失败", {
           description: (j as unknown as { error?: string }).error,
-          color: "danger",
         });
         return;
       }
@@ -1349,17 +1339,10 @@ function UnboundView({
       });
       const j = await r.json();
       if (!r.ok) {
-        addToast({
-          title: "执行失败",
-          description: j.error,
-          color: "danger",
-        });
+        toast.error("执行失败", { description: j.error });
         return;
       }
-      addToast({
-        title: `已执行 ${j.created} 条（含替换 ${j.replaced}）`,
-        color: "success",
-      });
+      toast.success(`已执行 ${j.created} 条（含替换 ${j.replaced}）`);
       setAutoPlan(null);
       onRefresh();
     } finally {
@@ -1377,11 +1360,7 @@ function UnboundView({
         const j = await r.json();
         setUpstreamKeyOpts((j.upstreamKeys ?? []) as UpstreamKeyOpt[]);
       } catch (e) {
-        addToast({
-          title: "加载 upstream key 失败",
-          description: String(e),
-          color: "danger",
-        });
+        toast.error("加载 upstream key 失败", { description: String(e) });
       } finally {
         setOptsLoading(false);
       }
@@ -1401,17 +1380,10 @@ function UnboundView({
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        addToast({
-          title: "绑定失败",
-          description: j.error,
-          color: "danger",
-        });
+        toast.error("绑定失败", { description: j.error });
         return;
       }
-      addToast({
-        title: `已绑定 "${bindTarget.accountName}"`,
-        color: "success",
-      });
+      toast.success(`已绑定 "${bindTarget.accountName}"`);
       setBindTarget(null);
       onRefresh();
     } finally {
@@ -1445,11 +1417,11 @@ function UnboundView({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({ title: "保存失败", description: j.error, color: "danger" });
+        toast.error("保存失败", { description: j.error });
         return;
       }
       setEditingPrefix(false);
-      addToast({ title: "已保存", color: "success" });
+      toast.success("已保存");
       onRefresh();
     } finally {
       setSavingPrefix(false);
@@ -1459,85 +1431,90 @@ function UnboundView({
   return (
     <div>
       <div className="flex items-end gap-2 mb-3 flex-wrap">
-        <div className="text-xs text-default-500 flex-1 min-w-0">
+        <div className="text-xs text-muted-foreground flex-1 min-w-0">
           所有"未绑定 upstream key"的 site 账号，按近 {days} 天
           <b>收入</b> 降序排。这些账号的支出无法从 binding 推出，绑定后利润才
           算得准。
           {data?.excludePrefixes && data.excludePrefixes.length > 0 && (
-            <span className="ml-1 text-warning">
+            <span className="ml-1 text-amber-600 dark:text-amber-400">
               · 已排除前缀: {data.excludePrefixes.join(", ")}
             </span>
           )}
         </div>
         <Button
           size="sm"
-          color="primary"
-          variant="flat"
-          onPress={runAutoMatch}
-          isLoading={autoMatching}
+          variant="secondary"
+          onClick={runAutoMatch}
+          disabled={autoMatching}
         >
+          {autoMatching && <Loader2 className="h-4 w-4 animate-spin" />}
           自动匹配绑定
         </Button>
-        <Button size="sm" variant="flat" onPress={openPrefixDialog}>
+        <Button size="sm" variant="secondary" onClick={openPrefixDialog}>
           排除前缀/后缀
           {(() => {
             const n =
               (data?.excludePrefixes?.length ?? 0) +
               (data?.excludeSuffixes?.length ?? 0);
             return n > 0 ? (
-              <span className="ml-0.5 text-default-400">({n})</span>
+              <span className="ml-0.5 text-muted-foreground/70">({n})</span>
             ) : null;
           })()}
         </Button>
         <Button
           size="sm"
-          variant="flat"
-          onPress={() => setEditingRules(true)}
+          variant="secondary"
+          onClick={() => setEditingRules(true)}
         >
           支出规则
         </Button>
-        <Input
-          type="number"
-          size="sm"
-          label="近 N 天"
-          value={String(days)}
-          className="w-24"
-          min={1}
-          max={365}
-          onValueChange={(s) => {
-            const n = Math.max(1, Math.min(365, Number(s) || 30));
-            onDaysChange(n);
-          }}
-        />
-        <Select
-          size="sm"
-          label="排序"
-          className="w-36"
-          selectedKeys={[sortBy]}
-          onSelectionChange={(keys) => {
-            const v = String(Array.from(keys)[0] ?? "lastUsed");
-            if (
-              v === "lastUsed" ||
-              v === "revenue" ||
-              v === "accumExpense" ||
-              v === "profit"
-            ) {
-              setSortBy(v);
-            }
-          }}
-        >
-          <SelectItem key="lastUsed">最近使用</SelectItem>
-          <SelectItem key="revenue">收入</SelectItem>
-          <SelectItem key="accumExpense">累计支出</SelectItem>
-          <SelectItem key="profit">估算利润</SelectItem>
-        </Select>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">近 N 天</label>
+          <Input
+            type="number"
+            value={String(days)}
+            className="w-24 h-8 text-sm"
+            min={1}
+            max={365}
+            onChange={(e) => {
+              const n = Math.max(1, Math.min(365, Number(e.target.value) || 30));
+              onDaysChange(n);
+            }}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">排序</label>
+          <Select
+            value={sortBy}
+            onValueChange={(v) => {
+              if (
+                v === "lastUsed" ||
+                v === "revenue" ||
+                v === "accumExpense" ||
+                v === "profit"
+              ) {
+                setSortBy(v);
+              }
+            }}
+          >
+            <SelectTrigger className="w-36 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="lastUsed">最近使用</SelectItem>
+              <SelectItem value="revenue">收入</SelectItem>
+              <SelectItem value="accumExpense">累计支出</SelectItem>
+              <SelectItem value="profit">估算利润</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <Button
           size="sm"
-          variant="flat"
-          startContent={<RefreshCw size={14} />}
-          onPress={onRefresh}
-          isLoading={loading}
+          variant="secondary"
+          onClick={onRefresh}
+          disabled={loading}
         >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw size={14} />}
           刷新
         </Button>
       </div>
@@ -1561,13 +1538,13 @@ function UnboundView({
 
       {loading && !data && (
         <div className="flex justify-center p-8">
-          <Spinner />
+          <Loader2 className="h-5 w-5 animate-spin" />
         </div>
       )}
 
       {data && (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-content2/40 rounded-xl p-3 mb-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-card border border-border rounded-xl p-3 mb-3">
             <StatTile label="未绑定账号" value={String(data.items.length)} />
             <StatTile
               label={`近 ${data.days} 天收入`}
@@ -1582,30 +1559,32 @@ function UnboundView({
               value={fmtMoneyShort(data.totalProfit)}
               valueClass={
                 data.totalProfit > 0
-                  ? "text-success"
+                  ? "text-emerald-600 dark:text-emerald-400"
                   : data.totalProfit < 0
-                    ? "text-danger"
+                    ? "text-destructive"
                     : ""
               }
             />
           </div>
 
           {data.items.length === 0 ? (
-            <p className="text-default-500 text-sm py-6 text-center">
+            <p className="text-muted-foreground text-sm py-6 text-center">
               当前没有未绑定且有使用记录的账号
             </p>
           ) : (
-            <Table removeWrapper aria-label="unbound accounts">
+            <Table>
               <TableHeader>
-                <TableColumn>账号</TableColumn>
-                <TableColumn>所属站点</TableColumn>
-                <TableColumn>倍率</TableColumn>
-                <TableColumn>最近使用</TableColumn>
-                <TableColumn>累计支出</TableColumn>
-                <TableColumn>1× 成本</TableColumn>
-                <TableColumn>收入</TableColumn>
-                <TableColumn>估算利润</TableColumn>
-                <TableColumn>操作</TableColumn>
+                <TableRow>
+                  <TableHead>账号</TableHead>
+                  <TableHead>所属站点</TableHead>
+                  <TableHead>倍率</TableHead>
+                  <TableHead>最近使用</TableHead>
+                  <TableHead>累计支出</TableHead>
+                  <TableHead>1× 成本</TableHead>
+                  <TableHead>收入</TableHead>
+                  <TableHead>估算利润</TableHead>
+                  <TableHead>操作</TableHead>
+                </TableRow>
               </TableHeader>
               <TableBody>
                 {(() => {
@@ -1630,13 +1609,13 @@ function UnboundView({
                 })().map((r) => (
                   <TableRow
                     key={r.id}
-                    className="bg-warning-50/40 dark:bg-warning-950/20"
+                    className="bg-amber-50/40 dark:bg-amber-950/20"
                   >
                     <TableCell>
                       <span className="font-medium text-sm">{r.accountName}</span>
                     </TableCell>
                     <TableCell>
-                      <span className="text-xs text-default-500">
+                      <span className="text-xs text-muted-foreground">
                         {r.siteAccountName}
                       </span>
                     </TableCell>
@@ -1651,12 +1630,12 @@ function UnboundView({
                           {r.lastUsedDate}
                         </span>
                       ) : (
-                        <span className="text-default-400 text-xs">—</span>
+                        <span className="text-muted-foreground/70 text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell>
                       <Popover
-                        isOpen={fcOpenId === r.id}
+                        open={fcOpenId === r.id}
                         onOpenChange={(v) => {
                           if (v) {
                             setFcDraft((s) => ({
@@ -1668,12 +1647,11 @@ function UnboundView({
                             setFcOpenId(null);
                           }
                         }}
-                        placement="bottom-start"
                       >
-                        <PopoverTrigger>
+                        <PopoverTrigger asChild>
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 hover:bg-content2/60 rounded px-1 py-0.5"
+                            className="inline-flex items-center gap-1 hover:bg-muted/60 rounded px-1 py-0.5"
                           >
                             {r.accumExpense > 0 ? (
                               <span
@@ -1683,57 +1661,59 @@ function UnboundView({
                                 {fmtMoneyShort(r.accumExpense)}
                               </span>
                             ) : (
-                              <span className="text-default-400 text-xs">
+                              <span className="text-muted-foreground/70 text-xs">
                                 点击设置
                               </span>
                             )}
                           </button>
                         </PopoverTrigger>
-                        <PopoverContent className="p-3">
+                        <PopoverContent className="p-3" align="start">
                           <div className="flex flex-col gap-2 w-72">
-                            <div className="text-[11px] text-default-500">
+                            <div className="text-[11px] text-muted-foreground">
                               {r.accountName}
                             </div>
-                            <div className="text-xs text-default-600">
+                            <div className="text-xs text-foreground/80">
                               历史累计支出{" "}
                               <span className="font-medium tabular-nums">
                                 ${fmtMoney(r.accumExpense)}
                               </span>
                             </div>
-                            <Input
-                              type="number"
-                              size="sm"
-                              label="每日默认支出 (fixedCost)"
-                              value={fcDraft[r.id] ?? ""}
-                              onValueChange={(v) =>
-                                setFcDraft((s) => ({ ...s, [r.id]: v }))
-                              }
-                              description="设置后未手填支出的日子都按此金额算; 单日覆盖请在「每日明细」里改"
-                            />
+                            <div className="flex flex-col gap-1">
+                              <label className="text-xs text-muted-foreground">每日默认支出 (fixedCost)</label>
+                              <Input
+                                type="number"
+                                value={fcDraft[r.id] ?? ""}
+                                onChange={(e) =>
+                                  setFcDraft((s) => ({ ...s, [r.id]: e.target.value }))
+                                }
+                                className="h-8 text-sm"
+                              />
+                              <p className="text-[11px] text-muted-foreground">设置后未手填支出的日子都按此金额算; 单日覆盖请在「每日明细」里改</p>
+                            </div>
                             <div className="flex justify-between gap-2">
                               <Button
                                 size="sm"
-                                variant="flat"
-                                isLoading={fcSaving[r.id]}
-                                isDisabled={r.fixedCost == null}
-                                onPress={() => saveFixedCost(r.id, true)}
+                                variant="secondary"
+                                disabled={fcSaving[r.id] || r.fixedCost == null}
+                                onClick={() => saveFixedCost(r.id, true)}
                               >
+                                {fcSaving[r.id] && <Loader2 className="h-4 w-4 animate-spin" />}
                                 清除
                               </Button>
                               <div className="flex gap-1">
                                 <Button
                                   size="sm"
-                                  variant="flat"
-                                  onPress={() => setFcOpenId(null)}
+                                  variant="secondary"
+                                  onClick={() => setFcOpenId(null)}
                                 >
                                   取消
                                 </Button>
                                 <Button
                                   size="sm"
-                                  color="primary"
-                                  isLoading={fcSaving[r.id]}
-                                  onPress={() => saveFixedCost(r.id, false)}
+                                  disabled={fcSaving[r.id]}
+                                  onClick={() => saveFixedCost(r.id, false)}
                                 >
+                                  {fcSaving[r.id] && <Loader2 className="h-4 w-4 animate-spin" />}
                                   保存
                                 </Button>
                               </div>
@@ -1749,7 +1729,7 @@ function UnboundView({
                     </TableCell>
                     <TableCell>
                       <span
-                        className="tabular-nums font-semibold text-warning"
+                        className="tabular-nums font-semibold text-amber-600 dark:text-amber-400"
                         title={fmtMoney(r.revenue)}
                       >
                         {fmtMoneyShort(r.revenue)}
@@ -1759,9 +1739,9 @@ function UnboundView({
                       <span
                         className={
                           r.profit > 0
-                            ? "tabular-nums font-semibold text-success"
+                            ? "tabular-nums font-semibold text-emerald-600 dark:text-emerald-400"
                             : r.profit < 0
-                              ? "tabular-nums font-semibold text-danger"
+                              ? "tabular-nums font-semibold text-destructive"
                               : "tabular-nums"
                         }
                         title={fmtMoney(r.profit)}
@@ -1772,9 +1752,8 @@ function UnboundView({
                     <TableCell>
                       <Button
                         size="sm"
-                        color="primary"
-                        variant="flat"
-                        onPress={() => openBindDialog(r)}
+                        variant="secondary"
+                        onClick={() => openBindDialog(r)}
                       >
                         绑定
                       </Button>
@@ -1819,7 +1798,7 @@ function StatTile({
 }) {
   return (
     <div className="flex flex-col leading-tight">
-      <span className="text-[11px] text-default-500">{label}</span>
+      <span className="text-[11px] text-muted-foreground">{label}</span>
       <span
         className={`text-lg font-semibold tabular-nums tracking-tight ${valueClass ?? ""}`}
       >
@@ -1849,46 +1828,47 @@ function PrefixDialog({
   saving: boolean;
 }) {
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="md">
-      <ModalContent>
-        <ModalHeader>未绑定账号 · 排除前缀 / 后缀</ModalHeader>
-        <ModalBody className="gap-4">
+    <Dialog open={isOpen} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>未绑定账号 · 排除前缀 / 后缀</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
           <div>
-            <p className="text-xs text-default-500 mb-1">
+            <p className="text-xs text-muted-foreground mb-1">
               以前缀匹配(大小写不敏感),账号名以这些前缀开头会被隐藏。
               一行一个;# 开头视作注释。
             </p>
             <Textarea
-              label="排除前缀"
-              minRows={3}
               placeholder={"az-\n# 隐藏所有以 trial- 开头的账号\ntrial-"}
+              rows={3}
               value={prefixValue}
-              onValueChange={onPrefixChange}
+              onChange={(e) => onPrefixChange(e.target.value)}
             />
           </div>
           <div>
-            <p className="text-xs text-default-500 mb-1">
+            <p className="text-xs text-muted-foreground mb-1">
               账号名以这些后缀结尾会被隐藏。一行一个;# 开头视作注释。
             </p>
             <Textarea
-              label="排除后缀"
-              minRows={3}
               placeholder={"-o总\n# 隐藏所有以 -test 结尾的账号\n-test"}
+              rows={3}
               value={suffixValue}
-              onValueChange={onSuffixChange}
+              onChange={(e) => onSuffixChange(e.target.value)}
             />
           </div>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="flat" onPress={onClose}>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
             取消
           </Button>
-          <Button color="primary" isLoading={saving} onPress={onSave}>
+          <Button disabled={saving} onClick={onSave}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
             保存
           </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1958,95 +1938,98 @@ function BindDialog({
   );
 
   return (
-    <Modal isOpen={target !== null} onClose={onClose} size="lg">
-      <ModalContent>
-        <ModalHeader className="flex flex-col items-start gap-0.5">
-          <span>绑定到 upstream key</span>
+    <Dialog open={target !== null} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>绑定到 upstream key</DialogTitle>
           {target && (
-            <span className="text-xs text-default-500 font-normal">
+            <DialogDescription>
               {target.siteAccountName} / <b>{target.accountName}</b>
-            </span>
+            </DialogDescription>
           )}
-        </ModalHeader>
-        <ModalBody className="gap-3">
-          <p className="text-xs text-default-500">
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground">
             先选上游渠道（账号），再选该渠道下的具体 key。绑定后利润计算才能算上它的支出端。
           </p>
-          <Select
-            label="① 选择上游渠道"
-            placeholder={optsLoading ? "加载中…" : "选择一个渠道…"}
-            selectedKeys={
-              selectedAccId != null ? new Set([String(selectedAccId)]) : new Set()
-            }
-            onSelectionChange={(k) => {
-              const v = Array.from(k as Set<string>)[0];
-              onAccChange(v ? Number(v) : null);
-            }}
-            isDisabled={optsLoading}
-          >
-            {accountOpts.map((a) => (
-              <SelectItem key={String(a.id)} textValue={a.name}>
-                <div className="flex justify-between items-center w-full">
-                  <span className="text-sm">{a.name}</span>
-                  <span className="text-[10px] text-default-400 ml-2">
-                    {a.keyCount} key
-                  </span>
-                </div>
-              </SelectItem>
-            ))}
-          </Select>
-          <Select
-            label="② 选择 key"
-            placeholder={
-              selectedAccId == null
-                ? "请先选择上游渠道"
-                : keysOfAccount.length === 0
-                  ? "该渠道下没有 key"
-                  : "选择一个 key…"
-            }
-            selectedKeys={
-              selectedKeyId != null ? new Set([String(selectedKeyId)]) : new Set()
-            }
-            onSelectionChange={(k) => {
-              const v = Array.from(k as Set<string>)[0];
-              onSelectKey(v ? Number(v) : null);
-            }}
-            isDisabled={selectedAccId == null || keysOfAccount.length === 0}
-          >
-            {keysOfAccount.map((opt) => {
-              const rateLabel = opt.hasExclusiveRate
-                ? `专属 ×${opt.effectiveRateMultiplier}`
-                : `×${opt.groupRateMultiplier}`;
-              return (
-                <SelectItem key={String(opt.id)} textValue={opt.label}>
-                  <div className="flex flex-col leading-tight">
-                    <span className="text-sm">
-                      {opt.label.split(" / ").slice(1).join(" / ")}
-                    </span>
-                    <span className="text-[10px] text-default-400">
-                      {opt.groupName} · {rateLabel} · {opt.keyMasked}
-                    </span>
-                  </div>
-                </SelectItem>
-              );
-            })}
-          </Select>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="flat" onPress={onClose}>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">① 选择上游渠道</label>
+            <Select
+              value={selectedAccId != null ? String(selectedAccId) : ""}
+              onValueChange={(v) => onAccChange(v ? Number(v) : null)}
+              disabled={optsLoading}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={optsLoading ? "加载中…" : "选择一个渠道…"} />
+              </SelectTrigger>
+              <SelectContent>
+                {accountOpts.map((a) => (
+                  <SelectItem key={String(a.id)} value={String(a.id)}>
+                    <div className="flex justify-between items-center w-full">
+                      <span className="text-sm">{a.name}</span>
+                      <span className="text-[10px] text-muted-foreground/70 ml-2">
+                        {a.keyCount} key
+                      </span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">② 选择 key</label>
+            <Select
+              value={selectedKeyId != null ? String(selectedKeyId) : ""}
+              onValueChange={(v) => onSelectKey(v ? Number(v) : null)}
+              disabled={selectedAccId == null || keysOfAccount.length === 0}
+            >
+              <SelectTrigger>
+                <SelectValue
+                  placeholder={
+                    selectedAccId == null
+                      ? "请先选择上游渠道"
+                      : keysOfAccount.length === 0
+                        ? "该渠道下没有 key"
+                        : "选择一个 key…"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {keysOfAccount.map((opt) => {
+                  const rateLabel = opt.hasExclusiveRate
+                    ? `专属 ×${opt.effectiveRateMultiplier}`
+                    : `×${opt.groupRateMultiplier}`;
+                  return (
+                    <SelectItem key={String(opt.id)} value={String(opt.id)}>
+                      <div className="flex flex-col leading-tight">
+                        <span className="text-sm">
+                          {opt.label.split(" / ").slice(1).join(" / ")}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground/70">
+                          {opt.groupName} · {rateLabel} · {opt.keyMasked}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
             取消
           </Button>
           <Button
-            color="primary"
-            isLoading={binding}
-            isDisabled={!selectedKeyId}
-            onPress={onConfirm}
+            disabled={binding || !selectedKeyId}
+            onClick={onConfirm}
           >
+            {binding && <Loader2 className="h-4 w-4 animate-spin" />}
             确认绑定
           </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2064,67 +2047,67 @@ function AutoMatchPlanDialog({
   const hasChanges =
     plan != null && (plan.proposed.length > 0 || plan.misbound.length > 0);
   return (
-    <Modal isOpen={plan !== null} onClose={onClose} size="3xl" scrollBehavior="inside">
-      <ModalContent>
-        <ModalHeader className="flex flex-col items-start gap-0.5">
-          <span>自动匹配绑定 · 预览</span>
-          <span className="text-xs text-default-500 font-normal">
+    <Dialog open={plan !== null} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>自动匹配绑定 · 预览</DialogTitle>
+          <DialogDescription>
             通过对碰 sub2api admin account 的 credentials.api_key
             与 UpstreamKey.apiKey 来匹配
-          </span>
+          </DialogDescription>
           {plan &&
             plan.excludePrefixes &&
             plan.excludePrefixes.length > 0 && (
-              <span className="text-[11px] text-warning font-normal">
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 font-normal">
                 已按前缀排除 {plan.summary.excluded ?? 0} 个账号:{" "}
                 {plan.excludePrefixes.join(", ")}
-              </span>
+              </p>
             )}
-        </ModalHeader>
-        <ModalBody className="gap-3">
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
           {plan && (
             <>
               {/* 概览 */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-content2/40 rounded-xl p-3 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-card border border-border rounded-xl p-3 text-xs">
                 <div>
-                  <div className="text-default-500">扫描账号</div>
+                  <div className="text-muted-foreground">扫描账号</div>
                   <div className="font-semibold tabular-nums">
                     {plan.summary.totalSite}
                   </div>
                 </div>
                 <div>
-                  <div className="text-default-500">候选 key</div>
+                  <div className="text-muted-foreground">候选 key</div>
                   <div className="font-semibold tabular-nums">
                     {plan.summary.totalUpstreamKey}
                   </div>
                 </div>
                 <div>
-                  <div className="text-default-500">已正确</div>
-                  <div className="font-semibold tabular-nums text-success">
+                  <div className="text-muted-foreground">已正确</div>
+                  <div className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
                     {plan.summary.alreadyCorrect}
                   </div>
                 </div>
                 <div>
-                  <div className="text-default-500">错绑</div>
-                  <div className="font-semibold tabular-nums text-danger">
+                  <div className="text-muted-foreground">错绑</div>
+                  <div className="font-semibold tabular-nums text-destructive">
                     {plan.summary.misbound}
                   </div>
                 </div>
                 <div>
-                  <div className="text-default-500">将新建绑定</div>
+                  <div className="text-muted-foreground">将新建绑定</div>
                   <div className="font-semibold tabular-nums text-primary">
                     {plan.summary.newBindings}
                   </div>
                 </div>
                 <div>
-                  <div className="text-default-500">匹配不到</div>
-                  <div className="font-semibold tabular-nums text-warning">
+                  <div className="text-muted-foreground">匹配不到</div>
+                  <div className="font-semibold tabular-nums text-amber-600 dark:text-amber-400">
                     {plan.summary.unmatched}
                   </div>
                 </div>
                 <div>
-                  <div className="text-default-500">错误</div>
-                  <div className="font-semibold tabular-nums text-danger">
+                  <div className="text-muted-foreground">错误</div>
+                  <div className="font-semibold tabular-nums text-destructive">
                     {plan.summary.errors}
                   </div>
                 </div>
@@ -2132,31 +2115,33 @@ function AutoMatchPlanDialog({
 
               {plan.misbound.length > 0 && (
                 <section>
-                  <h4 className="text-sm font-semibold mb-1.5 text-danger flex items-center gap-1.5">
+                  <h4 className="text-sm font-semibold mb-1.5 text-destructive flex items-center gap-1.5">
                     <AlertTriangle size={14} /> 错绑修正 ({plan.misbound.length})
                   </h4>
-                  <Table removeWrapper aria-label="misbound">
+                  <Table>
                     <TableHeader>
-                      <TableColumn>站点账号</TableColumn>
-                      <TableColumn>当前（错）</TableColumn>
-                      <TableColumn>应改为</TableColumn>
+                      <TableRow>
+                        <TableHead>站点账号</TableHead>
+                        <TableHead>当前（错）</TableHead>
+                        <TableHead>应改为</TableHead>
+                      </TableRow>
                     </TableHeader>
                     <TableBody>
                       {plan.misbound.map((m) => (
                         <TableRow
                           key={m.siteBoundAccountId}
-                          className="bg-danger-50/30 dark:bg-danger-950/20"
+                          className="bg-destructive/10"
                         >
                           <TableCell>
                             <span className="text-sm font-medium">{m.siteLabel}</span>
                           </TableCell>
                           <TableCell>
-                            <span className="text-xs line-through text-default-500">
+                            <span className="text-xs line-through text-muted-foreground">
                               {m.currentUpstreamLabel}
                             </span>
                           </TableCell>
                           <TableCell>
-                            <span className="text-xs font-medium text-success">
+                            <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
                               {m.correctUpstreamLabel}
                             </span>
                           </TableCell>
@@ -2172,10 +2157,12 @@ function AutoMatchPlanDialog({
                   <h4 className="text-sm font-semibold mb-1.5 text-primary">
                     新建绑定 ({plan.proposed.length})
                   </h4>
-                  <Table removeWrapper aria-label="proposed">
+                  <Table>
                     <TableHeader>
-                      <TableColumn>站点账号</TableColumn>
-                      <TableColumn>要绑定的 upstream key</TableColumn>
+                      <TableRow>
+                        <TableHead>站点账号</TableHead>
+                        <TableHead>要绑定的 upstream key</TableHead>
+                      </TableRow>
                     </TableHeader>
                     <TableBody>
                       {plan.proposed.map((p) => (
@@ -2195,18 +2182,18 @@ function AutoMatchPlanDialog({
 
               {plan.unmatched.length > 0 && (
                 <section>
-                  <h4 className="text-sm font-semibold mb-1.5 text-warning">
+                  <h4 className="text-sm font-semibold mb-1.5 text-amber-600 dark:text-amber-400">
                     匹配不到 ({plan.unmatched.length})
                   </h4>
-                  <p className="text-[11px] text-default-500 mb-1.5">
+                  <p className="text-[11px] text-muted-foreground mb-1.5">
                     这些站点账号的 credentials.api_key 在我们的 UpstreamKey 表里没找到——
                     可能上游渠道还没同步过来，或者用的是别的渠道。先去渠道管理 sync 一下。
                   </p>
-                  <ul className="text-xs text-default-600 max-h-40 overflow-auto space-y-0.5">
+                  <ul className="text-xs text-foreground/80 max-h-40 overflow-auto space-y-0.5">
                     {plan.unmatched.map((u) => (
                       <li key={u.siteBoundAccountId} className="flex justify-between">
                         <span>{u.siteLabel}</span>
-                        <span className="text-default-400 font-mono">
+                        <span className="text-muted-foreground/70 font-mono">
                           {u.apiKeyMasked}
                         </span>
                       </li>
@@ -2217,13 +2204,13 @@ function AutoMatchPlanDialog({
 
               {plan.errors.length > 0 && (
                 <section>
-                  <h4 className="text-sm font-semibold mb-1.5 text-danger">
+                  <h4 className="text-sm font-semibold mb-1.5 text-destructive">
                     抓取错误 ({plan.errors.length})
                   </h4>
-                  <ul className="text-xs text-default-600 max-h-32 overflow-auto space-y-0.5">
+                  <ul className="text-xs text-foreground/80 max-h-32 overflow-auto space-y-0.5">
                     {plan.errors.slice(0, 30).map((e) => (
                       <li key={e.siteBoundAccountId}>
-                        {e.siteLabel}: <span className="text-danger">{e.error}</span>
+                        {e.siteLabel}: <span className="text-destructive">{e.error}</span>
                       </li>
                     ))}
                   </ul>
@@ -2231,23 +2218,22 @@ function AutoMatchPlanDialog({
               )}
             </>
           )}
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="flat" onPress={onClose}>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
             取消
           </Button>
           <Button
-            color="primary"
-            isLoading={applying}
-            isDisabled={!hasChanges}
-            onPress={onApply}
+            disabled={applying || !hasChanges}
+            onClick={onApply}
           >
+            {applying && <Loader2 className="h-4 w-4 animate-spin" />}
             {hasChanges
               ? `执行 ${(plan?.proposed.length ?? 0) + (plan?.misbound.length ?? 0)} 条变更`
               : "无变更可执行"}
           </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

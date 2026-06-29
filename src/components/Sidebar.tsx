@@ -1,5 +1,6 @@
 "use client";
-import { Chip } from "@heroui/react";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import ThemeToggle from "./ThemeToggle";
 import {
   LayoutDashboard,
@@ -8,16 +9,14 @@ import {
   Link2,
   Settings,
   LogOut,
-  HelpCircle,
-  Wallet,
   Activity,
   Gauge,
   Share2,
   BookOpen,
-  ChevronDown,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 
 export interface NavItem {
   href: string;
@@ -68,27 +67,28 @@ function NavLink({ item, pathname }: { item: NavItem; pathname: string }) {
   return (
     <Link
       href={item.href}
-      className={[
-        "group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors",
+      className={cn(
+        "group flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-150",
         active
-          ? "bg-content2 text-foreground font-medium shadow-sm"
-          : "text-default-500 hover:text-foreground hover:bg-default-100",
-      ].join(" ")}
+          ? "bg-primary/10 text-primary border border-primary/20 dark:bg-primary/15 dark:border-primary/25"
+          : "text-muted-foreground hover:text-foreground hover:bg-accent border border-transparent",
+      )}
     >
       <span
-        className={
+        className={cn(
+          "transition-colors",
           active
-            ? "text-foreground"
-            : "text-default-400 group-hover:text-foreground"
-        }
+            ? "text-primary"
+            : "text-muted-foreground/60 group-hover:text-foreground",
+        )}
       >
         {item.icon}
       </span>
       <span className="flex-1">{item.label}</span>
       {item.badge && (
-        <Chip size="sm" color="success" variant="flat">
+        <Badge variant="success">
           {item.badge}
-        </Chip>
+        </Badge>
       )}
     </Link>
   );
@@ -101,22 +101,12 @@ function NavGroupSection({
   entry: NavGroup;
   pathname: string;
 }) {
-  const isActive = entry.items.some((it) => pathname === it.href);
-
   return (
-    <div className="mt-1">
-      <div className="flex items-center gap-2 px-3 py-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-default-400">
+    <div className="mt-4 first:mt-2">
+      <div className="px-3 mb-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
           {entry.group}
         </span>
-        <div className="flex-1 h-px bg-divider/40" />
-        <ChevronDown
-          size={12}
-          className={[
-            "text-default-400 transition-transform",
-            isActive ? "" : "",
-          ].join(" ")}
-        />
       </div>
       <div className="flex flex-col gap-0.5">
         {entry.items.map((it) => (
@@ -137,18 +127,20 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="hidden md:flex shrink-0 w-52 h-screen sticky top-0 bg-content1 flex-col">
-      <div className="p-4 flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 via-fuchsia-500 to-purple-600 flex items-center justify-center shadow-md shadow-purple-500/20">
-          <Wallet size={18} className="text-white" />
-        </div>
+    <aside className="hidden md:flex shrink-0 w-56 h-screen sticky top-0 bg-card border-r border-border flex-col">
+      {/* Logo */}
+      <div className="p-4 pb-3 flex items-center gap-3">
+        <Activity size={24} className="text-primary shrink-0" />
         <div className="flex flex-col leading-tight">
-          <span className="text-sm font-semibold tracking-tight">Bill Manage</span>
-          <span className="text-xs text-default-500">中转利润管理</span>
+          <span className="text-sm font-bold tracking-tight">Bill Manage</span>
+          <span className="text-[11px] text-muted-foreground/60">中转利润管理</span>
         </div>
       </div>
 
-      <nav className="px-3 mt-2 flex flex-col gap-0.5 overflow-y-auto flex-1">
+      <Separator className="mx-3 w-auto" />
+
+      {/* Navigation */}
+      <nav className="px-2.5 mt-3 flex flex-col gap-0.5 overflow-y-auto flex-1">
         {sidebarEntries.map((entry) =>
           isGroup(entry) ? (
             <NavGroupSection
@@ -162,18 +154,16 @@ export default function Sidebar() {
         )}
       </nav>
 
-      <div className="mt-auto p-3 flex flex-col gap-1">
-        <button className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-default-500 hover:text-foreground hover:bg-default-100 transition-colors">
-          <HelpCircle size={18} />
-          <span>帮助 & 信息</span>
-        </button>
-        <div className="flex items-center gap-2 px-3 py-1.5">
+      {/* Footer */}
+      <div className="mt-auto p-2.5 space-y-1">
+        <Separator className="mb-2" />
+        <div className="flex items-center justify-between px-2">
           <ThemeToggle />
           <button
             onClick={logout}
-            className="flex flex-1 items-center gap-3 px-2 py-2 rounded-xl text-sm text-default-500 hover:text-foreground hover:bg-default-100 transition-colors"
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-colors"
           >
-            <LogOut size={16} />
+            <LogOut size={14} />
             <span>退出</span>
           </button>
         </div>

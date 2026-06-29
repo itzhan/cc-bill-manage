@@ -1,44 +1,45 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Chip,
-  Dropdown,
-  DropdownItem,
-  DropdownMenu,
-  DropdownTrigger,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Spinner,
-  Tab,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
-  Tabs,
-  Textarea,
-  addToast,
-  useDisclosure,
-} from "@heroui/react";
-import {
   ExternalLink,
+  Loader2,
   Pencil,
   Plus,
   Trash2,
   Briefcase,
   HandshakeIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 import Shell from "@/components/Shell";
 import TopBar from "@/components/TopBar";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 type ProjectType = "customer" | "upstream";
 type ProjectStatus = "discussing" | "pending_test" | "tested";
@@ -64,7 +65,7 @@ function parseGoals(raw: string): string[] {
 function GoalList({ goal }: { goal: string }) {
   const items = parseGoals(goal);
   if (items.length === 0) {
-    return <span className="text-default-400">—</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
   return (
     <ol className="flex flex-col gap-1.5 max-w-[420px]">
@@ -86,8 +87,8 @@ const STATUS_LABEL: Record<ProjectStatus, string> = {
   tested: "已测试",
 };
 
-const STATUS_COLOR: Record<ProjectStatus, "default" | "warning" | "success"> = {
-  discussing: "default",
+const STATUS_BADGE_VARIANT: Record<ProjectStatus, "secondary" | "warning" | "success"> = {
+  discussing: "secondary",
   pending_test: "warning",
   tested: "success",
 };
@@ -114,11 +115,11 @@ function normalizedHref(url: string): string {
 }
 
 export default function ProjectsPage() {
-  const [tab, setTab] = useState<ProjectType>("customer");
+  const [tab, setTab] = useState<string>("customer");
   const [items, setItems] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
-  const { isOpen, onOpen, onClose, onOpenChange } = useDisclosure();
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -127,7 +128,7 @@ export default function ProjectsPage() {
       const j = await r.json();
       setItems((j.items || []) as Project[]);
     } catch (e) {
-      addToast({ title: "加载失败", description: String(e), color: "danger" });
+      toast.error("加载失败", { description: String(e) });
     } finally {
       setLoading(false);
     }
@@ -144,11 +145,11 @@ export default function ProjectsPage() {
 
   function openCreate() {
     setEditing(null);
-    onOpen();
+    setDialogOpen(true);
   }
   function openEdit(it: Project) {
     setEditing(it);
-    onOpen();
+    setDialogOpen(true);
   }
 
   async function changeStatus(id: number, status: ProjectStatus) {
@@ -164,7 +165,7 @@ export default function ProjectsPage() {
       }
       await load();
     } catch (e) {
-      addToast({ title: "更新失败", description: String(e), color: "danger" });
+      toast.error("更新失败", { description: String(e) });
     }
   }
 
@@ -173,10 +174,10 @@ export default function ProjectsPage() {
     try {
       const r = await fetch(`/api/projects/${id}`, { method: "DELETE" });
       if (!r.ok) throw new Error(await r.text());
-      addToast({ title: "已删除", color: "success" });
+      toast.success("已删除");
       await load();
     } catch (e) {
-      addToast({ title: "删除失败", description: String(e), color: "danger" });
+      toast.error("删除失败", { description: String(e) });
     }
   }
 
@@ -187,84 +188,66 @@ export default function ProjectsPage() {
         subtitle="手工维护合作进度。企业 = 客户跑我们 API；渠道商 = 我们跑对方 API"
         actions={
           <Button
-            color="primary"
-            radius="full"
-            startContent={<Plus size={14} />}
-            onPress={openCreate}
+            className="rounded-full"
+            onClick={openCreate}
           >
+            <Plus size={14} />
             新增
           </Button>
         }
       />
 
-      <Tabs
-        aria-label="project type"
-        radius="full"
-        color="default"
-        variant="solid"
-        selectedKey={tab}
-        onSelectionChange={(k) => setTab(k as ProjectType)}
-        classNames={{
-          tabList: "bg-content2 p-1 mb-4",
-          cursor: "bg-content1 shadow-sm",
-          tab: "px-4 h-9",
-        }}
-      >
-        <Tab
-          key="customer"
-          title={
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="customer">
             <span className="flex items-center gap-1.5">
               <Briefcase size={14} />
               企业合作
             </span>
-          }
-        />
-        <Tab
-          key="upstream"
-          title={
+          </TabsTrigger>
+          <TabsTrigger value="upstream">
             <span className="flex items-center gap-1.5">
               <HandshakeIcon size={14} />
               渠道商合作
             </span>
-          }
-        />
+          </TabsTrigger>
+        </TabsList>
+
+        <Card>
+          <CardHeader className="flex flex-row justify-between items-center pb-2">
+            <div>
+              <h2 className="font-semibold">{TYPE_LABEL[tab as ProjectType]}</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">共 {filtered.length} 个</p>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {loading && items.length === 0 ? (
+              <div className="flex justify-center p-8">
+                <Loader2 className="h-5 w-5 animate-spin" />
+              </div>
+            ) : filtered.length === 0 ? (
+              <p className="text-muted-foreground text-sm py-4">
+                暂无{TYPE_LABEL[tab as ProjectType]}记录。点右上角「新增」开始
+              </p>
+            ) : (
+              <ProjectsTable
+                tab={tab as ProjectType}
+                rows={filtered}
+                onEdit={openEdit}
+                onDelete={remove}
+                onChangeStatus={changeStatus}
+              />
+            )}
+          </CardContent>
+        </Card>
       </Tabs>
 
-      <Card className="bg-content1 border border-divider/50 shadow-none">
-        <CardHeader className="flex justify-between items-center pb-2">
-          <div>
-            <h2 className="font-semibold">{TYPE_LABEL[tab]}</h2>
-            <p className="text-xs text-default-500 mt-0.5">共 {filtered.length} 个</p>
-          </div>
-        </CardHeader>
-        <CardBody>
-          {loading && items.length === 0 ? (
-            <div className="flex justify-center p-8">
-              <Spinner />
-            </div>
-          ) : filtered.length === 0 ? (
-            <p className="text-default-500 text-sm py-4">
-              暂无{TYPE_LABEL[tab]}记录。点右上角「新增」开始
-            </p>
-          ) : (
-            <ProjectsTable
-              tab={tab}
-              rows={filtered}
-              onEdit={openEdit}
-              onDelete={remove}
-              onChangeStatus={changeStatus}
-            />
-          )}
-        </CardBody>
-      </Card>
-
       <ProjectModal
-        isOpen={isOpen}
-        onOpenChange={onOpenChange}
-        onClose={onClose}
-        defaultType={tab}
+        isOpen={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        defaultType={tab as ProjectType}
         initial={editing}
-        onSaved={load}
+        onSaved={() => { load(); setDialogOpen(false); }}
       />
     </Shell>
   );
@@ -278,28 +261,23 @@ function StatusChip({
   onChange: (s: ProjectStatus) => void;
 }) {
   return (
-    <Dropdown>
-      <DropdownTrigger>
-        <Chip
-          size="sm"
-          variant="flat"
-          color={STATUS_COLOR[status]}
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Badge
+          variant={STATUS_BADGE_VARIANT[status]}
           className="cursor-pointer"
         >
           {STATUS_LABEL[status]}
-        </Chip>
-      </DropdownTrigger>
-      <DropdownMenu
-        aria-label="status"
-        selectedKeys={new Set([status])}
-        selectionMode="single"
-        onAction={(k) => onChange(String(k) as ProjectStatus)}
-      >
+        </Badge>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
         {STATUS_ORDER.map((s) => (
-          <DropdownItem key={s}>{STATUS_LABEL[s]}</DropdownItem>
+          <DropdownMenuItem key={s} onClick={() => onChange(s)}>
+            {STATUS_LABEL[s]}
+          </DropdownMenuItem>
         ))}
-      </DropdownMenu>
-    </Dropdown>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -313,21 +291,19 @@ function RowActions({
   return (
     <div className="flex justify-end gap-1">
       <Button
-        isIconOnly
-        size="sm"
-        variant="light"
+        size="icon-sm"
+        variant="ghost"
         aria-label="edit"
-        onPress={onEdit}
+        onClick={onEdit}
       >
         <Pencil size={14} />
       </Button>
       <Button
-        isIconOnly
-        size="sm"
-        variant="light"
-        color="danger"
+        size="icon-sm"
+        variant="ghost"
+        className="text-destructive"
         aria-label="delete"
-        onPress={onDelete}
+        onClick={onDelete}
       >
         <Trash2 size={14} />
       </Button>
@@ -350,13 +326,15 @@ function ProjectsTable({
 }) {
   if (tab === "upstream") {
     return (
-      <Table aria-label="upstream-projects" removeWrapper>
+      <Table>
         <TableHeader>
-          <TableColumn>合作方</TableColumn>
-          <TableColumn>站点</TableColumn>
-          <TableColumn>状态</TableColumn>
-          <TableColumn>本次商谈目标</TableColumn>
-          <TableColumn align="end">操作</TableColumn>
+          <TableRow>
+            <TableHead>合作方</TableHead>
+            <TableHead>站点</TableHead>
+            <TableHead>状态</TableHead>
+            <TableHead>本次商谈目标</TableHead>
+            <TableHead className="text-right">操作</TableHead>
+          </TableRow>
         </TableHeader>
         <TableBody>
           {rows.map((it) => (
@@ -379,7 +357,7 @@ function ProjectsTable({
                     <ExternalLink size={12} />
                   </a>
                 ) : (
-                  <span className="text-default-400 text-xs">—</span>
+                  <span className="text-muted-foreground text-xs">—</span>
                 )}
               </TableCell>
               <TableCell>
@@ -405,12 +383,14 @@ function ProjectsTable({
   }
 
   return (
-    <Table aria-label="customer-projects" removeWrapper>
+    <Table>
       <TableHeader>
-        <TableColumn>合作方</TableColumn>
-        <TableColumn>状态</TableColumn>
-        <TableColumn>本次商谈目标</TableColumn>
-        <TableColumn align="end">操作</TableColumn>
+        <TableRow>
+          <TableHead>合作方</TableHead>
+          <TableHead>状态</TableHead>
+          <TableHead>本次商谈目标</TableHead>
+          <TableHead className="text-right">操作</TableHead>
+        </TableRow>
       </TableHeader>
       <TableBody>
         {rows.map((it) => (
@@ -442,27 +422,24 @@ function ProjectsTable({
 
 function ProjectModal({
   isOpen,
-  onOpenChange,
   onClose,
   defaultType,
   initial,
   onSaved,
 }: {
   isOpen: boolean;
-  onOpenChange: (v: boolean) => void;
   onClose: () => void;
   defaultType: ProjectType;
   initial: Project | null;
   onSaved: () => void;
 }) {
-  const [type, setType] = useState<ProjectType>(defaultType);
+  const [type, setType] = useState<string>(defaultType);
   const [partnerName, setPartnerName] = useState("");
-  const [status, setStatus] = useState<ProjectStatus>("discussing");
+  const [status, setStatus] = useState<string>("discussing");
   const [goal, setGoal] = useState("");
   const [siteUrl, setSiteUrl] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // sync form with `initial` when modal opens; reset to defaults for create
   useEffect(() => {
     if (!isOpen) return;
     if (initial) {
@@ -482,7 +459,7 @@ function ProjectModal({
 
   async function save() {
     if (!partnerName.trim()) {
-      addToast({ title: "请填写合作方名称", color: "warning" });
+      toast.warning("请填写合作方名称");
       return;
     }
     setSaving(true);
@@ -501,83 +478,83 @@ function ProjectModal({
         const j = await r.json().catch(() => ({}));
         throw new Error(j.error || `${r.status}`);
       }
-      addToast({ title: initial ? "已更新" : "已创建", color: "success" });
+      toast.success(initial ? "已更新" : "已创建");
       onSaved();
-      onClose();
     } catch (e) {
-      addToast({ title: "保存失败", description: String(e), color: "danger" });
+      toast.error("保存失败", { description: String(e) });
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="lg">
-      <ModalContent>
-        {(close) => (
-          <>
-            <ModalHeader>
-              {initial ? `编辑 · ${initial.partnerName}` : "新增项目"}
-            </ModalHeader>
-            <ModalBody className="gap-4">
-              {!initial && (
-                <Tabs
-                  aria-label="type"
-                  radius="full"
-                  selectedKey={type}
-                  onSelectionChange={(k) => setType(k as ProjectType)}
-                >
-                  <Tab key="customer" title="企业合作（客户跑我们 API）" />
-                  <Tab key="upstream" title="渠道商合作（我们跑对方 API）" />
-                </Tabs>
-              )}
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {initial ? `编辑 · ${initial.partnerName}` : "新增项目"}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          {!initial && (
+            <Tabs value={type} onValueChange={setType}>
+              <TabsList>
+                <TabsTrigger value="customer">企业合作（客户跑我们 API）</TabsTrigger>
+                <TabsTrigger value="upstream">渠道商合作（我们跑对方 API）</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
+          <div className="space-y-2">
+            <Label>合作方名称 *</Label>
+            <Input
+              value={partnerName}
+              onChange={(e) => setPartnerName(e.target.value)}
+            />
+          </div>
+          {type === "upstream" && (
+            <div className="space-y-2">
+              <Label>站点 URL</Label>
               <Input
-                label="合作方名称"
-                value={partnerName}
-                onValueChange={setPartnerName}
-                isRequired
+                placeholder="https://example.com"
+                value={siteUrl}
+                onChange={(e) => setSiteUrl(e.target.value)}
               />
-              {type === "upstream" && (
-                <Input
-                  label="站点 URL"
-                  placeholder="https://example.com"
-                  value={siteUrl}
-                  onValueChange={setSiteUrl}
-                  description="表内会显示域名 + 跳转图标"
-                />
-              )}
-              <Tabs
-                aria-label="status"
-                radius="full"
-                size="sm"
-                color={STATUS_COLOR[status]}
-                selectedKey={status}
-                onSelectionChange={(k) => setStatus(k as ProjectStatus)}
-              >
+              <p className="text-xs text-muted-foreground">表内会显示域名 + 跳转图标</p>
+            </div>
+          )}
+          <div className="space-y-2">
+            <Label>状态</Label>
+            <Tabs value={status} onValueChange={setStatus}>
+              <TabsList>
                 {STATUS_ORDER.map((s) => (
-                  <Tab key={s} title={STATUS_LABEL[s]} />
+                  <TabsTrigger key={s} value={s}>
+                    {STATUS_LABEL[s]}
+                  </TabsTrigger>
                 ))}
-              </Tabs>
-              <Textarea
-                label="本次商谈目标"
-                description="每行一条，会自动渲染成 1 / 2 / 3 编号列表"
-                placeholder={"接入 Claude 代理\n月跑量 ≥ 1k\n联调对账接口"}
-                value={goal}
-                onValueChange={setGoal}
-                minRows={4}
-              />
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onPress={close}>
-                取消
-              </Button>
-              <Button color="primary" onPress={save} isLoading={saving}>
-                保存
-              </Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+              </TabsList>
+            </Tabs>
+          </div>
+          <div className="space-y-2">
+            <Label>本次商谈目标</Label>
+            <Textarea
+              placeholder={"接入 Claude 代理\n月跑量 ≥ 1k\n联调对账接口"}
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              rows={4}
+            />
+            <p className="text-xs text-muted-foreground">每行一条，会自动渲染成 1 / 2 / 3 编号列表</p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

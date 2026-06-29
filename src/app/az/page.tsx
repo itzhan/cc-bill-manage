@@ -1,38 +1,42 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Checkbox,
-  Chip,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Select,
-  SelectItem,
-  Spinner,
-  Switch,
-  Tab,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
-  Tabs,
-  Textarea,
-  addToast,
-  useDisclosure,
-} from "@heroui/react";
-import { Pin, Settings as SettingsIcon, Wand2 } from "lucide-react";
+import { Loader2, Pin, Settings as SettingsIcon, Wand2 } from "lucide-react";
+import { toast } from "sonner";
 import Shell from "@/components/Shell";
 import { DEFAULT_AZ_CONFIG, type AzConfig } from "@/lib/az";
 import { fmtMoneyShort } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface SiteAccountLite {
   id: number;
@@ -82,8 +86,6 @@ interface AzAdminAccount {
   last_used_at?: string | null;
 }
 
-// Lifted to AzPage so the data persists across tab switches and we can
-// poll once for everyone instead of each tab reloading on mount.
 interface StatsData {
   days: number;
   startDate: string;
@@ -122,20 +124,16 @@ export default function AzPage() {
   const [presetUpdatedAt, setPresetUpdatedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Shared data for the 3 admin tabs (bulk-update / cleanup / stats)
   const [azAccounts, setAzAccounts] = useState<AzAdminAccount[] | null>(null);
   const [accountsLoading, setAccountsLoading] = useState(false);
-  const [accountsRefreshedAt, setAccountsRefreshedAt] = useState<Date | null>(
-    null,
-  );
+  const [accountsRefreshedAt, setAccountsRefreshedAt] = useState<Date | null>(null);
   const [statsDays, setStatsDays] = useState(1);
   const [stats, setStats] = useState<StatsData | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsRefreshedAt, setStatsRefreshedAt] = useState<Date | null>(null);
 
-  const cfgDlg = useDisclosure();
+  const [cfgOpen, setCfgOpen] = useState(false);
 
-  // === Load sites + default ===
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -158,7 +156,6 @@ export default function AzPage() {
     })();
   }, []);
 
-  // Load preset when siteId changes
   useEffect(() => {
     if (siteId == null) return;
     (async () => {
@@ -168,7 +165,6 @@ export default function AzPage() {
     })();
   }, [siteId]);
 
-  // Account list loader (used by Bulk-update + Cleanup tabs)
   const loadAccounts = useCallback(async () => {
     if (siteId == null) return;
     setAccountsLoading(true);
@@ -176,7 +172,7 @@ export default function AzPage() {
       const r = await fetch(`/api/az/${siteId}/accounts`);
       const j = await r.json();
       if (!r.ok) {
-        addToast({ title: "加载失败", description: j.error, color: "danger" });
+        toast.error("加载失败", { description: j.error });
         return;
       }
       setAzAccounts(j.items as AzAdminAccount[]);
@@ -186,7 +182,6 @@ export default function AzPage() {
     }
   }, [siteId]);
 
-  // Stats loader (used by Stats tab)
   const loadStats = useCallback(async () => {
     if (siteId == null) return;
     setStatsLoading(true);
@@ -194,7 +189,7 @@ export default function AzPage() {
       const r = await fetch(`/api/az/${siteId}/stats?days=${statsDays}`);
       const j = await r.json();
       if (!r.ok) {
-        addToast({ title: "加载失败", description: j.error, color: "danger" });
+        toast.error("加载失败", { description: j.error });
         return;
       }
       setStats(j as StatsData);
@@ -204,9 +199,6 @@ export default function AzPage() {
     }
   }, [siteId, statsDays]);
 
-  // Initial fetch + 3-min auto-poll. Also refetch when siteId / statsDays
-  // change. Site change clears stale data first so the user doesn't see
-  // numbers from the previous site flicker on the new one.
   useEffect(() => {
     if (siteId == null) return;
     setAzAccounts(null);
@@ -229,7 +221,7 @@ export default function AzPage() {
     });
     if (r.ok) {
       setDefaultSiteId(siteId);
-      addToast({ title: "已设为默认", color: "success" });
+      toast.success("已设为默认");
     }
   }
 
@@ -240,78 +232,83 @@ export default function AzPage() {
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Wand2 size={22} className="text-primary" /> az 管理
           </h1>
-          <p className="text-sm text-default-500">
+          <p className="text-sm text-muted-foreground">
             sub2api 上的批量录入 / 改规则 / 清错 / 成本统计
           </p>
         </div>
       </div>
 
       {/* Site picker */}
-      <Card className="bg-content1 border border-divider/50 shadow-none mb-4">
-        <CardBody className="flex flex-row flex-wrap items-end gap-3">
-          <Select
-            label="目标站点（仅 sub2api）"
-            placeholder="选择"
-            className="max-w-md"
-            selectedKeys={siteId ? new Set([String(siteId)]) : new Set()}
-            onSelectionChange={(k) =>
-              setSiteId(Number(Array.from(k)[0] ?? "") || null)
-            }
-            isDisabled={loading || sites.length === 0}
-          >
-            {sites.map((s) => (
-              <SelectItem key={String(s.id)} textValue={s.name}>
-                {s.name} {s.id === defaultSiteId ? "（默认）" : ""}
-              </SelectItem>
-            ))}
-          </Select>
+      <Card className="mb-4">
+        <CardContent className="flex flex-row flex-wrap items-end gap-3 pt-4">
+          <div className="space-y-2 max-w-md">
+            <Label>目标站点（仅 sub2api）</Label>
+            <Select
+              value={siteId ? String(siteId) : undefined}
+              onValueChange={(v) => setSiteId(Number(v) || null)}
+              disabled={loading || sites.length === 0}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择" />
+              </SelectTrigger>
+              <SelectContent>
+                {sites.map((s) => (
+                  <SelectItem key={String(s.id)} value={String(s.id)}>
+                    {s.name} {s.id === defaultSiteId ? "（默认）" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           {siteId != null && siteId !== defaultSiteId && (
             <Button
-              variant="flat"
-              startContent={<Pin size={14} />}
-              onPress={setAsDefault}
+              variant="secondary"
+              onClick={setAsDefault}
             >
+              <Pin size={14} />
               设为默认
             </Button>
           )}
           <Button
-            variant="flat"
-            startContent={<SettingsIcon size={14} />}
-            onPress={cfgDlg.onOpen}
-            isDisabled={siteId == null}
+            variant="secondary"
+            onClick={() => setCfgOpen(true)}
+            disabled={siteId == null}
           >
+            <SettingsIcon size={14} />
             规则配置
           </Button>
           {presetUpdatedAt && (
-            <span className="text-xs text-default-400 self-center">
+            <span className="text-xs text-muted-foreground self-center">
               规则更新于 {new Date(presetUpdatedAt).toLocaleString("zh-CN")}
             </span>
           )}
-        </CardBody>
+        </CardContent>
       </Card>
 
       {siteId == null ? (
         <Card>
-          <CardBody className="text-default-500 text-sm">
+          <CardContent className="text-muted-foreground text-sm pt-6">
             没有 sub2api 类型的本站账号。请先在「本站账号」页创建一个。
-          </CardBody>
+          </CardContent>
         </Card>
       ) : (
-        <Card className="bg-content1 border border-divider/50 shadow-none">
-          <CardBody>
-            <Tabs aria-label="az tabs" variant="solid" radius="full"
-                  classNames={{
-                    tabList: "bg-content2 p-1",
-                    cursor: "bg-content1 shadow-sm",
-                    tab: "px-4 h-9 data-[selected=true]:text-foreground text-default-500",
-                  }}>
-              <Tab key="accounts" title="导入账号">
+        <Card>
+          <CardContent className="pt-4">
+            <Tabs defaultValue="accounts">
+              <TabsList className="mb-4">
+                <TabsTrigger value="accounts">导入账号</TabsTrigger>
+                <TabsTrigger value="proxies">导入代理</TabsTrigger>
+                <TabsTrigger value="rules">批量改规则</TabsTrigger>
+                <TabsTrigger value="cleanup">清错</TabsTrigger>
+                <TabsTrigger value="stats">成本统计</TabsTrigger>
+              </TabsList>
+              <TabsContent value="accounts">
                 <ImportAccountsTab siteId={siteId} config={config} />
-              </Tab>
-              <Tab key="proxies" title="导入代理">
+              </TabsContent>
+              <TabsContent value="proxies">
                 <ImportProxiesTab siteId={siteId} config={config} />
-              </Tab>
-              <Tab key="rules" title="批量改规则">
+              </TabsContent>
+              <TabsContent value="rules">
                 <BulkUpdateTab
                   siteId={siteId}
                   config={config}
@@ -320,8 +317,8 @@ export default function AzPage() {
                   refreshedAt={accountsRefreshedAt}
                   reload={loadAccounts}
                 />
-              </Tab>
-              <Tab key="cleanup" title="清错">
+              </TabsContent>
+              <TabsContent value="cleanup">
                 <CleanupTab
                   siteId={siteId}
                   allAccounts={azAccounts}
@@ -329,8 +326,8 @@ export default function AzPage() {
                   refreshedAt={accountsRefreshedAt}
                   reload={loadAccounts}
                 />
-              </Tab>
-              <Tab key="stats" title="成本统计">
+              </TabsContent>
+              <TabsContent value="stats">
                 <StatsTab
                   data={stats}
                   loading={statsLoading}
@@ -339,15 +336,15 @@ export default function AzPage() {
                   setDays={setStatsDays}
                   reload={loadStats}
                 />
-              </Tab>
+              </TabsContent>
             </Tabs>
-          </CardBody>
+          </CardContent>
         </Card>
       )}
 
       <ConfigModal
-        isOpen={cfgDlg.isOpen}
-        onClose={cfgDlg.onClose}
+        isOpen={cfgOpen}
+        onClose={() => setCfgOpen(false)}
         siteId={siteId}
         initial={config}
         onSaved={(c, t) => {
@@ -391,7 +388,6 @@ function ImportAccountsTab({
   const [sharedProxyId, setSharedProxyId] = useState<string>("");
 
   useEffect(() => {
-    // Load proxies when share-proxy is toggled OR alias mode requires it.
     if (!(shareProxy || aliasMode) || proxies !== null) return;
     let cancelled = false;
     fetch(`/api/az/${siteId}/proxies`)
@@ -418,7 +414,7 @@ function ImportAccountsTab({
       });
       const j = await r.json();
       if (!r.ok) {
-        addToast({ title: "解析失败", description: j.error, color: "danger" });
+        toast.error("解析失败", { description: j.error });
         return;
       }
       setPreview(j);
@@ -438,15 +434,11 @@ function ImportAccountsTab({
       const costNum = Number(costText);
       const cost =
         Number.isFinite(costNum) && costNum >= 0 ? costNum : null;
-      // alias mode forces shareProxy: user must pick a single proxy.
       const effectiveShareProxy = shareProxy || aliasMode;
       const singleProxyId =
         effectiveShareProxy && sharedProxyId ? Number(sharedProxyId) : null;
       if (effectiveShareProxy && !singleProxyId) {
-        addToast({
-          title: aliasMode ? "别称模式下必须指定共用代理" : "请选择共用代理",
-          color: "warning",
-        });
+        toast.warning(aliasMode ? "别称模式下必须指定共用代理" : "请选择共用代理");
         return;
       }
       const r = await fetch(`/api/az/${siteId}/import/accounts`, {
@@ -461,17 +453,15 @@ function ImportAccountsTab({
       });
       const j = await r.json();
       if (!r.ok) {
-        addToast({ title: "提交失败", description: j.error, color: "danger" });
+        toast.error("提交失败", { description: j.error });
         return;
       }
       setResults(j.rows);
-      addToast({
-        title: `录入完成 ${j.ok}/${j.total}`,
-        description: j.failed
-          ? `${j.failed} 条失败`
-          : "全部成功",
-        color: j.failed ? "warning" : "success",
-      });
+      if (j.failed) {
+        toast.warning(`录入完成 ${j.ok}/${j.total}`, { description: `${j.failed} 条失败` });
+      } else {
+        toast.success(`录入完成 ${j.ok}/${j.total}`, { description: "全部成功" });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -479,47 +469,49 @@ function ImportAccountsTab({
 
   return (
     <div className="space-y-4 pt-2">
-      <Textarea
-        label="粘贴账号列表"
-        description="每行一对，base_url 一行 + api_key 一行；或 CSV: base_url,api_key"
-        placeholder={`https://xxx.services.ai.azure.com/anthropic
-sk-xxxx
-https://yyy.services.ai.azure.com/anthropic
-sk-yyyy`}
-        value={text}
-        onValueChange={setText}
-        minRows={6}
-      />
+      <div className="space-y-2">
+        <Label>粘贴账号列表</Label>
+        <Textarea
+          placeholder={`https://xxx.services.ai.azure.com/anthropic\nsk-xxxx\nhttps://yyy.services.ai.azure.com/anthropic\nsk-yyyy`}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={6}
+        />
+        <p className="text-xs text-muted-foreground">每行一对，base_url 一行 + api_key 一行；或 CSV: base_url,api_key</p>
+      </div>
       <div className="flex gap-2 items-end flex-wrap">
-        <Input
-          type="number"
-          size="sm"
-          label="单价成本 (USD)"
-          description="每个账号的固定成本，写入本站记账，参与利润计算"
-          value={costText}
-          onValueChange={setCostText}
-          className="w-[200px]"
-          min={0}
-        />
-        <Input
-          size="sm"
-          label="账号别称（可选）"
-          description={
-            aliasMode
+        <div className="space-y-2 w-[200px]">
+          <Label>单价成本 (USD)</Label>
+          <Input
+            type="number"
+            className="h-8"
+            value={costText}
+            onChange={(e) => setCostText(e.target.value)}
+            min={0}
+          />
+          <p className="text-xs text-muted-foreground">每个账号的固定成本，写入本站记账，参与利润计算</p>
+        </div>
+        <div className="space-y-2 w-[220px]">
+          <Label>账号别称（可选）</Label>
+          <Input
+            className="h-8"
+            placeholder="例如 o总"
+            value={alias}
+            onChange={(e) => setAlias(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            {aliasMode
               ? `账号将命名为 ${config.account_prefix}${alias.trim()}-N · 该模式自动关闭代理自动配对，必须手动指定一个共用代理`
-              : `留空则用默认前缀 ${config.account_prefix}N；填写后命名为 ${config.account_prefix}{别称}-N`
-          }
-          placeholder="例如 o总"
-          value={alias}
-          onValueChange={setAlias}
-          className="w-[220px]"
-        />
-        <Button color="primary" onPress={parse} isLoading={parsing} isDisabled={!text.trim()}>
+              : `留空则用默认前缀 ${config.account_prefix}N；填写后命名为 ${config.account_prefix}{别称}-N`}
+          </p>
+        </div>
+        <Button onClick={parse} disabled={parsing || !text.trim()}>
+          {parsing && <Loader2 className="h-4 w-4 animate-spin" />}
           解析 + 预览
         </Button>
-        <span className="text-xs text-default-500 self-center">
+        <span className="text-xs text-muted-foreground self-center">
           应用规则：分组 [{config.group_ids.join(",") || "未配置"}] · 并发{" "}
-          {config.concurrency} · 倍率 ×{config.rate_multiplier} ·{" "}
+          {config.concurrency} · 倍率 x{config.rate_multiplier} ·{" "}
           {aliasMode
             ? "（别称模式 · 共用代理）"
             : config.auto_bind_proxy
@@ -529,39 +521,42 @@ sk-yyyy`}
       </div>
 
       <div className="flex items-end gap-3 flex-wrap">
-        <Checkbox
-          size="sm"
-          isSelected={shareProxy || aliasMode}
-          isDisabled={aliasMode}
-          onValueChange={(v) => {
-            setShareProxy(v);
-            if (!v) setSharedProxyId("");
-          }}
-        >
+        <div className="flex items-center gap-2">
+          <Checkbox
+            checked={shareProxy || aliasMode}
+            disabled={aliasMode}
+            onCheckedChange={(v) => {
+              setShareProxy(!!v);
+              if (!v) setSharedProxyId("");
+            }}
+          />
           <span className="text-xs">
             本批共用同一个代理{aliasMode && "（别称模式下强制开启）"}
           </span>
-        </Checkbox>
+        </div>
         {(shareProxy || aliasMode) && (
-          <Select
-            size="sm"
-            label="代理"
-            placeholder={proxies === null ? "加载中…" : "选择共用代理"}
-            isDisabled={proxies === null || proxies.length === 0}
-            selectedKeys={sharedProxyId ? new Set([sharedProxyId]) : new Set()}
-            onSelectionChange={(k) => {
-              const v = Array.from(k as Set<string>)[0] ?? "";
-              setSharedProxyId(v);
-            }}
-            className="w-[260px]"
-          >
-            {(proxies ?? []).map((p) => (
-              <SelectItem key={String(p.id)}>{`${p.name} (#${p.id})`}</SelectItem>
-            ))}
-          </Select>
+          <div className="space-y-2 w-[260px]">
+            <Label>代理</Label>
+            <Select
+              value={sharedProxyId || undefined}
+              onValueChange={(v) => setSharedProxyId(v)}
+              disabled={proxies === null || proxies.length === 0}
+            >
+              <SelectTrigger className="h-8">
+                <SelectValue placeholder={proxies === null ? "加载中..." : "选择共用代理"} />
+              </SelectTrigger>
+              <SelectContent>
+                {(proxies ?? []).map((p) => (
+                  <SelectItem key={String(p.id)} value={String(p.id)}>
+                    {`${p.name} (#${p.id})`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         )}
         {(shareProxy || aliasMode) && (
-          <span className="text-xs text-default-500 self-center">
+          <span className="text-xs text-muted-foreground self-center">
             整批账号都绑这一个代理（自动配对被禁用）
           </span>
         )}
@@ -569,39 +564,41 @@ sk-yyyy`}
 
       {preview && (
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-3 text-xs text-default-500">
-            <Chip size="sm" variant="flat">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            <Badge variant="secondary">
               将创建 {preview.rows.length} 个，从{" "}
               {config.account_prefix}
               {preview.nextSequenceStart} 起
-            </Chip>
-            <Chip size="sm" variant="flat">
+            </Badge>
+            <Badge variant="secondary">
               已存在 {preview.existingAccountCount}
-            </Chip>
+            </Badge>
             {config.auto_bind_proxy && (
-              <Chip size="sm" variant="flat">
+              <Badge variant="secondary">
                 可绑代理 {preview.unboundProxyCount}
-              </Chip>
+              </Badge>
             )}
             <Button
               size="sm"
-              color="success"
-              variant="flat"
-              onPress={submit}
-              isLoading={submitting}
-              isDisabled={preview.rows.length === 0}
+              variant="secondary"
+              onClick={submit}
+              disabled={submitting || preview.rows.length === 0}
+              className="text-emerald-600 dark:text-emerald-400"
             >
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               提交录入
             </Button>
           </div>
-          <Table removeWrapper aria-label="preview" classNames={{ td: "py-2" }}>
+          <Table>
             <TableHeader>
-              <TableColumn>序号</TableColumn>
-              <TableColumn>名称</TableColumn>
-              <TableColumn>base_url</TableColumn>
-              <TableColumn>api_key</TableColumn>
-              <TableColumn>代理</TableColumn>
-              <TableColumn>提示</TableColumn>
+              <TableRow>
+                <TableHead>序号</TableHead>
+                <TableHead>名称</TableHead>
+                <TableHead>base_url</TableHead>
+                <TableHead>api_key</TableHead>
+                <TableHead>代理</TableHead>
+                <TableHead>提示</TableHead>
+              </TableRow>
             </TableHeader>
             <TableBody>
               {preview.rows.map((r) => (
@@ -625,23 +622,23 @@ sk-yyyy`}
                             <span
                               className={
                                 matched
-                                  ? "text-success font-medium"
-                                  : "text-warning font-medium"
+                                  ? "text-emerald-600 dark:text-emerald-400 font-medium"
+                                  : "text-amber-600 dark:text-amber-400 font-medium"
                               }
                             >
                               {r.proxyName}
                             </span>
-                            <span className="text-xs text-default-400">
+                            <span className="text-xs text-muted-foreground">
                               #{r.proxyId}
                             </span>
                           </div>
                         );
                       })()
                     ) : (
-                      <span className="text-default-400">—</span>
+                      <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-xs text-warning">
+                  <TableCell className="text-xs text-amber-600 dark:text-amber-400">
                     {r.warnings.join("；")}
                   </TableCell>
                 </TableRow>
@@ -687,7 +684,7 @@ function ImportProxiesTab({
       });
       const j = await r.json();
       if (!r.ok) {
-        addToast({ title: "解析失败", description: j.error, color: "danger" });
+        toast.error("解析失败", { description: j.error });
         return;
       }
       setPreview(j);
@@ -707,14 +704,11 @@ function ImportProxiesTab({
       });
       const j = await r.json();
       if (!r.ok) {
-        addToast({ title: "提交失败", description: j.error, color: "danger" });
+        toast.error("提交失败", { description: j.error });
         return;
       }
       setResults(j.rows);
-      addToast({
-        title: `录入完成 ${j.ok}/${j.total}`,
-        color: j.failed ? "warning" : "success",
-      });
+      toast[j.failed ? "warning" : "success"](`录入完成 ${j.ok}/${j.total}`);
     } finally {
       setSubmitting(false);
     }
@@ -727,52 +721,56 @@ function ImportProxiesTab({
 
   return (
     <div className="space-y-4 pt-2">
-      <Textarea
-        label="粘贴代理列表"
-        description="每行一条 host:port:user:pass 或 host,port,user,pass"
-        placeholder={`1.2.3.4:1080:alice:pwd
-5.6.7.8,1080,bob,pwd`}
-        value={text}
-        onValueChange={setText}
-        minRows={6}
-      />
+      <div className="space-y-2">
+        <Label>粘贴代理列表</Label>
+        <Textarea
+          placeholder={`1.2.3.4:1080:alice:pwd\n5.6.7.8,1080,bob,pwd`}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={6}
+        />
+        <p className="text-xs text-muted-foreground">每行一条 host:port:user:pass 或 host,port,user,pass</p>
+      </div>
       <div className="flex gap-2 items-center flex-wrap">
-        <Button color="primary" onPress={parse} isLoading={parsing} isDisabled={!text.trim()}>
+        <Button onClick={parse} disabled={parsing || !text.trim()}>
+          {parsing && <Loader2 className="h-4 w-4 animate-spin" />}
           解析 + 预览
         </Button>
-        <span className="text-xs text-default-500">
+        <span className="text-xs text-muted-foreground">
           协议：{config.proxy_protocol}
         </span>
       </div>
 
       {preview && (
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-3 text-xs text-default-500">
-            <Chip size="sm" variant="flat">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            <Badge variant="secondary">
               将创建 {willCreate} 个，从 {config.proxy_prefix}
               {preview.nextSequenceStart} 起
-            </Chip>
-            <Chip size="sm" variant="flat">
+            </Badge>
+            <Badge variant="secondary">
               已存在 {preview.existingProxyCount}
-            </Chip>
+            </Badge>
             <Button
               size="sm"
-              color="success"
-              variant="flat"
-              onPress={submit}
-              isLoading={submitting}
-              isDisabled={willCreate === 0}
+              variant="secondary"
+              onClick={submit}
+              disabled={submitting || willCreate === 0}
+              className="text-emerald-600 dark:text-emerald-400"
             >
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               提交录入
             </Button>
           </div>
-          <Table removeWrapper aria-label="proxy preview" classNames={{ td: "py-2" }}>
+          <Table>
             <TableHeader>
-              <TableColumn>序号</TableColumn>
-              <TableColumn>名称</TableColumn>
-              <TableColumn>host:port</TableColumn>
-              <TableColumn>认证</TableColumn>
-              <TableColumn>状态</TableColumn>
+              <TableRow>
+                <TableHead>序号</TableHead>
+                <TableHead>名称</TableHead>
+                <TableHead>host:port</TableHead>
+                <TableHead>认证</TableHead>
+                <TableHead>状态</TableHead>
+              </TableRow>
             </TableHeader>
             <TableBody>
               {preview.rows.map((r) => (
@@ -780,7 +778,7 @@ function ImportProxiesTab({
                   <TableCell>{r.index}</TableCell>
                   <TableCell className="font-medium">
                     {r.skip ? (
-                      <span className="text-default-400 line-through">
+                      <span className="text-muted-foreground line-through">
                         {r.proposedName}
                       </span>
                     ) : (
@@ -797,11 +795,11 @@ function ImportProxiesTab({
                   </TableCell>
                   <TableCell className="text-xs">
                     {r.skip ? (
-                      <span className="text-default-400">跳过</span>
+                      <span className="text-muted-foreground">跳过</span>
                     ) : r.warnings.length ? (
-                      <span className="text-warning">{r.warnings.join("；")}</span>
+                      <span className="text-amber-600 dark:text-amber-400">{r.warnings.join("；")}</span>
                     ) : (
-                      <span className="text-success">新增</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">新增</span>
                     )}
                   </TableCell>
                 </TableRow>
@@ -820,22 +818,24 @@ function ResultPanel({ results }: { results: ResultRow[] }) {
   const ok = results.filter((r) => r.ok).length;
   const failed = results.length - ok;
   return (
-    <div className="border border-divider/40 rounded-lg p-3 space-y-2">
+    <div className="border border-border rounded-lg p-3 space-y-2">
       <div className="flex items-center gap-2">
-        <Chip size="sm" color="success" variant="flat">
+        <Badge variant="success">
           成功 {ok}
-        </Chip>
+        </Badge>
         {failed > 0 && (
-          <Chip size="sm" color="danger" variant="flat">
+          <Badge variant="destructive">
             失败 {failed}
-          </Chip>
+          </Badge>
         )}
       </div>
       {failed > 0 && (
-        <Table removeWrapper aria-label="result errors" classNames={{ td: "py-1.5" }}>
+        <Table>
           <TableHeader>
-            <TableColumn>名称</TableColumn>
-            <TableColumn>错误</TableColumn>
+            <TableRow>
+              <TableHead>名称</TableHead>
+              <TableHead>错误</TableHead>
+            </TableRow>
           </TableHeader>
           <TableBody>
             {results
@@ -843,7 +843,7 @@ function ResultPanel({ results }: { results: ResultRow[] }) {
               .map((r) => (
                 <TableRow key={r.name}>
                   <TableCell>{r.name}</TableCell>
-                  <TableCell className="text-xs text-danger">
+                  <TableCell className="text-xs text-destructive">
                     {r.error}
                   </TableCell>
                 </TableRow>
@@ -858,7 +858,7 @@ function ResultPanel({ results }: { results: ResultRow[] }) {
 function maskKey(k: string): string {
   if (!k) return "";
   if (k.length <= 12) return k;
-  return `${k.slice(0, 6)}…${k.slice(-4)}`;
+  return `${k.slice(0, 6)}...${k.slice(-4)}`;
 }
 
 // ============================================================
@@ -879,10 +879,6 @@ function ConfigModal({
 }) {
   const [c, setC] = useState<AzConfig>(initial);
   const [saving, setSaving] = useState(false);
-
-  // Hold whitelist as raw text — parsing on every keystroke would eat
-  // trailing newlines and partial lines, blocking input. We sync from the
-  // config object only on modal open, then parse back on save.
   const [whitelistText, setWhitelistText] = useState("");
 
   useEffect(() => {
@@ -901,7 +897,6 @@ function ConfigModal({
     for (const line of text.split(/\r?\n/)) {
       const t = line.trim();
       if (!t || t.startsWith("#")) continue;
-      // Strip optional "= ..." (legacy mapping format) — keep the key only.
       const name = t.split("=")[0].trim();
       if (name) m[name] = name;
     }
@@ -920,11 +915,11 @@ function ConfigModal({
       });
       const j = await r.json();
       if (!r.ok) {
-        addToast({ title: "保存失败", description: j.error, color: "danger" });
+        toast.error("保存失败", { description: j.error });
         return;
       }
       onSaved(j.config, j.updatedAt);
-      addToast({ title: "已保存", color: "success" });
+      toast.success("已保存");
       onClose();
     } finally {
       setSaving(false);
@@ -932,123 +927,141 @@ function ConfigModal({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="3xl" scrollBehavior="inside">
-      <ModalContent>
-        <ModalHeader>az 规则配置</ModalHeader>
-        <ModalBody className="gap-3">
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>az 规则配置</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Input
-              type="number"
-              label="并发"
-              value={String(c.concurrency)}
-              onValueChange={(v) => update("concurrency", Number(v) || 0)}
-            />
-            <Input
-              type="number"
-              label="优先级"
-              value={String(c.priority)}
-              onValueChange={(v) => update("priority", Number(v) || 0)}
-            />
-            <Input
-              type="number"
-              step="0.01"
-              label="计费倍率"
-              value={String(c.rate_multiplier)}
-              onValueChange={(v) =>
-                update("rate_multiplier", Number(v) || 1)
-              }
-            />
+            <div className="space-y-2">
+              <Label>并发</Label>
+              <Input
+                type="number"
+                value={String(c.concurrency)}
+                onChange={(e) => update("concurrency", Number(e.target.value) || 0)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>优先级</Label>
+              <Input
+                type="number"
+                value={String(c.priority)}
+                onChange={(e) => update("priority", Number(e.target.value) || 0)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>计费倍率</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={String(c.rate_multiplier)}
+                onChange={(e) => update("rate_multiplier", Number(e.target.value) || 1)}
+              />
+            </div>
           </div>
-          <Input
-            label="所属分组 group_ids"
-            description="逗号分隔，例 4,2,5,7。顺序决定 group-priority"
-            value={c.group_ids.join(",")}
-            onValueChange={(v) =>
-              update(
-                "group_ids",
-                v
-                  .split(/[,，]+/)
-                  .map((x) => Number(x.trim()))
-                  .filter((x) => Number.isFinite(x) && x > 0),
-              )
-            }
-          />
-          <Switch
-            isSelected={c.confirm_mixed_channel_risk}
-            onValueChange={(v) => update("confirm_mixed_channel_risk", v)}
-          >
-            confirm_mixed_channel_risk（账号在多组时需要 true）
-          </Switch>
-          <Textarea
-            label="模型白名单"
-            description="每行一个模型名。只有列在这里的模型才能通过；留空 = 允许所有模型透传"
-            placeholder={`claude-opus-4-7
-claude-sonnet-4-6
-claude-haiku-4-5-20251001`}
-            minRows={5}
-            value={whitelistText}
-            onValueChange={setWhitelistText}
-          />
-          <hr className="border-divider/50 my-2" />
+          <div className="space-y-2">
+            <Label>所属分组 group_ids</Label>
+            <Input
+              value={c.group_ids.join(",")}
+              onChange={(e) =>
+                update(
+                  "group_ids",
+                  e.target.value
+                    .split(/[,，]+/)
+                    .map((x) => Number(x.trim()))
+                    .filter((x) => Number.isFinite(x) && x > 0),
+                )
+              }
+            />
+            <p className="text-xs text-muted-foreground">逗号分隔，例 4,2,5,7。顺序决定 group-priority</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={c.confirm_mixed_channel_risk}
+              onCheckedChange={(v) => update("confirm_mixed_channel_risk", v)}
+            />
+            <Label>confirm_mixed_channel_risk（账号在多组时需要 true）</Label>
+          </div>
+          <div className="space-y-2">
+            <Label>模型白名单</Label>
+            <Textarea
+              placeholder={`claude-opus-4-7\nclaude-sonnet-4-6\nclaude-haiku-4-5-20251001`}
+              rows={5}
+              value={whitelistText}
+              onChange={(e) => setWhitelistText(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">每行一个模型名。只有列在这里的模型才能通过；留空 = 允许所有模型透传</p>
+          </div>
+          <hr className="border-border my-2" />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Input
-              label="账号命名前缀"
-              value={c.account_prefix}
-              onValueChange={(v) => update("account_prefix", v)}
-            />
-            <Input
-              type="number"
-              label="账号起始编号"
-              value={String(c.account_start_index)}
-              onValueChange={(v) =>
-                update("account_start_index", Number(v) || 1)
-              }
-            />
-            <Input
-              label="代理命名前缀"
-              value={c.proxy_prefix}
-              onValueChange={(v) => update("proxy_prefix", v)}
-            />
-            <Input
-              type="number"
-              label="代理起始编号"
-              value={String(c.proxy_start_index)}
-              onValueChange={(v) =>
-                update("proxy_start_index", Number(v) || 1)
-              }
-            />
-            <Select
-              label="代理协议"
-              selectedKeys={new Set([c.proxy_protocol])}
-              onSelectionChange={(k) =>
-                update("proxy_protocol", String(Array.from(k)[0] ?? "socks5"))
-              }
-            >
-              <SelectItem key="socks5">socks5</SelectItem>
-              <SelectItem key="socks5h">socks5h</SelectItem>
-              <SelectItem key="http">http</SelectItem>
-              <SelectItem key="https">https</SelectItem>
-            </Select>
-            <div className="flex items-end">
-              <Switch
-                isSelected={c.auto_bind_proxy}
-                onValueChange={(v) => update("auto_bind_proxy", v)}
+            <div className="space-y-2">
+              <Label>账号命名前缀</Label>
+              <Input
+                value={c.account_prefix}
+                onChange={(e) => update("account_prefix", e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>账号起始编号</Label>
+              <Input
+                type="number"
+                value={String(c.account_start_index)}
+                onChange={(e) => update("account_start_index", Number(e.target.value) || 1)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>代理命名前缀</Label>
+              <Input
+                value={c.proxy_prefix}
+                onChange={(e) => update("proxy_prefix", e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>代理起始编号</Label>
+              <Input
+                type="number"
+                value={String(c.proxy_start_index)}
+                onChange={(e) => update("proxy_start_index", Number(e.target.value) || 1)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>代理协议</Label>
+              <Select
+                value={c.proxy_protocol}
+                onValueChange={(v) => update("proxy_protocol", v)}
               >
-                录入账号时自动绑定空闲代理
-              </Switch>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="socks5">socks5</SelectItem>
+                  <SelectItem value="socks5h">socks5h</SelectItem>
+                  <SelectItem value="http">http</SelectItem>
+                  <SelectItem value="https">https</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-end">
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={c.auto_bind_proxy}
+                  onCheckedChange={(v) => update("auto_bind_proxy", v)}
+                />
+                <Label>录入账号时自动绑定空闲代理</Label>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 p-3 rounded-lg bg-content2/40">
+          <div className="flex flex-col gap-2 p-3 rounded-lg bg-card border border-border">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">临时不可调度规则</span>
               <Switch
-                size="sm"
-                isSelected={c.temp_unschedulable_enabled !== false}
-                onValueChange={(v) => update("temp_unschedulable_enabled", v)}
+                checked={c.temp_unschedulable_enabled !== false}
+                onCheckedChange={(v) => update("temp_unschedulable_enabled", v)}
               />
             </div>
-            <p className="text-xs text-default-500">
+            <p className="text-xs text-muted-foreground">
               命中错误码 + 关键词时，临时停用该渠道指定分钟数；过后自动恢复
             </p>
             <div className="flex flex-col gap-2">
@@ -1057,88 +1070,87 @@ claude-haiku-4-5-20251001`}
                   key={idx}
                   className="grid grid-cols-12 gap-1 items-end"
                 >
-                  <Input
-                    size="sm"
-                    type="number"
-                    label="错误码"
-                    className="col-span-2"
-                    value={String(rule.error_code)}
-                    onValueChange={(v) => {
-                      const next = [...(c.temp_unschedulable_rules ?? [])];
-                      next[idx] = {
-                        ...rule,
-                        error_code: Math.max(0, Math.floor(Number(v) || 0)),
-                      };
-                      update("temp_unschedulable_rules", next);
-                    }}
-                  />
-                  <Input
-                    size="sm"
-                    label="关键词（逗号分隔）"
-                    className="col-span-5"
-                    value={rule.keywords.join(", ")}
-                    onValueChange={(v) => {
-                      const next = [...(c.temp_unschedulable_rules ?? [])];
-                      next[idx] = {
-                        ...rule,
-                        keywords: v
-                          .split(/,\s*/)
-                          .map((s) => s.trim())
-                          .filter(Boolean),
-                      };
-                      update("temp_unschedulable_rules", next);
-                    }}
-                  />
-                  <Input
-                    size="sm"
-                    type="number"
-                    label="时长（分钟）"
-                    className="col-span-2"
-                    value={String(rule.duration_minutes)}
-                    onValueChange={(v) => {
-                      const next = [...(c.temp_unschedulable_rules ?? [])];
-                      next[idx] = {
-                        ...rule,
-                        duration_minutes: Math.max(
-                          1,
-                          Math.floor(Number(v) || 1),
-                        ),
-                      };
-                      update("temp_unschedulable_rules", next);
-                    }}
-                  />
-                  <Input
-                    size="sm"
-                    label="说明"
-                    className="col-span-2"
-                    value={rule.description ?? ""}
-                    onValueChange={(v) => {
-                      const next = [...(c.temp_unschedulable_rules ?? [])];
-                      next[idx] = { ...rule, description: v };
-                      update("temp_unschedulable_rules", next);
-                    }}
-                  />
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-xs">错误码</Label>
+                    <Input
+                      className="h-8"
+                      type="number"
+                      value={String(rule.error_code)}
+                      onChange={(e) => {
+                        const next = [...(c.temp_unschedulable_rules ?? [])];
+                        next[idx] = {
+                          ...rule,
+                          error_code: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                        };
+                        update("temp_unschedulable_rules", next);
+                      }}
+                    />
+                  </div>
+                  <div className="col-span-5 space-y-1">
+                    <Label className="text-xs">关键词（逗号分隔）</Label>
+                    <Input
+                      className="h-8"
+                      value={rule.keywords.join(", ")}
+                      onChange={(e) => {
+                        const next = [...(c.temp_unschedulable_rules ?? [])];
+                        next[idx] = {
+                          ...rule,
+                          keywords: e.target.value
+                            .split(/,\s*/)
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        };
+                        update("temp_unschedulable_rules", next);
+                      }}
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-xs">时长（分钟）</Label>
+                    <Input
+                      className="h-8"
+                      type="number"
+                      value={String(rule.duration_minutes)}
+                      onChange={(e) => {
+                        const next = [...(c.temp_unschedulable_rules ?? [])];
+                        next[idx] = {
+                          ...rule,
+                          duration_minutes: Math.max(1, Math.floor(Number(e.target.value) || 1)),
+                        };
+                        update("temp_unschedulable_rules", next);
+                      }}
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-xs">说明</Label>
+                    <Input
+                      className="h-8"
+                      value={rule.description ?? ""}
+                      onChange={(e) => {
+                        const next = [...(c.temp_unschedulable_rules ?? [])];
+                        next[idx] = { ...rule, description: e.target.value };
+                        update("temp_unschedulable_rules", next);
+                      }}
+                    />
+                  </div>
                   <Button
-                    size="sm"
-                    isIconOnly
-                    color="danger"
-                    variant="light"
-                    className="col-span-1"
-                    onPress={() => {
+                    size="icon-sm"
+                    variant="ghost"
+                    className="col-span-1 text-destructive"
+                    onClick={() => {
                       const next = (c.temp_unschedulable_rules ?? []).filter(
                         (_, i) => i !== idx,
                       );
                       update("temp_unschedulable_rules", next);
                     }}
                   >
-                    ×
+                    x
                   </Button>
                 </div>
               ))}
               <Button
                 size="sm"
-                variant="flat"
-                onPress={() => {
+                variant="secondary"
+                onClick={() => {
                   const next = [
                     ...(c.temp_unschedulable_rules ?? []),
                     {
@@ -1155,17 +1167,18 @@ claude-haiku-4-5-20251001`}
               </Button>
             </div>
           </div>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="flat" onPress={onClose}>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
             取消
           </Button>
-          <Button color="primary" onPress={save} isLoading={saving}>
+          <Button onClick={save} disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
             保存
           </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1191,17 +1204,12 @@ function BulkUpdateTab({
   const [updateMapping, setUpdateMapping] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Bulk apply only operates on healthy (status=active) channels — never
-  // touch the broken ones. Hidden / non-active accounts can be unblocked
-  // from sub2api admin first; they reappear here once back to active.
   const visibleAccounts = useMemo(
     () => (accounts ?? []).filter((a) => a.status === "active"),
     [accounts],
   );
   const hiddenCount = (accounts?.length ?? 0) - visibleAccounts.length;
 
-  // When the visible list arrives (or changes), default-select everything
-  // IF the list is freshly empty.
   useEffect(() => {
     if (visibleAccounts.length > 0 && selected.size === 0) {
       setSelected(new Set(visibleAccounts.map((a) => a.id)));
@@ -1218,7 +1226,7 @@ function BulkUpdateTab({
 
   async function submit() {
     if (selected.size === 0) {
-      addToast({ title: "请至少选一个账号", color: "warning" });
+      toast.warning("请至少选一个账号");
       return;
     }
     if (
@@ -1241,17 +1249,13 @@ function BulkUpdateTab({
       });
       const j = await r.json();
       if (!r.ok) {
-        addToast({ title: "提交失败", description: j.error, color: "danger" });
+        toast.error("提交失败", { description: j.error });
         return;
       }
       const desc = j.ok
         ? `已更新 ${j.targetCount} 个${j.includedWhitelist ? "（含白名单）" : ""}`
         : `失败：${j.error ?? "未知错误"}`;
-      addToast({
-        title: j.ok ? "批量更新完成" : "批量更新失败",
-        description: desc,
-        color: j.ok ? "success" : "danger",
-      });
+      toast[j.ok ? "success" : "error"](j.ok ? "批量更新完成" : "批量更新失败", { description: desc });
       reload();
     } finally {
       setSubmitting(false);
@@ -1261,77 +1265,79 @@ function BulkUpdateTab({
   return (
     <div className="space-y-3 pt-2">
       <div className="flex items-center gap-3 flex-wrap">
-        <Button size="sm" variant="flat" onPress={reload} isLoading={loading}>
+        <Button size="sm" variant="secondary" onClick={reload} disabled={loading}>
+          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
           刷新列表
         </Button>
         {refreshedAt && (
-          <span className="text-xs text-default-400">
+          <span className="text-xs text-muted-foreground">
             上次刷新 {refreshedAt.toLocaleTimeString("zh-CN")}（每 3 分钟自动）
           </span>
         )}
-        <span className="text-xs text-default-500">
+        <span className="text-xs text-muted-foreground">
           已选 {selected.size} / {visibleAccounts.length}（仅显示 status=active
           {hiddenCount > 0 ? `，已隐藏 ${hiddenCount} 个非活跃` : ""}） ·{" "}
-          规则：并发 {config.concurrency} · 优先级 {config.priority} · 倍率 ×
+          规则：并发 {config.concurrency} · 优先级 {config.priority} · 倍率 x
           {config.rate_multiplier} · 分组 [{config.group_ids.join(",") || "—"}]
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <Switch
-            size="sm"
-            isSelected={updateMapping}
-            onValueChange={setUpdateMapping}
-          >
-            同时更新模型白名单
-          </Switch>
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={updateMapping}
+              onCheckedChange={setUpdateMapping}
+            />
+            <Label className="text-sm">同时更新模型白名单</Label>
+          </div>
           <Button
             size="sm"
-            color="primary"
-            onPress={submit}
-            isLoading={submitting}
-            isDisabled={selected.size === 0}
+            onClick={submit}
+            disabled={submitting || selected.size === 0}
           >
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             应用规则
           </Button>
         </div>
       </div>
       {loading ? (
-        <Spinner size="sm" />
+        <Loader2 className="h-4 w-4 animate-spin" />
       ) : visibleAccounts.length === 0 ? (
-        <p className="text-default-500 text-sm">
+        <p className="text-muted-foreground text-sm">
           {(accounts?.length ?? 0) === 0
             ? "没有匹配 az-N 命名的账号"
             : `共 ${accounts?.length ?? 0} 个 az 账号，但当前都不是 active 状态`}
         </p>
       ) : (
-        <Table removeWrapper aria-label="bulk-update" classNames={{ td: "py-2" }}>
+        <Table>
           <TableHeader>
-            <TableColumn>
-              <input
-                type="checkbox"
-                checked={
-                  selected.size > 0 && selected.size === visibleAccounts.length
-                }
-                ref={(el) => {
-                  if (el)
-                    el.indeterminate =
-                      selected.size > 0 &&
-                      selected.size < visibleAccounts.length;
-                }}
-                onChange={(e) =>
-                  setSelected(
-                    e.target.checked
-                      ? new Set(visibleAccounts.map((a) => a.id))
-                      : new Set(),
-                  )
-                }
-              />
-            </TableColumn>
-            <TableColumn>名称</TableColumn>
-            <TableColumn>状态</TableColumn>
-            <TableColumn>并发</TableColumn>
-            <TableColumn>优先级</TableColumn>
-            <TableColumn>倍率</TableColumn>
-            <TableColumn>分组</TableColumn>
+            <TableRow>
+              <TableHead>
+                <input
+                  type="checkbox"
+                  checked={
+                    selected.size > 0 && selected.size === visibleAccounts.length
+                  }
+                  ref={(el) => {
+                    if (el)
+                      el.indeterminate =
+                        selected.size > 0 &&
+                        selected.size < visibleAccounts.length;
+                  }}
+                  onChange={(e) =>
+                    setSelected(
+                      e.target.checked
+                        ? new Set(visibleAccounts.map((a) => a.id))
+                        : new Set(),
+                    )
+                  }
+                />
+              </TableHead>
+              <TableHead>名称</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>并发</TableHead>
+              <TableHead>优先级</TableHead>
+              <TableHead>倍率</TableHead>
+              <TableHead>分组</TableHead>
+            </TableRow>
           </TableHeader>
           <TableBody>
             {visibleAccounts.map((a) => (
@@ -1345,13 +1351,13 @@ function BulkUpdateTab({
                 </TableCell>
                 <TableCell className="font-medium">{a.name}</TableCell>
                 <TableCell>
-                  <Chip size="sm" variant="flat" color="success">
+                  <Badge variant="success">
                     {a.status}
-                  </Chip>
+                  </Badge>
                 </TableCell>
                 <TableCell>{a.concurrency}</TableCell>
                 <TableCell>{a.priority}</TableCell>
-                <TableCell>×{a.rate_multiplier}</TableCell>
+                <TableCell>x{a.rate_multiplier}</TableCell>
                 <TableCell className="text-xs">
                   [{(a.group_ids ?? []).join(",")}]
                 </TableCell>
@@ -1381,7 +1387,6 @@ function CleanupTab({
   reload: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  // Derive error subset from the shared accounts list — no extra fetch.
   const accounts = useMemo(
     () => allAccounts?.filter((a) => a.status === "error") ?? null,
     [allAccounts],
@@ -1403,14 +1408,14 @@ function CleanupTab({
       });
       const j = await r.json();
       if (!r.ok) {
-        addToast({ title: "失败", description: j.error, color: "danger" });
+        toast.error("失败", { description: j.error });
         return;
       }
-      addToast({
-        title: `${verb}完成 ${j.ok}/${j.total}`,
-        description: j.failed ? `${j.failed} 个失败` : "全部成功",
-        color: j.failed ? "warning" : "success",
-      });
+      if (j.failed) {
+        toast.warning(`${verb}完成 ${j.ok}/${j.total}`, { description: `${j.failed} 个失败` });
+      } else {
+        toast.success(`${verb}完成 ${j.ok}/${j.total}`, { description: "全部成功" });
+      }
       reload();
     } finally {
       setBusy(false);
@@ -1420,59 +1425,61 @@ function CleanupTab({
   return (
     <div className="space-y-3 pt-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <Button size="sm" variant="flat" onPress={reload} isLoading={loading}>
+        <Button size="sm" variant="secondary" onClick={reload} disabled={loading}>
+          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
           刷新
         </Button>
         {refreshedAt && (
-          <span className="text-xs text-default-400">
+          <span className="text-xs text-muted-foreground">
             上次刷新 {refreshedAt.toLocaleTimeString("zh-CN")}
           </span>
         )}
-        <span className="text-xs text-default-500">
+        <span className="text-xs text-muted-foreground">
           错误账号 {accounts?.length ?? 0} 个
         </span>
         <div className="ml-auto flex gap-2">
           <Button
             size="sm"
-            color="warning"
-            variant="flat"
-            onPress={() => run("clear")}
-            isLoading={busy}
-            isDisabled={!accounts || accounts.length === 0}
+            variant="secondary"
+            onClick={() => run("clear")}
+            disabled={busy || !accounts || accounts.length === 0}
+            className="text-amber-600 dark:text-amber-400"
           >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             清错状态（不删）
           </Button>
           <Button
             size="sm"
-            color="danger"
-            variant="flat"
-            onPress={() => run("delete")}
-            isLoading={busy}
-            isDisabled={!accounts || accounts.length === 0}
+            variant="destructive"
+            onClick={() => run("delete")}
+            disabled={busy || !accounts || accounts.length === 0}
           >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             全部删除
           </Button>
         </div>
       </div>
       {loading ? (
-        <Spinner size="sm" />
+        <Loader2 className="h-4 w-4 animate-spin" />
       ) : !accounts || accounts.length === 0 ? (
-        <p className="text-success text-sm">✓ 没有错误账号</p>
+        <p className="text-emerald-600 dark:text-emerald-400 text-sm">✓ 没有错误账号</p>
       ) : (
-        <Table removeWrapper aria-label="cleanup" classNames={{ td: "py-2" }}>
+        <Table>
           <TableHeader>
-            <TableColumn>名称</TableColumn>
-            <TableColumn>错误信息</TableColumn>
-            <TableColumn>最后使用</TableColumn>
+            <TableRow>
+              <TableHead>名称</TableHead>
+              <TableHead>错误信息</TableHead>
+              <TableHead>最后使用</TableHead>
+            </TableRow>
           </TableHeader>
           <TableBody>
             {accounts.map((a) => (
               <TableRow key={a.id}>
                 <TableCell className="font-medium">{a.name}</TableCell>
-                <TableCell className="text-xs text-danger break-all">
+                <TableCell className="text-xs text-destructive break-all">
                   {a.error_message || "—"}
                 </TableCell>
-                <TableCell className="text-xs text-default-400">
+                <TableCell className="text-xs text-muted-foreground">
                   {a.last_used_at
                     ? new Date(a.last_used_at).toLocaleString("zh-CN")
                     : "—"}
@@ -1517,41 +1524,40 @@ function StatsTab({
   return (
     <div className="space-y-3 pt-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-default-500">区间</span>
+        <span className="text-xs text-muted-foreground">区间</span>
         {[1, 7, 30, 60, 90].map((d) => (
-          <Chip
+          <Badge
             key={d}
-            size="sm"
-            variant={days === d ? "solid" : "flat"}
-            color={days === d ? "primary" : "default"}
+            variant={days === d ? "default" : "secondary"}
             className="cursor-pointer"
             onClick={() => setDays(d)}
           >
             {d === 1 ? "今日" : `${d} 天`}
-          </Chip>
+          </Badge>
         ))}
-        <Button size="sm" variant="flat" onPress={reload} isLoading={loading}>
+        <Button size="sm" variant="secondary" onClick={reload} disabled={loading}>
+          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
           刷新
         </Button>
-        <Checkbox
-          size="sm"
-          isSelected={showErrors}
-          onValueChange={setShowErrors}
-        >
+        <div className="flex items-center gap-2">
+          <Checkbox
+            checked={showErrors}
+            onCheckedChange={(v) => setShowErrors(!!v)}
+          />
           <span className="text-xs">
             显示 error 账号
             {data && data.errorCount > 0 && (
-              <span className="text-danger ml-1">({data.errorCount})</span>
+              <span className="text-destructive ml-1">({data.errorCount})</span>
             )}
           </span>
-        </Checkbox>
+        </div>
         {refreshedAt && (
-          <span className="text-xs text-default-400">
+          <span className="text-xs text-muted-foreground">
             上次 {refreshedAt.toLocaleTimeString("zh-CN")}（每 3 分钟自动）
           </span>
         )}
         {data && (
-          <span className="text-xs text-default-400 ml-auto">
+          <span className="text-xs text-muted-foreground ml-auto">
             {data.startDate} ~ {data.endDate}
           </span>
         )}
@@ -1564,7 +1570,7 @@ function StatsTab({
             value={`$${fmtMoneyShort(data.cost)}`}
           />
           <SummaryCell
-            label="1× 消费"
+            label="1x 消费"
             value={`$${fmtMoneyShort(data.costBase)}`}
           />
           <SummaryCell
@@ -1586,40 +1592,42 @@ function StatsTab({
       )}
 
       {loading ? (
-        <Spinner size="sm" />
+        <Loader2 className="h-4 w-4 animate-spin" />
       ) : !data || data.rows.length === 0 ? (
-        <p className="text-default-500 text-sm">暂无数据</p>
+        <p className="text-muted-foreground text-sm">暂无数据</p>
       ) : visibleRows.length === 0 ? (
-        <p className="text-default-500 text-sm">
+        <p className="text-muted-foreground text-sm">
           全部 {data.rows.length} 个账号均为 error 状态。勾选「显示 error 账号」查看。
         </p>
       ) : (
-        <Table removeWrapper aria-label="stats" classNames={{ td: "py-2" }}>
+        <Table>
           <TableHeader>
-            <TableColumn>名称</TableColumn>
-            <TableColumn>状态</TableColumn>
-            <TableColumn>成本</TableColumn>
-            <TableColumn>1× 消费</TableColumn>
-            <TableColumn>实际消费</TableColumn>
-            <TableColumn>利润</TableColumn>
-            <TableColumn>请求 / token</TableColumn>
-            <TableColumn>最后使用</TableColumn>
+            <TableRow>
+              <TableHead>名称</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>成本</TableHead>
+              <TableHead>1x 消费</TableHead>
+              <TableHead>实际消费</TableHead>
+              <TableHead>利润</TableHead>
+              <TableHead>请求 / token</TableHead>
+              <TableHead>最后使用</TableHead>
+            </TableRow>
           </TableHeader>
           <TableBody>
             {visibleRows.map((r) => {
               const profitTone =
                 r.profit > 0
-                  ? "text-success font-medium"
+                  ? "text-emerald-600 dark:text-emerald-400 font-medium"
                   : r.profit < 0
-                    ? "text-danger font-medium"
-                    : "text-default-500";
+                    ? "text-destructive font-medium"
+                    : "text-muted-foreground";
               return (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">
                     {r.name}
                     {r.error && (
                       <span
-                        className="ml-1 text-xs text-danger"
+                        className="ml-1 text-xs text-destructive"
                         title={r.error}
                       >
                         ⚠
@@ -1627,39 +1635,37 @@ function StatsTab({
                     )}
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      size="sm"
-                      variant="flat"
-                      color={
+                    <Badge
+                      variant={
                         r.status === "active"
                           ? "success"
                           : r.status === "error"
-                            ? "danger"
-                            : "default"
+                            ? "destructive"
+                            : "secondary"
                       }
                     >
                       {r.status}
-                    </Chip>
+                    </Badge>
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col leading-tight">
                       <span>${fmtMoneyShort(r.cost)}</span>
                       {r.fixedCost != null && (
-                        <span className="text-xs text-default-400">固定</span>
+                        <span className="text-xs text-muted-foreground">固定</span>
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-default-500">
+                  <TableCell className="text-muted-foreground">
                     ${fmtMoneyShort(r.costBase)}
                   </TableCell>
                   <TableCell>${fmtMoneyShort(r.actualCost)}</TableCell>
                   <TableCell className={profitTone}>
                     ${fmtMoneyShort(r.profit)}
                   </TableCell>
-                  <TableCell className="text-xs text-default-500">
+                  <TableCell className="text-xs text-muted-foreground">
                     {r.requests} · {fmtTokens(r.tokens)}
                   </TableCell>
-                  <TableCell className="text-xs text-default-400">
+                  <TableCell className="text-xs text-muted-foreground">
                     {r.last_used_at
                       ? new Date(r.last_used_at).toLocaleString("zh-CN")
                       : "—"}
@@ -1687,11 +1693,11 @@ function SummaryCell({
     accent === "primary"
       ? "text-primary"
       : accent === "danger"
-        ? "text-danger"
+        ? "text-destructive"
         : "text-foreground";
   return (
-    <div className="rounded-lg bg-content2 p-3">
-      <p className="text-xs text-default-500">{label}</p>
+    <div className="rounded-lg bg-muted p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
       <p className={`text-lg font-bold mt-1 ${tone}`}>{value}</p>
     </div>
   );

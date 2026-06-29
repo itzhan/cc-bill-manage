@@ -1,17 +1,30 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
-  Button, Card, CardBody, CardHeader, Chip, Input,
-  Modal, ModalBody, ModalContent, ModalFooter, ModalHeader,
-  Select, SelectItem, Spinner, Tab, Tabs,
-  Table, TableBody, TableCell, TableColumn, TableHeader, TableRow,
-  Autocomplete, AutocompleteItem, useDisclosure, addToast,
-} from "@heroui/react";
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+  DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/components/ui/select";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Popover, PopoverTrigger, PopoverContent,
+} from "@/components/ui/popover";
+import { toast } from "sonner";
 import Shell from "@/components/Shell";
 import {
   ArrowLeft, Plus, Server, Building2, Trash2,
-  TrendingDown, DollarSign, Users, Calendar, Pencil, Check,
+  TrendingDown, DollarSign, Users, Calendar, Pencil, Check, Loader2, X, Search,
 } from "lucide-react";
 import Link from "next/link";
 import { fmtMoney, fmtMoneyShort, fmtDateShort } from "@/lib/format";
@@ -44,19 +57,58 @@ interface UpKeyRow {
 }
 interface SiteUserRow {
   userId: number; siteUserId: number; email: string; username: string; alias: string | null;
-  todayCost: number; multiplier: number; revenue: number; accountName: string; lastSyncAt: string | null;
+  todayCost: number; totalConsumed: number; totalRevenue: number;
+  multiplier: number; revenue: number; accountName: string; lastSyncAt: string | null;
+}
+interface FixedIncomeRow {
+  id: number; amount: number; note: string | null; createdAt: string;
 }
 interface Summary {
   today: { date: string; cost: number; revenue: number; profit: number };
-  total: { cost: number; revenue: number; profit: number; fixedCost: number };
+  total: { cost: number; revenue: number; profit: number; fixedCost: number; fixedIncome: number };
   upstreamKeys: UpKeyRow[];
   siteUsers: SiteUserRow[];
   fixedCostDetails: { id: number; category: string; amount: number; note: string | null; createdAt: string }[];
+  fixedIncomeDetails: FixedIncomeRow[];
   dailyData: { date: string; cost: number }[];
 }
 interface Option { id: number; name: string }
 interface UpKeyOption { id: number; name: string; groupName: string }
 interface SiteUserOption { id: number; remoteUserId: number; email: string; username: string; alias: string | null }
+
+/* ─────────── SearchableList (替代 Autocomplete) ─────────── */
+
+function SearchableList<T extends { id: number }>({
+  placeholder, items, renderItem, filterFn, onSelect,
+}: {
+  placeholder: string;
+  items: T[];
+  renderItem: (item: T) => React.ReactNode;
+  filterFn: (item: T, query: string) => boolean;
+  onSelect: (id: number) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const filtered = query ? items.filter((i) => filterFn(i, query.toLowerCase())) : items;
+  return (
+    <div className="space-y-2">
+      <div className="relative">
+        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <Input placeholder={placeholder} value={query} onChange={(e) => setQuery(e.target.value)}
+          className="h-8 pl-8 text-sm" />
+      </div>
+      {filtered.length > 0 && (
+        <div className="max-h-48 overflow-y-auto border border-border rounded-lg divide-y divide-border">
+          {filtered.slice(0, 30).map((item) => (
+            <button key={item.id} className="w-full text-left px-3 py-2 hover:bg-muted transition-colors text-sm"
+              onClick={() => { onSelect(item.id); setQuery(""); }}>
+              {renderItem(item)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ─────────── Page ─────────── */
 
@@ -67,6 +119,7 @@ export default function LedgerDetailPage() {
   const [loading, setLoading] = useState(true);
   const [upstreamOptions, setUpstreamOptions] = useState<Option[]>([]);
   const [siteOptions, setSiteOptions] = useState<Option[]>([]);
+  const [activeTab, setActiveTab] = useState("overview");
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -94,22 +147,28 @@ export default function LedgerDetailPage() {
     return () => clearInterval(timer);
   }, [loadAll]);
 
-  if (loading || !ledger || !summary) return <Shell><div className="flex justify-center py-20"><Spinner /></div></Shell>;
+  if (loading || !ledger || !summary) return <Shell><div className="flex justify-center py-20"><Loader2 className="h-5 w-5 animate-spin" /></div></Shell>;
 
   return (
     <Shell>
       <div className="flex items-center gap-3 mb-6">
-        <Button as={Link} href="/ledger" variant="light" isIconOnly size="sm"><ArrowLeft size={18} /></Button>
+        <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+          <Link href="/ledger"><ArrowLeft size={18} /></Link>
+        </Button>
         <h1 className="text-xl font-bold">{ledger.name}</h1>
       </div>
-      <Tabs aria-label="tabs" variant="underlined" classNames={{ tabList: "mb-4" }}>
-        <Tab key="overview" title="概览">
-          <OverviewTab ledger={ledger} summary={summary} upstreamOptions={upstreamOptions} siteOptions={siteOptions} onUpdate={loadAll} />
-        </Tab>
-        <Tab key="config" title="配置">
-          <ConfigTab ledger={ledger} upstreamOptions={upstreamOptions} siteOptions={siteOptions} onUpdate={loadAll} />
-        </Tab>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="overview">概览</TabsTrigger>
+          <TabsTrigger value="config">配置</TabsTrigger>
+        </TabsList>
       </Tabs>
+      {activeTab === "overview" && (
+        <OverviewTab ledger={ledger} summary={summary} upstreamOptions={upstreamOptions} siteOptions={siteOptions} onUpdate={loadAll} />
+      )}
+      {activeTab === "config" && (
+        <ConfigTab ledger={ledger} upstreamOptions={upstreamOptions} siteOptions={siteOptions} onUpdate={loadAll} />
+      )}
     </Shell>
   );
 }
@@ -120,15 +179,15 @@ function StatCard({ label, value, icon, color, sub }: {
   label: string; value: number; icon: React.ReactNode; color: string; sub?: string;
 }) {
   return (
-    <Card shadow="none" className="bg-content2/60 border border-divider/30">
-      <CardBody className="py-3.5 px-4">
+    <Card className="rounded-xl bg-card border border-border shadow-sm">
+      <CardContent className="py-3.5 px-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-default-400 font-medium">{label}</span>
-          <span className="text-default-300">{icon}</span>
+          <span className="text-xs text-muted-foreground/70 font-medium">{label}</span>
+          <span className="text-muted-foreground/40">{icon}</span>
         </div>
         <p className={`text-xl font-bold tracking-tight ${color}`}>{fmtMoneyShort(value)}</p>
-        {sub && <p className="text-[11px] text-default-400 mt-0.5">{sub}</p>}
-      </CardBody>
+        {sub && <p className="text-[11px] text-muted-foreground/70 mt-0.5">{sub}</p>}
+      </CardContent>
     </Card>
   );
 }
@@ -147,17 +206,17 @@ function InlineMultiplier({ value, onSave }: { value: number; onSave: (v: number
   if (editing) {
     return (
       <div className="flex items-center gap-1 justify-center">
-        <Input size="sm" type="number" className="w-[70px]" classNames={{ input: "text-center" }}
-          value={draft} onValueChange={setDraft} step="0.1" autoFocus
+        <Input type="number" className="h-7 w-[70px] text-center text-sm" value={draft}
+          onChange={(e) => setDraft(e.target.value)} step="0.1" autoFocus
           onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }} />
-        <Button size="sm" isIconOnly variant="flat" color="primary" onPress={commit}><Check size={12} /></Button>
+        <Button size="icon" variant="secondary" className="h-7 w-7" onClick={commit}><Check size={12} /></Button>
       </div>
     );
   }
   return (
-    <button className="flex items-center gap-1 justify-center w-full text-sm hover:text-primary transition-colors"
+    <button className="flex items-center gap-1 justify-center w-full text-sm hover:text-blue-600 transition-colors"
       onClick={() => { setDraft(String(value)); setEditing(true); }}>
-      ×{value}<Pencil size={11} className="text-default-300" />
+      ×{value}<Pencil size={11} className="text-muted-foreground/40" />
     </button>
   );
 }
@@ -167,10 +226,12 @@ function InlineMultiplier({ value, onSave }: { value: number; onSave: (v: number
 function OverviewTab({ ledger, summary, upstreamOptions, siteOptions, onUpdate }: {
   ledger: LedgerDetail; summary: Summary; upstreamOptions: Option[]; siteOptions: Option[]; onUpdate: () => void;
 }) {
-  const costModal = useDisclosure();
-  const keyModal = useDisclosure();
-  const userModal = useDisclosure();
+  const [costOpen, setCostOpen] = useState(false);
+  const [keyOpen, setKeyOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
+  const [incomeOpen, setIncomeOpen] = useState(false);
   const [costForm, setCostForm] = useState({ categoryId: "", amount: "", note: "" });
+  const [incomeForm, setIncomeForm] = useState({ amount: "", note: "" });
 
   // ── Key 选择 ──
   const [pickUpId, setPickUpId] = useState<number | null>(null);
@@ -196,7 +257,7 @@ function OverviewTab({ ledger, summary, upstreamOptions, siteOptions, onUpdate }
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ upstreamKeyIds: [...newIds] }),
     });
-    addToast({ title: "已添加 Key", color: "success" });
+    toast.success("已添加 Key");
     onUpdate();
   }
 
@@ -241,7 +302,7 @@ function OverviewTab({ ledger, summary, upstreamOptions, siteOptions, onUpdate }
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ siteUserIds: [...newIds] }),
     });
-    addToast({ title: "已添加用户", color: "success" });
+    toast.success("已添加用户");
     onUpdate();
   }
 
@@ -262,6 +323,24 @@ function OverviewTab({ ledger, summary, upstreamOptions, siteOptions, onUpdate }
     onUpdate();
   }
 
+  // ── 自定义收入 ──
+  async function addIncome() {
+    const amount = Number(incomeForm.amount);
+    if (isNaN(amount) || amount <= 0) return;
+    await fetch(`/api/ledger/${ledger.id}/fixed-incomes`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount, note: incomeForm.note || undefined }),
+    });
+    toast.success("已添加收入");
+    setIncomeForm({ amount: "", note: "" });
+    setIncomeOpen(false); onUpdate();
+  }
+
+  async function deleteIncome(incomeId: number) {
+    await fetch(`/api/ledger/${ledger.id}/fixed-incomes/${incomeId}`, { method: "DELETE" });
+    onUpdate();
+  }
+
   // ── 固定成本 ──
   async function quickAddCost() {
     const catId = Number(costForm.categoryId);
@@ -271,9 +350,9 @@ function OverviewTab({ ledger, summary, upstreamOptions, siteOptions, onUpdate }
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ categoryId: catId, amount, note: costForm.note || undefined }),
     });
-    addToast({ title: "已添加成本", color: "success" });
+    toast.success("已添加成本");
     setCostForm({ categoryId: "", amount: "", note: "" });
-    costModal.onClose(); onUpdate();
+    setCostOpen(false); onUpdate();
   }
 
   async function deleteCost(costId: number) {
@@ -292,253 +371,349 @@ function OverviewTab({ ledger, summary, upstreamOptions, siteOptions, onUpdate }
     <div className="space-y-6">
       {/* ── 3 卡片 ── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <StatCard label="总成本" value={summary.total.cost} icon={<TrendingDown size={15} />} color="text-danger"
-          sub={summary.total.fixedCost > 0 ? `含自建 ¥${fmtMoneyShort(summary.total.fixedCost)}` : undefined} />
-        <StatCard label="总利润" value={summary.total.profit} icon={<DollarSign size={15} />}
-          color={summary.total.profit >= 0 ? "text-success" : "text-danger"}
-          sub={`收入 ¥${fmtMoneyShort(summary.total.revenue)}`} />
         <StatCard label="今日利润" value={summary.today.profit} icon={<DollarSign size={15} />}
-          color={summary.today.profit >= 0 ? "text-success" : "text-danger"}
+          color={summary.today.profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}
           sub={`成本 ¥${fmtMoneyShort(summary.today.cost)} · 收入 ¥${fmtMoneyShort(summary.today.revenue)}`} />
+        <StatCard label="总利润" value={summary.total.profit} icon={<DollarSign size={15} />}
+          color={summary.total.profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}
+          sub={`收入 ¥${fmtMoneyShort(summary.total.revenue)}${summary.total.fixedIncome > 0 ? ` (含自定义 ¥${fmtMoneyShort(summary.total.fixedIncome)})` : ""}`} />
+        <StatCard label="总成本" value={summary.total.cost} icon={<TrendingDown size={15} />} color="text-destructive"
+          sub={summary.total.fixedCost > 0 ? `含自建 ¥${fmtMoneyShort(summary.total.fixedCost)}` : undefined} />
       </div>
 
       {/* ── 成本明细（Key 级） ── */}
-      <Card shadow="none" className="border border-divider/30">
-        <CardHeader className="flex justify-between pb-2">
-          <span className="text-sm font-semibold flex items-center gap-2"><Server size={14} className="text-danger" /> 成本明细</span>
+      <Card className="rounded-xl border border-border/30">
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <span className="text-sm font-semibold flex items-center gap-2"><Server size={14} className="text-destructive" /> 成本明细</span>
           <div className="flex gap-2">
-            <Button size="sm" variant="flat" color="primary" startContent={<Plus size={14} />}
-              onPress={costModal.onOpen} isDisabled={ledger.categories.length === 0}>自建成本</Button>
-            <Button size="sm" variant="flat" color="warning" startContent={<Plus size={14} />}
-              onPress={keyModal.onOpen} isDisabled={ledger.upstreamLinks.length === 0}>添加 Key</Button>
+            <Button size="sm" variant="secondary" className="rounded-lg"
+              onClick={() => setCostOpen(true)} disabled={ledger.categories.length === 0}>
+              <Plus size={14} /> 自建成本
+            </Button>
+            <Button size="sm" variant="secondary" className="rounded-lg text-amber-600 dark:text-amber-400"
+              onClick={() => setKeyOpen(true)} disabled={ledger.upstreamLinks.length === 0}>
+              <Plus size={14} /> 添加 Key
+            </Button>
           </div>
         </CardHeader>
-        <CardBody className="pt-0">
+        <CardContent className="pt-0">
           {summary.upstreamKeys.length === 0 && summary.fixedCostDetails.length === 0 ? (
-            <p className="text-sm text-default-400 py-4 text-center">
+            <p className="text-sm text-muted-foreground/70 py-4 text-center">
               {ledger.upstreamLinks.length === 0 ? "请先在配置中关联上游渠道" : "请添加要监控的 Key 或自建成本"}
             </p>
           ) : (
-            <Table aria-label="成本" removeWrapper classNames={{ th: "text-[11px] uppercase", td: "py-2" }}>
+            <Table>
               <TableHeader>
-                <TableColumn>类型</TableColumn>
-                <TableColumn>名称</TableColumn>
-                <TableColumn align="end">今日消费</TableColumn>
-                <TableColumn align="center" width={100}>倍率</TableColumn>
-                <TableColumn align="end">成本</TableColumn>
-                <TableColumn>同步</TableColumn>
-                <TableColumn align="center" width={50}>{""}</TableColumn>
+                <TableRow>
+                  <TableHead className="text-[11px] uppercase">类型</TableHead>
+                  <TableHead className="text-[11px] uppercase">名称</TableHead>
+                  <TableHead className="text-[11px] uppercase text-right">今日消费</TableHead>
+                  <TableHead className="text-[11px] uppercase text-center w-[100px]">倍率</TableHead>
+                  <TableHead className="text-[11px] uppercase text-right">成本</TableHead>
+                  <TableHead className="text-[11px] uppercase">同步</TableHead>
+                  <TableHead className="text-[11px] uppercase text-center w-[50px]">{""}</TableHead>
+                </TableRow>
               </TableHeader>
               <TableBody>
-                {[
-                  ...summary.upstreamKeys.map((k) => (
-                    <TableRow key={`k-${k.keyId}`}>
-                      <TableCell><Chip size="sm" variant="flat" color="warning">渠道</Chip></TableCell>
-                      <TableCell><span className="text-sm">{k.accountName} / {k.name}</span></TableCell>
-                      <TableCell><span className="text-sm">¥{fmtMoney(k.todayActualCost, 2)}</span></TableCell>
-                      <TableCell>
-                        <InlineMultiplier value={k.multiplier} onSave={(v) => saveKeyMultiplier(k.keyId, v)} />
-                      </TableCell>
-                      <TableCell><span className="text-sm text-danger font-medium">¥{fmtMoney(k.cost, 2)}</span></TableCell>
-                      <TableCell><span className="text-xs text-default-400">{k.lastSyncAt ? fmtDateShort(k.lastSyncAt) : "-"}</span></TableCell>
-                      <TableCell><Button isIconOnly size="sm" variant="light" color="danger" onPress={() => removeKey(k.keyId)}><Trash2 size={13} /></Button></TableCell>
-                    </TableRow>
-                  )),
-                  ...summary.fixedCostDetails.map((fc) => (
-                    <TableRow key={`fc-${fc.id}`}>
-                      <TableCell><Chip size="sm" variant="flat" color="secondary">{fc.category}</Chip></TableCell>
-                      <TableCell><span className="text-sm">{fc.note || "固定成本"}</span></TableCell>
-                      <TableCell>{""}</TableCell>
-                      <TableCell>{""}</TableCell>
-                      <TableCell><span className="text-sm text-danger font-medium">¥{fmtMoney(fc.amount, 2)}</span></TableCell>
-                      <TableCell><span className="text-xs text-default-400">{fmtDateShort(fc.createdAt)}</span></TableCell>
-                      <TableCell><Button isIconOnly size="sm" variant="light" color="danger" onPress={() => deleteCost(fc.id)}><Trash2 size={13} /></Button></TableCell>
-                    </TableRow>
-                  )),
-                ]}
-              </TableBody>
-            </Table>
-          )}
-        </CardBody>
-      </Card>
-
-      {/* ── 收入明细（用户级） ── */}
-      <Card shadow="none" className="border border-divider/30">
-        <CardHeader className="flex justify-between pb-2">
-          <span className="text-sm font-semibold flex items-center gap-2"><Users size={14} className="text-success" /> 收入明细</span>
-          <Button size="sm" variant="flat" color="success" startContent={<Plus size={14} />}
-            onPress={userModal.onOpen} isDisabled={ledger.siteLinks.length === 0}>添加用户</Button>
-        </CardHeader>
-        <CardBody className="pt-0">
-          {summary.siteUsers.length === 0 && ledger.userLinks.length === 0 ? (
-            <p className="text-sm text-default-400 py-4 text-center">
-              {ledger.siteLinks.length === 0 ? "请先在配置中关联本站账号" : "请添加要监控的用户"}
-            </p>
-          ) : (
-            <Table aria-label="收入" removeWrapper classNames={{ th: "text-[11px] uppercase", td: "py-2" }}>
-              <TableHeader>
-                <TableColumn>用户</TableColumn>
-                <TableColumn>站点</TableColumn>
-                <TableColumn align="end">今日消费</TableColumn>
-                <TableColumn align="center" width={100}>倍率</TableColumn>
-                <TableColumn align="end">收入</TableColumn>
-                <TableColumn>同步</TableColumn>
-                <TableColumn align="center" width={50}>{""}</TableColumn>
-              </TableHeader>
-              <TableBody>
-                {summary.siteUsers.map((u) => (
-                  <TableRow key={u.siteUserId}>
-                    <TableCell><span className="text-sm">{u.alias || u.username || u.email}</span></TableCell>
-                    <TableCell><span className="text-xs text-default-400">{u.accountName}</span></TableCell>
-                    <TableCell><span className="text-sm">¥{fmtMoney(u.todayCost, 2)}</span></TableCell>
-                    <TableCell>
-                      <InlineMultiplier value={u.multiplier} onSave={(v) => saveUserMultiplier(u.siteUserId, v)} />
+                {summary.upstreamKeys.map((k) => (
+                  <TableRow key={`k-${k.keyId}`}>
+                    <TableCell className="py-2"><Badge variant="warning" className="rounded-full">渠道</Badge></TableCell>
+                    <TableCell className="py-2"><span className="text-sm">{k.accountName} / {k.name}</span></TableCell>
+                    <TableCell className="py-2 text-right"><span className="text-sm">¥{fmtMoney(k.todayActualCost, 2)}</span></TableCell>
+                    <TableCell className="py-2">
+                      <InlineMultiplier value={k.multiplier} onSave={(v) => saveKeyMultiplier(k.keyId, v)} />
                     </TableCell>
-                    <TableCell><span className="text-sm text-success font-medium">¥{fmtMoney(u.revenue, 2)}</span></TableCell>
-                    <TableCell><span className="text-xs text-default-400">{u.lastSyncAt ? fmtDateShort(u.lastSyncAt) : "-"}</span></TableCell>
-                    <TableCell><Button isIconOnly size="sm" variant="light" color="danger" onPress={() => removeUser(u.siteUserId)}><Trash2 size={13} /></Button></TableCell>
+                    <TableCell className="py-2 text-right"><span className="text-sm text-destructive font-medium">¥{fmtMoney(k.cost, 2)}</span></TableCell>
+                    <TableCell className="py-2"><span className="text-xs text-muted-foreground/70">{k.lastSyncAt ? fmtDateShort(k.lastSyncAt) : "-"}</span></TableCell>
+                    <TableCell className="py-2 text-center"><Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => removeKey(k.keyId)}><Trash2 size={13} /></Button></TableCell>
+                  </TableRow>
+                ))}
+                {summary.fixedCostDetails.map((fc) => (
+                  <TableRow key={`fc-${fc.id}`}>
+                    <TableCell className="py-2"><Badge variant="secondary" className="rounded-full">{fc.category}</Badge></TableCell>
+                    <TableCell className="py-2"><span className="text-sm">{fc.note || "固定成本"}</span></TableCell>
+                    <TableCell className="py-2">{""}</TableCell>
+                    <TableCell className="py-2">{""}</TableCell>
+                    <TableCell className="py-2 text-right"><span className="text-sm text-destructive font-medium">¥{fmtMoney(fc.amount, 2)}</span></TableCell>
+                    <TableCell className="py-2"><span className="text-xs text-muted-foreground/70">{fmtDateShort(fc.createdAt)}</span></TableCell>
+                    <TableCell className="py-2 text-center"><Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteCost(fc.id)}><Trash2 size={13} /></Button></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           )}
-        </CardBody>
+        </CardContent>
+      </Card>
+
+      {/* ── 收入明细（用户级 + 自定义收入） ── */}
+      <Card className="rounded-xl border border-border/30">
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <span className="text-sm font-semibold flex items-center gap-2"><Users size={14} className="text-emerald-600 dark:text-emerald-400" /> 收入明细</span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" className="rounded-lg"
+              onClick={() => setIncomeOpen(true)}>
+              <Plus size={14} /> 自定义收入
+            </Button>
+            <Button size="sm" variant="secondary" className="rounded-lg text-emerald-600 dark:text-emerald-400"
+              onClick={() => setUserOpen(true)} disabled={ledger.siteLinks.length === 0}>
+              <Plus size={14} /> 添加用户
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {summary.siteUsers.length === 0 && summary.fixedIncomeDetails.length === 0 && ledger.userLinks.length === 0 ? (
+            <p className="text-sm text-muted-foreground/70 py-4 text-center">
+              {ledger.siteLinks.length === 0 ? "请先在配置中关联本站账号，或添加自定义收入" : "请添加要监控的用户或自定义收入"}
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-[11px] uppercase">类型</TableHead>
+                  <TableHead className="text-[11px] uppercase">名称</TableHead>
+                  <TableHead className="text-[11px] uppercase text-center w-[100px]">倍率</TableHead>
+                  <TableHead className="text-[11px] uppercase text-right">今日收入</TableHead>
+                  <TableHead className="text-[11px] uppercase text-right">总收入</TableHead>
+                  <TableHead className="text-[11px] uppercase">时间</TableHead>
+                  <TableHead className="text-[11px] uppercase text-center w-[50px]">{""}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summary.siteUsers.map((u) => (
+                  <TableRow key={`u-${u.siteUserId}`}>
+                    <TableCell className="py-2"><Badge variant="default" className="rounded-full">用户</Badge></TableCell>
+                    <TableCell className="py-2">
+                      <span className="text-sm">{u.alias || u.username || u.email}</span>
+                      <span className="text-xs text-muted-foreground/70 ml-1.5">{u.accountName}</span>
+                    </TableCell>
+                    <TableCell className="py-2">
+                      <InlineMultiplier value={u.multiplier} onSave={(v) => saveUserMultiplier(u.siteUserId, v)} />
+                    </TableCell>
+                    <TableCell className="py-2 text-right"><span className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">¥{fmtMoney(u.revenue, 2)}</span></TableCell>
+                    <TableCell className="py-2 text-right"><span className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">¥{fmtMoney(u.totalRevenue, 2)}</span></TableCell>
+                    <TableCell className="py-2"><span className="text-xs text-muted-foreground/70">{u.lastSyncAt ? fmtDateShort(u.lastSyncAt) : "-"}</span></TableCell>
+                    <TableCell className="py-2 text-center"><Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => removeUser(u.siteUserId)}><Trash2 size={13} /></Button></TableCell>
+                  </TableRow>
+                ))}
+                {summary.fixedIncomeDetails.map((fi) => (
+                  <TableRow key={`fi-${fi.id}`}>
+                    <TableCell className="py-2"><Badge variant="secondary" className="rounded-full">自定义</Badge></TableCell>
+                    <TableCell className="py-2"><span className="text-sm">{fi.note || "自定义收入"}</span></TableCell>
+                    <TableCell className="py-2">{""}</TableCell>
+                    <TableCell className="py-2">{""}</TableCell>
+                    <TableCell className="py-2 text-right"><span className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">¥{fmtMoney(fi.amount, 2)}</span></TableCell>
+                    <TableCell className="py-2"><span className="text-xs text-muted-foreground/70">{fmtDateShort(fi.createdAt)}</span></TableCell>
+                    <TableCell className="py-2 text-center"><Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteIncome(fi.id)}><Trash2 size={13} /></Button></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
       </Card>
 
       {/* ── 成本趋势 ── */}
       {chartData.length > 1 && (
-        <Card shadow="none" className="border border-divider/30">
+        <Card className="rounded-xl border border-border/30">
           <CardHeader className="pb-0">
-            <span className="text-sm font-semibold flex items-center gap-2"><Calendar size={14} className="text-primary" /> 成本趋势</span>
+            <span className="text-sm font-semibold flex items-center gap-2"><Calendar size={14} className="text-blue-600" /> 成本趋势</span>
           </CardHeader>
-          <CardBody className="pt-2">
+          <CardContent className="pt-2">
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--heroui-divider))" />
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip />
                 <Line type="monotone" dataKey="成本" stroke="#f5a524" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
-          </CardBody>
+          </CardContent>
         </Card>
       )}
 
-      {/* ── 添加自建成本 Modal ── */}
-      <Modal isOpen={costModal.isOpen} onClose={costModal.onClose}>
-        <ModalContent>
-          <ModalHeader>添加自建成本</ModalHeader>
-          <ModalBody className="gap-4">
-            <Select label="分类" selectedKeys={costForm.categoryId ? [costForm.categoryId] : []}
-              onChange={(e) => setCostForm((f) => ({ ...f, categoryId: e.target.value }))}>
-              {ledger.categories.map((c) => <SelectItem key={c.id}>{c.name}</SelectItem>)}
-            </Select>
-            <Input label="金额 (¥)" type="number" placeholder="0.00" value={costForm.amount}
-              onValueChange={(v) => setCostForm((f) => ({ ...f, amount: v }))} />
-            <Input label="备注" placeholder="可选" value={costForm.note}
-              onValueChange={(v) => setCostForm((f) => ({ ...f, note: v }))} />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={costModal.onClose}>取消</Button>
-            <Button color="primary" onPress={quickAddCost} isDisabled={!costForm.categoryId || !costForm.amount}>添加</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      {/* ── 添加自建成本 Dialog ── */}
+      <Dialog open={costOpen} onOpenChange={setCostOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>添加自建成本</DialogTitle>
+            <DialogDescription className="sr-only">添加一项自建成本</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>分类</Label>
+              <Select value={costForm.categoryId} onValueChange={(v) => setCostForm((f) => ({ ...f, categoryId: v }))}>
+                <SelectTrigger><SelectValue placeholder="选择分类" /></SelectTrigger>
+                <SelectContent>
+                  {ledger.categories.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>金额 (¥)</Label>
+              <Input type="number" placeholder="0.00" value={costForm.amount}
+                onChange={(e) => setCostForm((f) => ({ ...f, amount: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>备注</Label>
+              <Input placeholder="可选" value={costForm.note}
+                onChange={(e) => setCostForm((f) => ({ ...f, note: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setCostOpen(false)}>取消</Button>
+            <Button onClick={quickAddCost} disabled={!costForm.categoryId || !costForm.amount}>添加</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {/* ── 添加 Key Modal：先选渠道再搜索 Key ── */}
-      <Modal isOpen={keyModal.isOpen} onClose={() => { keyModal.onClose(); setPickUpId(null); setKeyOptions([]); }} size="lg">
-        <ModalContent>
-          <ModalHeader>添加监控 Key</ModalHeader>
-          <ModalBody className="gap-4">
-            <Select label="选择渠道" selectedKeys={pickUpId ? [String(pickUpId)] : []}
-              onChange={(e) => { const v = Number(e.target.value); if (v) loadKeys(v); }}>
-              {ledger.upstreamLinks.map((l) => <SelectItem key={String(l.upstreamAccount.id)}>{l.upstreamAccount.name}</SelectItem>)}
-            </Select>
+      {/* ── 添加 Key Dialog：先选渠道再搜索 Key ── */}
+      <Dialog open={keyOpen} onOpenChange={(v) => { if (!v) { setPickUpId(null); setKeyOptions([]); } setKeyOpen(v); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>添加监控 Key</DialogTitle>
+            <DialogDescription className="sr-only">选择渠道并添加 Key</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>选择渠道</Label>
+              <Select value={pickUpId ? String(pickUpId) : ""} onValueChange={(v) => { const n = Number(v); if (n) loadKeys(n); }}>
+                <SelectTrigger><SelectValue placeholder="选择渠道" /></SelectTrigger>
+                <SelectContent>
+                  {ledger.upstreamLinks.map((l) => <SelectItem key={l.upstreamAccount.id} value={String(l.upstreamAccount.id)}>{l.upstreamAccount.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
             {pickUpId && (
-              loadingKeys ? <div className="flex justify-center py-4"><Spinner size="sm" /></div>
+              loadingKeys ? <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin" /></div>
               : availableKeys.length === 0 ? (
-                <p className="text-sm text-default-400 text-center py-2">
+                <p className="text-sm text-muted-foreground/70 text-center py-2">
                   {keyOptions.length === 0 ? "该渠道暂无 Key，请先同步" : "所有 Key 已添加"}
                 </p>
               ) : (
-                <Autocomplete label="搜索 Key" placeholder="输入 Key 名称"
-                  onSelectionChange={(key) => { const v = Number(key); if (v) addKey(v); }}>
-                  {availableKeys.map((k) => (
-                    <AutocompleteItem key={k.id} textValue={`${k.name} ${k.groupName}`}>
-                      <div className="flex flex-col">
-                        <span className="text-sm">{k.name}</span>
-                        <span className="text-xs text-default-400">{k.groupName}</span>
-                      </div>
-                    </AutocompleteItem>
-                  ))}
-                </Autocomplete>
+                <SearchableList
+                  placeholder="输入 Key 名称"
+                  items={availableKeys}
+                  filterFn={(k, q) => k.name.toLowerCase().includes(q) || k.groupName.toLowerCase().includes(q)}
+                  renderItem={(k) => (
+                    <div className="flex flex-col">
+                      <span className="text-sm">{k.name}</span>
+                      <span className="text-xs text-muted-foreground/70">{k.groupName}</span>
+                    </div>
+                  )}
+                  onSelect={(id) => addKey(id)}
+                />
               )
             )}
             {ledger.keyLinks.length > 0 && (
               <div>
-                <p className="text-xs text-default-400 mb-2">已添加 {ledger.keyLinks.length} 个 Key</p>
+                <p className="text-xs text-muted-foreground/70 mb-2">已添加 {ledger.keyLinks.length} 个 Key</p>
                 <div className="flex flex-wrap gap-1.5">
                   {ledger.keyLinks.map((l) => (
-                    <Chip key={l.id} size="sm" variant="flat" onClose={() => removeKey(l.upstreamKey.id)}>
+                    <Badge key={l.id} variant="secondary" className="rounded-full gap-1 pr-1">
                       {l.upstreamKey.upstreamAccount.name} / {l.upstreamKey.name}
-                    </Chip>
+                      <button onClick={() => removeKey(l.upstreamKey.id)} className="ml-1 hover:text-destructive transition-colors">
+                        <X size={12} />
+                      </button>
+                    </Badge>
                   ))}
                 </div>
               </div>
             )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={() => { keyModal.onClose(); setPickUpId(null); setKeyOptions([]); }}>关闭</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => { setKeyOpen(false); setPickUpId(null); setKeyOptions([]); }}>关闭</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {/* ── 添加用户 Modal ── */}
-      <Modal isOpen={userModal.isOpen} onClose={() => { userModal.onClose(); setPickSiteId(null); setSiteUserOptions([]); }} size="lg">
-        <ModalContent>
-          <ModalHeader>添加监控用户</ModalHeader>
-          <ModalBody className="gap-4">
-            <Select label="选择站点" selectedKeys={pickSiteId ? [String(pickSiteId)] : []}
-              onChange={(e) => { const v = Number(e.target.value); if (v) loadSiteUsers(v); }}>
-              {ledger.siteLinks.map((l) => <SelectItem key={String(l.siteAccount.id)}>{l.siteAccount.name}</SelectItem>)}
-            </Select>
+      {/* ── 添加自定义收入 Dialog ── */}
+      <Dialog open={incomeOpen} onOpenChange={setIncomeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>添加自定义收入</DialogTitle>
+            <DialogDescription className="sr-only">添加一笔自定义收入</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>金额 (¥)</Label>
+              <Input type="number" placeholder="0.00" value={incomeForm.amount}
+                onChange={(e) => setIncomeForm((f) => ({ ...f, amount: e.target.value }))} autoFocus />
+            </div>
+            <div className="space-y-2">
+              <Label>备注</Label>
+              <Input placeholder="如：XX渠道收入、退款等" value={incomeForm.note}
+                onChange={(e) => setIncomeForm((f) => ({ ...f, note: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setIncomeOpen(false)}>取消</Button>
+            <Button onClick={addIncome} disabled={!incomeForm.amount}>添加</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── 添加用户 Dialog ── */}
+      <Dialog open={userOpen} onOpenChange={(v) => { if (!v) { setPickSiteId(null); setSiteUserOptions([]); } setUserOpen(v); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>添加监控用户</DialogTitle>
+            <DialogDescription className="sr-only">选择站点并添加用户</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>选择站点</Label>
+              <Select value={pickSiteId ? String(pickSiteId) : ""} onValueChange={(v) => { const n = Number(v); if (n) loadSiteUsers(n); }}>
+                <SelectTrigger><SelectValue placeholder="选择站点" /></SelectTrigger>
+                <SelectContent>
+                  {ledger.siteLinks.map((l) => <SelectItem key={l.siteAccount.id} value={String(l.siteAccount.id)}>{l.siteAccount.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
             {pickSiteId && (
-              loadingUsers ? <div className="flex justify-center py-4"><Spinner size="sm" /></div>
+              loadingUsers ? <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin" /></div>
               : availableSiteUsers.length === 0 ? (
-                <p className="text-sm text-default-400 text-center py-2">
+                <p className="text-sm text-muted-foreground/70 text-center py-2">
                   {siteUserOptions.length === 0 ? "该站点暂无用户，请先同步" : "所有用户已添加"}
                 </p>
               ) : (
-                <Autocomplete label="搜索用户" placeholder="输入邮箱或用户名"
-                  onSelectionChange={(key) => { const v = Number(key); if (v) addUser(v); }}>
-                  {availableSiteUsers.map((u) => (
-                    <AutocompleteItem key={u.id} textValue={`${u.alias || ""} ${u.username} ${u.email}`}>
-                      <div className="flex flex-col">
-                        <span className="text-sm">{u.alias || u.username || u.email}</span>
-                        {u.username && u.username !== u.email && <span className="text-xs text-default-400">{u.email}</span>}
-                      </div>
-                    </AutocompleteItem>
-                  ))}
-                </Autocomplete>
+                <SearchableList
+                  placeholder="输入邮箱或用户名"
+                  items={availableSiteUsers}
+                  filterFn={(u, q) =>
+                    (u.alias || "").toLowerCase().includes(q) ||
+                    u.username.toLowerCase().includes(q) ||
+                    u.email.toLowerCase().includes(q)
+                  }
+                  renderItem={(u) => (
+                    <div className="flex flex-col">
+                      <span className="text-sm">{u.alias || u.username || u.email}</span>
+                      {u.username && u.username !== u.email && <span className="text-xs text-muted-foreground/70">{u.email}</span>}
+                    </div>
+                  )}
+                  onSelect={(id) => addUser(id)}
+                />
               )
             )}
             {ledger.userLinks.length > 0 && (
               <div>
-                <p className="text-xs text-default-400 mb-2">已添加 {ledger.userLinks.length} 个用户</p>
+                <p className="text-xs text-muted-foreground/70 mb-2">已添加 {ledger.userLinks.length} 个用户</p>
                 <div className="flex flex-wrap gap-1.5">
                   {ledger.userLinks.map((l) => (
-                    <Chip key={l.id} size="sm" variant="flat" onClose={() => removeUser(l.siteUser.id)}>
+                    <Badge key={l.id} variant="secondary" className="rounded-full gap-1 pr-1">
                       {l.siteUser.alias || l.siteUser.username || l.siteUser.email}
-                    </Chip>
+                      <button onClick={() => removeUser(l.siteUser.id)} className="ml-1 hover:text-destructive transition-colors">
+                        <X size={12} />
+                      </button>
+                    </Badge>
                   ))}
                 </div>
               </div>
             )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={() => { userModal.onClose(); setPickSiteId(null); setSiteUserOptions([]); }}>关闭</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => { setUserOpen(false); setPickSiteId(null); setSiteUserOptions([]); }}>关闭</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -549,8 +724,8 @@ function ConfigTab({ ledger, upstreamOptions, siteOptions, onUpdate }: {
   ledger: LedgerDetail; upstreamOptions: Option[]; siteOptions: Option[]; onUpdate: () => void;
 }) {
   const [saving, setSaving] = useState(false);
-  const catModal = useDisclosure();
-  const costModal = useDisclosure();
+  const [catOpen, setCatOpen] = useState(false);
+  const [costOpen, setCostOpen] = useState(false);
   const [catName, setCatName] = useState("");
   const [costForm, setCostForm] = useState({ categoryId: "", amount: "", note: "" });
 
@@ -576,8 +751,8 @@ function ConfigTab({ ledger, upstreamOptions, siteOptions, onUpdate }: {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: catName.trim() }),
     });
-    if (!r.ok) { addToast({ title: "分类已存在", color: "warning" }); return; }
-    setCatName(""); catModal.onClose(); onUpdate();
+    if (!r.ok) { toast.warning("分类已存在"); return; }
+    setCatName(""); setCatOpen(false); onUpdate();
   }
 
   async function deleteCategory(catId: number) {
@@ -594,7 +769,7 @@ function ConfigTab({ ledger, upstreamOptions, siteOptions, onUpdate }: {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ categoryId: catId, amount, note: costForm.note || undefined }),
     });
-    setCostForm({ categoryId: "", amount: "", note: "" }); costModal.onClose(); onUpdate();
+    setCostForm({ categoryId: "", amount: "", note: "" }); setCostOpen(false); onUpdate();
   }
 
   async function deleteFixedCost(costId: number) {
@@ -605,108 +780,154 @@ function ConfigTab({ ledger, upstreamOptions, siteOptions, onUpdate }: {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card shadow="none" className="border border-divider/30">
+        <Card className="rounded-xl border border-border/30">
           <CardHeader><span className="text-sm font-semibold flex items-center gap-2"><Server size={16} /> 关联上游渠道</span></CardHeader>
-          <CardBody className="pt-0 space-y-3">
+          <CardContent className="pt-0 space-y-3">
             {ledger.upstreamLinks.map((l) => (
-              <div key={l.id} className="flex items-center justify-between bg-default-100 rounded-lg px-3 py-2">
+              <div key={l.id} className="flex items-center justify-between bg-card border border-border rounded-lg px-3 py-2">
                 <span className="text-sm">{l.upstreamAccount.name}</span>
-                <Button isIconOnly size="sm" variant="light" color="danger" isLoading={saving}
-                  onPress={() => updateLinks("upstreamAccountIds", [...linkedUpIds].filter((x) => x !== l.upstreamAccount.id))}><Trash2 size={14} /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" disabled={saving}
+                  onClick={() => updateLinks("upstreamAccountIds", [...linkedUpIds].filter((x) => x !== l.upstreamAccount.id))}><Trash2 size={14} /></Button>
               </div>
             ))}
             {availableUp.length > 0 && (
-              <Autocomplete label="搜索并添加渠道" size="sm" isLoading={saving}
-                onSelectionChange={(key) => { const v = Number(key); if (v) updateLinks("upstreamAccountIds", [...linkedUpIds, v]); }}>
-                {availableUp.map((o) => <AutocompleteItem key={o.id}>{o.name}</AutocompleteItem>)}
-              </Autocomplete>
+              <SearchableList
+                placeholder="搜索并添加渠道"
+                items={availableUp}
+                filterFn={(o, q) => o.name.toLowerCase().includes(q)}
+                renderItem={(o) => <span>{o.name}</span>}
+                onSelect={(id) => updateLinks("upstreamAccountIds", [...linkedUpIds, id])}
+              />
             )}
-          </CardBody>
+          </CardContent>
         </Card>
-        <Card shadow="none" className="border border-divider/30">
+        <Card className="rounded-xl border border-border/30">
           <CardHeader><span className="text-sm font-semibold flex items-center gap-2"><Building2 size={16} /> 关联本站账号</span></CardHeader>
-          <CardBody className="pt-0 space-y-3">
+          <CardContent className="pt-0 space-y-3">
             {ledger.siteLinks.map((l) => (
-              <div key={l.id} className="flex items-center justify-between bg-default-100 rounded-lg px-3 py-2">
+              <div key={l.id} className="flex items-center justify-between bg-card border border-border rounded-lg px-3 py-2">
                 <span className="text-sm">{l.siteAccount.name}</span>
-                <Button isIconOnly size="sm" variant="light" color="danger" isLoading={saving}
-                  onPress={() => updateLinks("siteAccountIds", [...linkedSiteIds].filter((x) => x !== l.siteAccount.id))}><Trash2 size={14} /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" disabled={saving}
+                  onClick={() => updateLinks("siteAccountIds", [...linkedSiteIds].filter((x) => x !== l.siteAccount.id))}><Trash2 size={14} /></Button>
               </div>
             ))}
             {availableSite.length > 0 && (
-              <Autocomplete label="搜索并添加站点" size="sm" isLoading={saving}
-                onSelectionChange={(key) => { const v = Number(key); if (v) updateLinks("siteAccountIds", [...linkedSiteIds, v]); }}>
-                {availableSite.map((o) => <AutocompleteItem key={o.id}>{o.name}</AutocompleteItem>)}
-              </Autocomplete>
+              <SearchableList
+                placeholder="搜索并添加站点"
+                items={availableSite}
+                filterFn={(o, q) => o.name.toLowerCase().includes(q)}
+                renderItem={(o) => <span>{o.name}</span>}
+                onSelect={(id) => updateLinks("siteAccountIds", [...linkedSiteIds, id])}
+              />
             )}
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
 
-      <Card shadow="none" className="border border-divider/30">
-        <CardHeader className="flex justify-between">
+      <Card className="rounded-xl border border-border/30">
+        <CardHeader className="flex flex-row items-center justify-between">
           <span className="text-sm font-semibold">自建成本分类</span>
           <div className="flex gap-2">
-            <Button size="sm" variant="flat" startContent={<Plus size={14} />} onPress={catModal.onOpen}>添加分类</Button>
-            <Button size="sm" color="primary" variant="flat" startContent={<Plus size={14} />}
-              onPress={costModal.onOpen} isDisabled={ledger.categories.length === 0}>添加成本</Button>
+            <Button size="sm" variant="secondary" className="rounded-lg" onClick={() => setCatOpen(true)}>
+              <Plus size={14} /> 添加分类
+            </Button>
+            <Button size="sm" variant="secondary" className="rounded-lg"
+              onClick={() => setCostOpen(true)} disabled={ledger.categories.length === 0}>
+              <Plus size={14} /> 添加成本
+            </Button>
           </div>
         </CardHeader>
-        <CardBody className="pt-0 space-y-4">
+        <CardContent className="pt-0 space-y-4">
           {ledger.categories.length > 0 && (
             <div className="flex flex-wrap gap-2">
-              {ledger.categories.map((c) => <Chip key={c.id} variant="flat" onClose={() => deleteCategory(c.id)}>{c.name}</Chip>)}
+              {ledger.categories.map((c) => (
+                <Badge key={c.id} variant="secondary" className="rounded-full gap-1 pr-1">
+                  {c.name}
+                  <button onClick={() => deleteCategory(c.id)} className="ml-1 hover:text-destructive transition-colors">
+                    <X size={12} />
+                  </button>
+                </Badge>
+              ))}
             </div>
           )}
-          {ledger.categories.length === 0 && <p className="text-sm text-default-400">请先添加分类（如：邮箱、IP、服务器）</p>}
+          {ledger.categories.length === 0 && <p className="text-sm text-muted-foreground/70">请先添加分类（如：邮箱、IP、服务器）</p>}
           {ledger.fixedCosts.length > 0 && (
-            <Table aria-label="固定成本" removeWrapper classNames={{ th: "text-[11px] uppercase", td: "py-2" }}>
+            <Table>
               <TableHeader>
-                <TableColumn>分类</TableColumn><TableColumn>备注</TableColumn>
-                <TableColumn align="end">金额</TableColumn><TableColumn>创建时间</TableColumn>
-                <TableColumn align="center" width={50}>{""}</TableColumn>
+                <TableRow>
+                  <TableHead className="text-[11px] uppercase">分类</TableHead>
+                  <TableHead className="text-[11px] uppercase">备注</TableHead>
+                  <TableHead className="text-[11px] uppercase text-right">金额</TableHead>
+                  <TableHead className="text-[11px] uppercase">创建时间</TableHead>
+                  <TableHead className="text-[11px] uppercase text-center w-[50px]">{""}</TableHead>
+                </TableRow>
               </TableHeader>
               <TableBody>
                 {ledger.fixedCosts.map((fc) => (
                   <TableRow key={fc.id}>
-                    <TableCell><Chip size="sm" variant="flat" color="primary">{fc.category.name}</Chip></TableCell>
-                    <TableCell><span className="text-sm">{fc.note || "-"}</span></TableCell>
-                    <TableCell><span className="text-sm font-medium">¥{fmtMoney(fc.amount, 2)}</span></TableCell>
-                    <TableCell><span className="text-xs text-default-400">{fmtDateShort(fc.createdAt)}</span></TableCell>
-                    <TableCell><Button isIconOnly size="sm" variant="light" color="danger" onPress={() => deleteFixedCost(fc.id)}><Trash2 size={13} /></Button></TableCell>
+                    <TableCell className="py-2"><Badge variant="default" className="rounded-full">{fc.category.name}</Badge></TableCell>
+                    <TableCell className="py-2"><span className="text-sm">{fc.note || "-"}</span></TableCell>
+                    <TableCell className="py-2 text-right"><span className="text-sm font-medium">¥{fmtMoney(fc.amount, 2)}</span></TableCell>
+                    <TableCell className="py-2"><span className="text-xs text-muted-foreground/70">{fmtDateShort(fc.createdAt)}</span></TableCell>
+                    <TableCell className="py-2 text-center"><Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteFixedCost(fc.id)}><Trash2 size={13} /></Button></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           )}
-        </CardBody>
+        </CardContent>
       </Card>
 
-      <Modal isOpen={catModal.isOpen} onClose={catModal.onClose}>
-        <ModalContent>
-          <ModalHeader>添加成本分类</ModalHeader>
-          <ModalBody><Input label="分类名称" placeholder="如：邮箱、IP、服务器" value={catName} onValueChange={setCatName} autoFocus
-            onKeyDown={(e) => e.key === "Enter" && addCategory()} /></ModalBody>
-          <ModalFooter><Button variant="flat" onPress={catModal.onClose}>取消</Button><Button color="primary" onPress={addCategory} isDisabled={!catName.trim()}>添加</Button></ModalFooter>
-        </ModalContent>
-      </Modal>
-      <Modal isOpen={costModal.isOpen} onClose={costModal.onClose}>
-        <ModalContent>
-          <ModalHeader>添加固定成本</ModalHeader>
-          <ModalBody className="gap-4">
-            <Select label="分类" selectedKeys={costForm.categoryId ? [costForm.categoryId] : []}
-              onChange={(e) => setCostForm((f) => ({ ...f, categoryId: e.target.value }))}>
-              {ledger.categories.map((c) => <SelectItem key={c.id}>{c.name}</SelectItem>)}
-            </Select>
-            <Input label="金额 (¥)" type="number" placeholder="0.00" value={costForm.amount}
-              onValueChange={(v) => setCostForm((f) => ({ ...f, amount: v }))} />
-            <Input label="备注" placeholder="可选" value={costForm.note}
-              onValueChange={(v) => setCostForm((f) => ({ ...f, note: v }))} />
-          </ModalBody>
-          <ModalFooter><Button variant="flat" onPress={costModal.onClose}>取消</Button>
-            <Button color="primary" onPress={addFixedCost} isDisabled={!costForm.categoryId || !costForm.amount}>添加</Button></ModalFooter>
-        </ModalContent>
-      </Modal>
+      <Dialog open={catOpen} onOpenChange={setCatOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>添加成本分类</DialogTitle>
+            <DialogDescription className="sr-only">添加一个新的成本分类</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>分类名称</Label>
+            <Input placeholder="如：邮箱、IP、服务器" value={catName} onChange={(e) => setCatName(e.target.value)} autoFocus
+              onKeyDown={(e) => e.key === "Enter" && addCategory()} />
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setCatOpen(false)}>取消</Button>
+            <Button onClick={addCategory} disabled={!catName.trim()}>添加</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={costOpen} onOpenChange={setCostOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>添加固定成本</DialogTitle>
+            <DialogDescription className="sr-only">添加一项固定成本</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>分类</Label>
+              <Select value={costForm.categoryId} onValueChange={(v) => setCostForm((f) => ({ ...f, categoryId: v }))}>
+                <SelectTrigger><SelectValue placeholder="选择分类" /></SelectTrigger>
+                <SelectContent>
+                  {ledger.categories.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>金额 (¥)</Label>
+              <Input type="number" placeholder="0.00" value={costForm.amount}
+                onChange={(e) => setCostForm((f) => ({ ...f, amount: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>备注</Label>
+              <Input placeholder="可选" value={costForm.note}
+                onChange={(e) => setCostForm((f) => ({ ...f, note: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setCostOpen(false)}>取消</Button>
+            <Button onClick={addFixedCost} disabled={!costForm.categoryId || !costForm.amount}>添加</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

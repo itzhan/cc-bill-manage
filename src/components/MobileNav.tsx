@@ -1,17 +1,19 @@
 "use client";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
-  Button,
-  Drawer,
-  DrawerBody,
-  DrawerContent,
-  DrawerHeader,
-  useDisclosure,
-} from "@heroui/react";
-import { LogOut, Menu, Wallet } from "lucide-react";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Separator } from "@/components/ui/separator";
+import { Activity, LogOut, Menu } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { sidebarEntries, navItems, type NavItem, type NavGroup } from "./Sidebar";
 import ThemeToggle from "./ThemeToggle";
+import { cn } from "@/lib/utils";
 
 function isGroup(e: (typeof sidebarEntries)[number]): e is NavGroup {
   return "group" in e;
@@ -20,7 +22,7 @@ function isGroup(e: (typeof sidebarEntries)[number]): e is NavGroup {
 export default function MobileNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { isOpen, onOpen, onClose } = useDisclosure();
+  const [open, setOpen] = useState(false);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -35,15 +37,15 @@ export default function MobileNav() {
       <Link
         key={it.href}
         href={it.href}
-        onClick={onClose}
-        className={[
-          "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors",
+        onClick={() => setOpen(false)}
+        className={cn(
+          "flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-all border",
           active
-            ? "bg-content2 text-foreground font-medium"
-            : "text-default-500 hover:text-foreground hover:bg-default-100",
-        ].join(" ")}
+            ? "bg-primary/10 text-primary border-primary/20 dark:bg-primary/15 dark:border-primary/25"
+            : "text-muted-foreground hover:text-foreground hover:bg-accent border-transparent",
+        )}
       >
-        <span className={active ? "text-foreground" : "text-default-400"}>
+        <span className={cn(active ? "text-primary" : "text-muted-foreground/60")}>
           {it.icon}
         </span>
         <span className="flex-1">{it.label}</span>
@@ -53,53 +55,42 @@ export default function MobileNav() {
 
   return (
     <>
-      <header className="md:hidden sticky top-0 z-30 flex items-center gap-2 px-3 h-12 bg-content1/95 backdrop-blur border-b border-divider/50">
+      <header className="md:hidden sticky top-0 z-30 flex items-center gap-2 px-3 h-12 bg-card/95 backdrop-blur border-b border-border">
         <Button
-          isIconOnly
-          variant="light"
-          size="sm"
+          variant="ghost"
+          size="icon-sm"
           aria-label="menu"
-          onPress={onOpen}
+          onClick={() => setOpen(true)}
         >
           <Menu size={18} />
         </Button>
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 via-fuchsia-500 to-purple-600 flex items-center justify-center shrink-0">
-            <Wallet size={14} className="text-white" />
-          </div>
+          <Activity size={20} className="text-primary shrink-0" />
           <span className="text-sm font-semibold truncate">
             {current?.label ?? "Bill Manage"}
           </span>
         </div>
       </header>
 
-      <Drawer
-        isOpen={isOpen}
-        onClose={onClose}
-        placement="left"
-        size="xs"
-        hideCloseButton
-      >
-        <DrawerContent>
-          <DrawerHeader className="flex items-center gap-3 pb-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 via-fuchsia-500 to-purple-600 flex items-center justify-center">
-              <Wallet size={16} className="text-white" />
-            </div>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="left" className="w-64 p-0">
+          <SheetHeader className="flex-row items-center gap-3 p-4 pb-3 space-y-0">
+            <Activity size={24} className="text-primary shrink-0" />
             <div className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold">Bill Manage</span>
-              <span className="text-xs text-default-500">中转利润管理</span>
+              <SheetTitle className="text-sm font-bold">Bill Manage</SheetTitle>
+              <span className="text-[11px] text-muted-foreground/60">中转利润管理</span>
             </div>
-          </DrawerHeader>
-          <DrawerBody className="px-3 pb-4">
+          </SheetHeader>
+          <Separator className="mx-4 w-auto" />
+          <div className="px-2.5 py-3 flex-1 overflow-y-auto">
             <nav className="flex flex-col gap-0.5">
               {sidebarEntries.map((entry) =>
                 isGroup(entry) ? (
-                  <div key={entry.group} className="mt-1">
-                    <div className="flex items-center gap-2 px-3 py-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-default-400">
+                  <div key={entry.group} className="mt-4 first:mt-0">
+                    <div className="px-3 mb-1.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/50">
                         {entry.group}
                       </span>
-                      <div className="flex-1 h-px bg-divider/40" />
                     </div>
                     {entry.items.map(renderItem)}
                   </div>
@@ -108,22 +99,23 @@ export default function MobileNav() {
                 ),
               )}
             </nav>
-            <div className="mt-auto pt-3 flex items-center gap-2 border-t border-divider/50">
-              <ThemeToggle />
-              <button
-                onClick={() => {
-                  onClose();
-                  logout();
-                }}
-                className="flex flex-1 items-center gap-3 px-3 py-2 rounded-xl text-sm text-default-500 hover:text-foreground hover:bg-default-100"
-              >
-                <LogOut size={16} />
-                <span>退出</span>
-              </button>
-            </div>
-          </DrawerBody>
-        </DrawerContent>
-      </Drawer>
+          </div>
+          <Separator />
+          <div className="p-2.5 flex items-center justify-between">
+            <ThemeToggle />
+            <button
+              onClick={() => {
+                setOpen(false);
+                logout();
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <LogOut size={14} />
+              <span>退出</span>
+            </button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

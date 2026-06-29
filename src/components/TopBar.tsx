@@ -1,5 +1,5 @@
 "use client";
-import { Button } from "@heroui/react";
+import { Button } from "@/components/ui/button";
 import { Bell, Search } from "lucide-react";
 
 export default function TopBar({
@@ -18,25 +18,23 @@ export default function TopBar({
           {title}
         </h1>
         {subtitle && (
-          <p className="text-sm text-default-500 mt-1">{subtitle}</p>
+          <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>
         )}
       </div>
       <div className="flex items-center gap-2">
         {actions}
         <Button
-          isIconOnly
-          variant="flat"
-          size="md"
-          radius="full"
+          size="icon"
+          variant="secondary"
+          className="rounded-full"
           aria-label="search"
         >
           <Search size={16} />
         </Button>
         <Button
-          isIconOnly
-          variant="flat"
-          size="md"
-          radius="full"
+          size="icon"
+          variant="secondary"
+          className="rounded-full"
           aria-label="notifications"
         >
           <Bell size={16} />

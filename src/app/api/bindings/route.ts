@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 
 export async function GET() {
   const items = await prisma.binding.findMany({
+    where: { upstreamKey: { upstreamAccount: { hidden: false } } },
     orderBy: { id: "asc" },
     include: {
       upstreamKey: { include: { upstreamAccount: true } },

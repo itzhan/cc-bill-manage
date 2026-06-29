@@ -1,29 +1,25 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import {
-  Autocomplete,
-  AutocompleteItem,
-  Button,
-  Card,
-  CardBody,
-  Chip,
-  Input,
-  Spinner,
-  addToast,
-} from "@heroui/react";
+import { toast } from "sonner";
 import {
   CheckCircle2,
+  Loader2,
   PlayCircle,
   Power,
   Search,
   XCircle,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 const MODEL_PRESETS = [
-  { key: "claude-opus-4-6", label: "claude-opus-4-6" },
-  { key: "claude-opus-4-7", label: "claude-opus-4-7" },
-  { key: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
-  { key: "claude-haiku-4-5", label: "claude-haiku-4-5" },
+  "claude-opus-4-6",
+  "claude-opus-4-7",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5",
 ];
 
 interface Group {
@@ -63,13 +59,8 @@ function classifyProblem(a: Account): string[] {
 
 export interface SmartDispatchPanelProps {
   siteId: number | null;
-  // sub2api group ids in scope. one for a regular group; multiple for a
-  // custom group. all accounts in ANY of these groups are unioned/deduped.
   groupIds: number[];
-  // name-prefix exclusions reused from the scheduling page filter so the
-  // user doesn't see channels they've already opted out of.
   excludeList?: string[];
-  // Notify parent (e.g. close modal) so it can re-pull structure if needed.
   onChanged?: () => void;
 }
 
@@ -91,8 +82,6 @@ export default function SmartDispatchPanel({
   const [enabling, setEnabling] = useState<Set<number>>(new Set());
   const [running, setRunning] = useState(false);
   const [q, setQ] = useState("");
-  // Model used by 一键检测 / 单条测试. Defaults to opus-4-6; falls back to
-  // sub2api default when blank.
   const [testModel, setTestModel] = useState<string>("claude-opus-4-6");
 
   async function load() {
@@ -121,7 +110,6 @@ export default function SmartDispatchPanel({
         inScope.push(a);
       }
       const probAll = inScope.filter((a) => classifyProblem(a).length > 0);
-      // Apply name-prefix excludeList from the parent scheduling filter.
       const excluders = excludeList
         .map((s) => s.trim().toLowerCase())
         .filter(Boolean);
@@ -196,7 +184,7 @@ export default function SmartDispatchPanel({
       ),
     );
     setRunning(false);
-    addToast({ title: "检测完成", color: "success" });
+    toast.success("检测完成");
   }
 
   async function enable(a: Account) {
@@ -232,14 +220,12 @@ export default function SmartDispatchPanel({
           body: JSON.stringify({ account_ids: [a.id] }),
         }).catch(() => {});
       }
-      addToast({ title: `已启用 ${a.name}`, color: "success" });
+      toast.success(`已启用 ${a.name}`);
       setAccounts((prev) => prev.filter((x) => x.id !== a.id));
       onChanged?.();
     } catch (e) {
-      addToast({
-        title: `启用失败 ${a.name}`,
+      toast.error(`启用失败 ${a.name}`, {
         description: e instanceof Error ? e.message : String(e),
-        color: "danger",
       });
     } finally {
       setEnabling((s) => {
@@ -277,229 +263,181 @@ export default function SmartDispatchPanel({
   if (!siteId || groupIdSet.size === 0) {
     return (
       <Card>
-        <CardBody className="text-danger text-sm">
+        <CardContent className="py-4 text-destructive text-sm">
           缺少 siteId 或 groupIds 参数
-        </CardBody>
+        </CardContent>
       </Card>
     );
   }
 
+  const viewOptions: { v: ViewFilter; label: string; activeClass: string }[] = [
+    { v: "passed", label: `仅通过 (${counts.passed})`, activeClass: "bg-emerald-600 text-white" },
+    { v: "failed", label: `仅失败 (${counts.failed})`, activeClass: "bg-destructive text-destructive-foreground" },
+    { v: "all", label: `全部 (${accounts.length})`, activeClass: "bg-primary text-primary-foreground" },
+  ];
+
   return (
     <div className="flex flex-col gap-3">
-      {/* Compact header strip — title is supplied by the wrapping context
-          (page Shell or Modal header), this just shows scope subtitle. */}
-      {memberGroupNames.length > 0 && memberGroupNames.length > 1 && (
-        <div className="text-xs text-default-500 break-all">
+      {memberGroupNames.length > 1 && (
+        <div className="text-xs text-muted-foreground break-all">
           覆盖分组：{memberGroupNames.join("、")}
         </div>
       )}
 
-      <Card className="bg-content1 border border-divider/50 shadow-none">
-        <CardBody className="gap-3 py-3">
+      <Card className="shadow-none">
+        <CardContent className="py-3 space-y-3">
           <div className="flex justify-between items-center flex-wrap gap-2">
             <div>
               <div className="font-semibold text-sm">需要审核的渠道</div>
-              <div className="text-xs text-default-500 mt-0.5">
+              <div className="text-xs text-muted-foreground mt-0.5">
                 未启用 / 未调度 / 有错误的渠道。一键检测后通过的可一键启用。
               </div>
             </div>
             <div className="flex items-end gap-2 flex-wrap">
-              <Autocomplete
-                size="sm"
-                label="测试模型"
-                className="w-56"
-                defaultItems={MODEL_PRESETS}
-                selectedKey={
-                  MODEL_PRESETS.some((p) => p.key === testModel)
-                    ? testModel
-                    : null
-                }
-                inputValue={testModel}
-                onInputChange={setTestModel}
-                onSelectionChange={(k) => {
-                  if (k != null) setTestModel(String(k));
-                }}
-                allowsCustomValue
-                description="留空则用 sub2api 默认"
-              >
-                {(item) => (
-                  <AutocompleteItem key={item.key}>
-                    {item.label}
-                  </AutocompleteItem>
-                )}
-              </Autocomplete>
+              <div className="space-y-1">
+                <Input
+                  className="w-56 h-8 text-xs"
+                  placeholder="测试模型（留空用默认）"
+                  value={testModel}
+                  onChange={(e) => setTestModel(e.target.value)}
+                  list="model-presets"
+                />
+                <datalist id="model-presets">
+                  {MODEL_PRESETS.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+              </div>
               <Button
-                color="primary"
                 size="sm"
-                startContent={<PlayCircle size={14} />}
-                onPress={testAll}
-                isLoading={running}
-                isDisabled={accounts.length === 0}
-                className="mb-0.5"
+                onClick={testAll}
+                disabled={running || accounts.length === 0}
               >
+                {running && <Loader2 className="h-4 w-4 animate-spin" />}
+                <PlayCircle className="h-4 w-4" />
                 一键检测（{accounts.length}）
               </Button>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {(
-              [
-                {
-                  v: "passed",
-                  label: `仅通过 (${counts.passed})`,
-                  color: "success" as const,
-                },
-                {
-                  v: "failed",
-                  label: `仅失败 (${counts.failed})`,
-                  color: "danger" as const,
-                },
-                {
-                  v: "all",
-                  label: `全部 (${accounts.length})`,
-                  color: "default" as const,
-                },
-              ] as const
-            ).map((opt) => (
-              <Chip
+            {viewOptions.map((opt) => (
+              <button
                 key={opt.v}
-                size="sm"
-                variant={view === opt.v ? "solid" : "flat"}
-                color={view === opt.v ? opt.color : "default"}
-                className="cursor-pointer"
+                className={cn(
+                  "inline-flex items-center rounded-md px-2.5 py-0.5 text-xs font-medium transition-colors cursor-pointer",
+                  view === opt.v
+                    ? opt.activeClass
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+                )}
                 onClick={() => setView(opt.v)}
               >
                 {opt.label}
-              </Chip>
+              </button>
             ))}
             {counts.pending > 0 && (
-              <span className="text-xs text-default-400 ml-1">
+              <span className="text-xs text-muted-foreground/70 ml-1">
                 未测试 {counts.pending}
               </span>
             )}
             {hiddenByExclude > 0 && (
-              <span className="text-xs text-default-400">
+              <span className="text-xs text-muted-foreground/70">
                 已按"排除前缀"过滤掉 {hiddenByExclude}
               </span>
             )}
-            <div className="ml-auto w-full sm:w-64">
+            <div className="ml-auto w-full sm:w-64 relative">
+              <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
               <Input
-                size="sm"
+                className="h-8 pl-8 text-xs"
                 placeholder="搜索账号名…"
-                startContent={<Search size={14} />}
                 value={q}
-                onValueChange={setQ}
+                onChange={(e) => setQ(e.target.value)}
               />
             </div>
           </div>
-        </CardBody>
+        </CardContent>
       </Card>
 
       {loading ? (
         <div className="flex justify-center p-8">
-          <Spinner />
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : error ? (
         <Card>
-          <CardBody className="text-danger text-sm">{error}</CardBody>
+          <CardContent className="py-4 text-destructive text-sm">{error}</CardContent>
         </Card>
       ) : accounts.length === 0 ? (
         <Card>
-          <CardBody className="text-default-500 text-sm">
+          <CardContent className="py-4 text-muted-foreground text-sm">
             该范围下没有需要处理的渠道。
-          </CardBody>
+          </CardContent>
         </Card>
       ) : filtered.length === 0 ? (
         <Card>
-          <CardBody className="text-default-500 text-sm">
+          <CardContent className="py-4 text-muted-foreground text-sm">
             当前筛选下没有符合条件的渠道。
             {view === "passed" &&
               counts.pending > 0 &&
               " 先点单条「测试」或上方「一键检测」，或者切到「全部」直接启用。"}
-          </CardBody>
+          </CardContent>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {filtered.map((a) => {
             const t = tests[a.id] ?? { kind: "idle" };
             const tags = classifyProblem(a);
-            // Color the 启用 button by current test state, but never disable
-            // it: the user is allowed to flip a channel back on without
-            // testing first (e.g. they already know it's healthy).
-            const enableColor: "success" | "warning" | "primary" =
-              t.kind === "ok"
-                ? "success"
-                : t.kind === "fail"
-                  ? "warning"
-                  : "primary";
-            const enableLabel =
-              t.kind === "fail" ? "仍要启用" : "启用";
             const testing = t.kind === "testing";
+            const enableVariant: "default" | "secondary" | "outline" =
+              t.kind === "ok" ? "default" : t.kind === "fail" ? "secondary" : "default";
+            const enableLabel = t.kind === "fail" ? "仍要启用" : "启用";
             return (
-              <Card
-                key={a.id}
-                className="bg-content1 border border-divider/50 shadow-none"
-              >
-                <CardBody className="gap-2">
+              <Card key={a.id} className="shadow-none">
+                <CardContent className="py-3 space-y-2">
                   <div className="flex items-start justify-between gap-2 flex-wrap">
                     <div className="min-w-0">
-                      <div className="font-medium truncate">{a.name}</div>
+                      <div className="font-medium truncate text-sm">{a.name}</div>
                       <div className="flex flex-wrap gap-1 mt-1">
                         {tags.map((tag) => (
-                          <Chip
-                            key={tag}
-                            size="sm"
-                            variant="flat"
-                            color="warning"
-                            classNames={{
-                              base: "h-5",
-                              content: "text-[11px] px-1.5",
-                            }}
-                          >
+                          <Badge key={tag} variant="warning" className="text-[11px] px-1.5 py-0">
                             {tag}
-                          </Chip>
+                          </Badge>
                         ))}
                       </div>
                     </div>
                     <TestPill state={t} />
                   </div>
                   {a.error_message && (
-                    <div className="text-xs text-danger break-all line-clamp-2">
+                    <div className="text-xs text-destructive break-all line-clamp-2">
                       {a.error_message}
                     </div>
                   )}
                   {t.kind === "fail" && (
-                    <div className="text-xs text-default-500 break-all line-clamp-3">
+                    <div className="text-xs text-muted-foreground break-all line-clamp-3">
                       {t.output}
                     </div>
                   )}
                   <div className="flex justify-end gap-1 mt-1">
                     <Button
                       size="sm"
-                      variant="flat"
-                      startContent={<PlayCircle size={14} />}
-                      onPress={() => testRow(a)}
-                      isLoading={testing}
-                      isDisabled={running}
+                      variant="ghost"
+                      onClick={() => testRow(a)}
+                      disabled={testing || running}
                     >
-                      {t.kind === "ok"
-                        ? "重测"
-                        : t.kind === "fail"
-                          ? "重测"
-                          : "测试"}
+                      {testing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      <PlayCircle className="h-3.5 w-3.5" />
+                      {t.kind === "ok" || t.kind === "fail" ? "重测" : "测试"}
                     </Button>
                     <Button
                       size="sm"
-                      color={enableColor}
-                      variant="flat"
-                      startContent={<Power size={14} />}
-                      onPress={() => enable(a)}
-                      isLoading={enabling.has(a.id)}
+                      variant={enableVariant}
+                      onClick={() => enable(a)}
+                      disabled={enabling.has(a.id)}
                     >
+                      {enabling.has(a.id) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      <Power className="h-3.5 w-3.5" />
                       {enableLabel}
                     </Button>
                   </div>
-                </CardBody>
+                </CardContent>
               </Card>
             );
           })}
@@ -511,36 +449,25 @@ export default function SmartDispatchPanel({
 
 function TestPill({ state }: { state: TestState }) {
   if (state.kind === "idle")
-    return (
-      <Chip size="sm" variant="flat" color="default">
-        未测试
-      </Chip>
-    );
+    return <Badge variant="secondary">未测试</Badge>;
   if (state.kind === "testing")
     return (
-      <Chip size="sm" variant="flat" color="primary">
+      <Badge variant="outline" className="gap-1">
+        <Loader2 className="h-3 w-3 animate-spin" />
         测试中…
-      </Chip>
+      </Badge>
     );
   if (state.kind === "ok")
     return (
-      <Chip
-        size="sm"
-        variant="flat"
-        color="success"
-        startContent={<CheckCircle2 size={12} className="ml-1" />}
-      >
+      <Badge variant="success" className="gap-1">
+        <CheckCircle2 className="h-3 w-3" />
         通过
-      </Chip>
+      </Badge>
     );
   return (
-    <Chip
-      size="sm"
-      variant="flat"
-      color="danger"
-      startContent={<XCircle size={12} className="ml-1" />}
-    >
+    <Badge variant="destructive" className="gap-1">
+      <XCircle className="h-3 w-3" />
       失败
-    </Chip>
+    </Badge>
   );
 }

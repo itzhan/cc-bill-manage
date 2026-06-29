@@ -1,33 +1,37 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { Copy, ExternalLink, Loader2, Pencil, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import Shell from "@/components/Shell";
+import { fmtDate } from "@/lib/format";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Checkbox,
-  Chip,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
+  SelectContent,
   SelectItem,
-  Spinner,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
-  TableColumn,
+  TableHead,
   TableHeader,
   TableRow,
-  addToast,
-  useDisclosure,
-} from "@heroui/react";
-import { Copy, ExternalLink, Pencil, Trash2 } from "lucide-react";
-import Shell from "@/components/Shell";
-import { fmtDate } from "@/lib/format";
+} from "@/components/ui/table";
 
 interface SiteAccount {
   id: number;
@@ -65,8 +69,8 @@ export default function SiteSharesPage() {
   const [shares, setShares] = useState<ShareItem[]>([]);
   const [sites, setSites] = useState<SiteAccount[]>([]);
   const [loading, setLoading] = useState(true);
-  const newDlg = useDisclosure();
-  const editDlg = useDisclosure();
+  const [newOpen, setNewOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<ShareItem | null>(null);
 
   async function load() {
@@ -93,10 +97,10 @@ export default function SiteSharesPage() {
     if (!confirm(`删除分享 "${s.name || s.shareId}"？现有链接将立即失效。`)) return;
     const r = await fetch(`/api/site-shares/${s.id}`, { method: "DELETE" });
     if (!r.ok) {
-      addToast({ title: "删除失败", color: "danger" });
+      toast.error("删除失败");
       return;
     }
-    addToast({ title: "已删除", color: "success" });
+    toast.success("已删除");
     await load();
   }
 
@@ -108,9 +112,9 @@ export default function SiteSharesPage() {
   async function copyUrl(shareId: string) {
     try {
       await navigator.clipboard.writeText(shareUrl(shareId));
-      addToast({ title: "已复制链接", color: "success" });
+      toast.success("已复制链接");
     } catch {
-      addToast({ title: "复制失败", color: "danger" });
+      toast.error("复制失败");
     }
   }
 
@@ -119,39 +123,41 @@ export default function SiteSharesPage() {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold">对外展示链接</h1>
-          <p className="text-sm text-default-500">
+          <p className="text-sm text-muted-foreground">
             生成免登录链接, 让客户实时看到指定站点的 RPM/TPM 与指定用户的并发/分组 RPM。
           </p>
         </div>
-        <Button color="primary" onPress={newDlg.onOpen}>
+        <Button onClick={() => setNewOpen(true)}>
           + 新建分享
         </Button>
       </div>
 
       {loading ? (
         <div className="flex justify-center p-12">
-          <Spinner />
+          <Loader2 className="h-5 w-5 animate-spin" />
         </div>
       ) : shares.length === 0 ? (
         <Card>
-          <CardBody className="text-default-500">
+          <CardContent className="text-muted-foreground pt-6">
             还没有分享链接。点击右上角"新建分享"开始。
-          </CardBody>
+          </CardContent>
         </Card>
       ) : (
         <Card>
           <CardHeader>
             <h3 className="font-semibold">分享列表</h3>
           </CardHeader>
-          <CardBody>
-            <Table removeWrapper aria-label="shares">
+          <CardContent>
+            <Table>
               <TableHeader>
-                <TableColumn>名称</TableColumn>
-                <TableColumn>站点</TableColumn>
-                <TableColumn>链接</TableColumn>
-                <TableColumn>允许范围</TableColumn>
-                <TableColumn>创建时间</TableColumn>
-                <TableColumn>操作</TableColumn>
+                <TableRow>
+                  <TableHead>名称</TableHead>
+                  <TableHead>站点</TableHead>
+                  <TableHead>链接</TableHead>
+                  <TableHead>允许范围</TableHead>
+                  <TableHead>创建时间</TableHead>
+                  <TableHead>操作</TableHead>
+                </TableRow>
               </TableHeader>
               <TableBody>
                 {shares.map((s) => {
@@ -163,72 +169,68 @@ export default function SiteSharesPage() {
                       <TableCell>{s.siteAccount.name}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <code className="text-xs bg-default-100 px-1.5 py-0.5 rounded">
+                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
                             {s.shareId}
                           </code>
                           <Button
-                            size="sm"
-                            variant="light"
-                            isIconOnly
-                            onPress={() => copyUrl(s.shareId)}
+                            size="icon-sm"
+                            variant="ghost"
+                            onClick={() => copyUrl(s.shareId)}
                             aria-label="copy"
                           >
                             <Copy size={14} />
                           </Button>
                           <Button
-                            size="sm"
-                            variant="light"
-                            isIconOnly
-                            as="a"
-                            href={shareUrl(s.shareId)}
-                            target="_blank"
-                            aria-label="open"
+                            size="icon-sm"
+                            variant="ghost"
+                            asChild
                           >
-                            <ExternalLink size={14} />
+                            <a
+                              href={shareUrl(s.shareId)}
+                              target="_blank"
+                              aria-label="open"
+                            >
+                              <ExternalLink size={14} />
+                            </a>
                           </Button>
                         </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1.5 flex-wrap">
-                          <Chip
-                            size="sm"
-                            color={userCount === 0 ? "danger" : "primary"}
-                            variant="flat"
+                          <Badge
+                            variant={userCount === 0 ? "destructive" : "default"}
                           >
                             {userCount} 用户
-                          </Chip>
-                          <Chip
-                            size="sm"
-                            color={groupCount === 0 ? "danger" : "primary"}
-                            variant="flat"
+                          </Badge>
+                          <Badge
+                            variant={groupCount === 0 ? "destructive" : "default"}
                           >
                             {groupCount} 分组
-                          </Chip>
+                          </Badge>
                         </div>
                       </TableCell>
-                      <TableCell className="text-xs text-default-500">
+                      <TableCell className="text-xs text-muted-foreground">
                         {fmtDate(s.createdAt)}
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           <Button
                             size="sm"
-                            variant="flat"
-                            startContent={<Pencil size={13} />}
-                            onPress={() => {
+                            variant="secondary"
+                            onClick={() => {
                               setEditing(s);
-                              editDlg.onOpen();
+                              setEditOpen(true);
                             }}
                           >
+                            <Pencil size={13} />
                             编辑
                           </Button>
                           <Button
                             size="sm"
-                            color="danger"
-                            variant="flat"
-                            startContent={<Trash2 size={13} />}
-                            onPress={() => remove(s)}
+                            variant="destructive"
+                            onClick={() => remove(s)}
                           >
+                            <Trash2 size={13} />
                             删除
                           </Button>
                         </div>
@@ -238,27 +240,27 @@ export default function SiteSharesPage() {
                 })}
               </TableBody>
             </Table>
-          </CardBody>
+          </CardContent>
         </Card>
       )}
 
       <ShareEditModal
-        isOpen={newDlg.isOpen}
-        onClose={newDlg.onClose}
+        isOpen={newOpen}
+        onClose={() => setNewOpen(false)}
         sites={sites}
         share={null}
         onSaved={async () => {
-          newDlg.onClose();
+          setNewOpen(false);
           await load();
         }}
       />
       <ShareEditModal
-        isOpen={editDlg.isOpen}
-        onClose={editDlg.onClose}
+        isOpen={editOpen}
+        onClose={() => setEditOpen(false)}
         sites={sites}
         share={editing}
         onSaved={async () => {
-          editDlg.onClose();
+          setEditOpen(false);
           await load();
         }}
       />
@@ -301,7 +303,6 @@ function ShareEditModal({
   const [userQuery, setUserQuery] = useState("");
   const [groupQuery, setGroupQuery] = useState("");
 
-  // 打开时重置/回填 form。
   useEffect(() => {
     if (!isOpen) return;
     setUserQuery("");
@@ -319,7 +320,6 @@ function ShareEditModal({
     }
   }, [isOpen, share, sites]);
 
-  // siteId 一变, 拉对应站点的 users + groups。
   useEffect(() => {
     if (!isOpen || siteId == null) {
       setUsers(null);
@@ -387,7 +387,7 @@ function ShareEditModal({
 
   async function save() {
     if (siteId == null) {
-      addToast({ title: "请选择站点", color: "warning" });
+      toast.warning("请选择站点");
       return;
     }
     setSaving(true);
@@ -407,10 +407,10 @@ function ShareEditModal({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({ title: "保存失败", description: j.error, color: "danger" });
+        toast.error("保存失败", { description: j.error });
         return;
       }
-      addToast({ title: "已保存", color: "success" });
+      toast.success("已保存");
       await onSaved();
     } finally {
       setSaving(false);
@@ -418,34 +418,46 @@ function ShareEditModal({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="3xl" scrollBehavior="inside">
-      <ModalContent>
-        <ModalHeader>{share ? "编辑分享" : "新建分享"}</ModalHeader>
-        <ModalBody className="gap-3">
-          <Input
-            label="名称"
-            placeholder="例 客户A 监控面板"
-            value={name}
-            onValueChange={setName}
-          />
-          <Select
-            label="站点"
-            isDisabled={share != null}
-            selectedKeys={siteId != null ? new Set([String(siteId)]) : new Set()}
-            onSelectionChange={(k) => {
-              const v = Array.from(k)[0];
-              if (v != null) setSiteId(Number(v));
-            }}
-            description={share ? "已存在的分享不能换站点 — 删了重建" : undefined}
-          >
-            {sites.map((s) => (
-              <SelectItem key={String(s.id)}>{s.name}</SelectItem>
-            ))}
-          </Select>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{share ? "编辑分享" : "新建分享"}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>名称</Label>
+            <Input
+              placeholder="例 客户A 监控面板"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>站点</Label>
+            <Select
+              value={siteId != null ? String(siteId) : undefined}
+              onValueChange={(v) => setSiteId(Number(v))}
+              disabled={share != null}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择站点" />
+              </SelectTrigger>
+              <SelectContent>
+                {sites.map((s) => (
+                  <SelectItem key={String(s.id)} value={String(s.id)}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {share && (
+              <p className="text-xs text-muted-foreground">已存在的分享不能换站点 — 删了重建</p>
+            )}
+          </div>
 
           {loadingMeta ? (
             <div className="flex justify-center p-6">
-              <Spinner size="sm" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -458,8 +470,8 @@ function ShareEditModal({
                     <div className="flex gap-1">
                       <Button
                         size="sm"
-                        variant="light"
-                        onPress={() =>
+                        variant="ghost"
+                        onClick={() =>
                           setSelectedUserIds(
                             new Set(users.map((u) => u.remoteUserId)),
                           )
@@ -469,8 +481,8 @@ function ShareEditModal({
                       </Button>
                       <Button
                         size="sm"
-                        variant="light"
-                        onPress={() => setSelectedUserIds(new Set())}
+                        variant="ghost"
+                        onClick={() => setSelectedUserIds(new Set())}
                       >
                         清空
                       </Button>
@@ -478,17 +490,14 @@ function ShareEditModal({
                   )}
                 </div>
                 <Input
-                  size="sm"
+                  className="h-8 mb-2"
                   placeholder="搜索 email / 别名 / username"
                   value={userQuery}
-                  onValueChange={setUserQuery}
-                  isClearable
-                  onClear={() => setUserQuery("")}
-                  className="mb-2"
+                  onChange={(e) => setUserQuery(e.target.value)}
                 />
-                <div className="border border-divider/40 rounded max-h-[260px] overflow-auto p-2">
+                <div className="border border-border rounded max-h-[260px] overflow-auto p-2">
                   {filteredUsers.length === 0 ? (
-                    <p className="text-xs text-default-400 p-2">
+                    <p className="text-xs text-muted-foreground p-2">
                       {users && users.length === 0
                         ? "该站点没有用户"
                         : "没有匹配的用户"}
@@ -500,16 +509,14 @@ function ShareEditModal({
                         className="flex items-center gap-2 py-1"
                       >
                         <Checkbox
-                          size="sm"
-                          isSelected={selectedUserIds.has(u.remoteUserId)}
-                          onValueChange={() => toggleUser(u.remoteUserId)}
-                        >
-                          <span className="text-sm">
-                            {u.alias || u.username || u.email}
-                          </span>
-                        </Checkbox>
+                          checked={selectedUserIds.has(u.remoteUserId)}
+                          onCheckedChange={() => toggleUser(u.remoteUserId)}
+                        />
+                        <span className="text-sm">
+                          {u.alias || u.username || u.email}
+                        </span>
                         {u.alias && (
-                          <span className="text-xs text-default-400">
+                          <span className="text-xs text-muted-foreground">
                             ({u.email})
                           </span>
                         )}
@@ -528,8 +535,8 @@ function ShareEditModal({
                     <div className="flex gap-1">
                       <Button
                         size="sm"
-                        variant="light"
-                        onPress={() =>
+                        variant="ghost"
+                        onClick={() =>
                           setSelectedGroupIds(new Set(groups.map((g) => g.id)))
                         }
                       >
@@ -537,8 +544,8 @@ function ShareEditModal({
                       </Button>
                       <Button
                         size="sm"
-                        variant="light"
-                        onPress={() => setSelectedGroupIds(new Set())}
+                        variant="ghost"
+                        onClick={() => setSelectedGroupIds(new Set())}
                       >
                         清空
                       </Button>
@@ -546,17 +553,14 @@ function ShareEditModal({
                   )}
                 </div>
                 <Input
-                  size="sm"
+                  className="h-8 mb-2"
                   placeholder="搜索分组名"
                   value={groupQuery}
-                  onValueChange={setGroupQuery}
-                  isClearable
-                  onClear={() => setGroupQuery("")}
-                  className="mb-2"
+                  onChange={(e) => setGroupQuery(e.target.value)}
                 />
-                <div className="border border-divider/40 rounded max-h-[260px] overflow-auto p-2">
+                <div className="border border-border rounded max-h-[260px] overflow-auto p-2">
                   {filteredGroups.length === 0 ? (
-                    <p className="text-xs text-default-400 p-2">
+                    <p className="text-xs text-muted-foreground p-2">
                       {groups && groups.length === 0
                         ? "该站点没有分组 (或未同步)"
                         : "没有匹配的分组"}
@@ -568,17 +572,15 @@ function ShareEditModal({
                         className="flex items-center gap-2 py-1"
                       >
                         <Checkbox
-                          size="sm"
-                          isSelected={selectedGroupIds.has(g.id)}
-                          onValueChange={() => toggleGroup(g.id)}
-                        >
-                          <span className="text-sm">
-                            {g.name}
-                            <span className="text-default-400 ml-1">
-                              ×{g.rate_multiplier}
-                            </span>
+                          checked={selectedGroupIds.has(g.id)}
+                          onCheckedChange={() => toggleGroup(g.id)}
+                        />
+                        <span className="text-sm">
+                          {g.name}
+                          <span className="text-muted-foreground ml-1">
+                            x{g.rate_multiplier}
                           </span>
-                        </Checkbox>
+                        </span>
                       </div>
                     ))
                   )}
@@ -587,19 +589,20 @@ function ShareEditModal({
             </div>
           )}
 
-          <p className="text-xs text-default-500">
+          <p className="text-xs text-muted-foreground">
             留空 = 不展示任何用户/分组。客户页只能看到你勾选的项。
           </p>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="flat" onPress={onClose}>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
             取消
           </Button>
-          <Button color="primary" onPress={save} isLoading={saving}>
+          <Button onClick={save} disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
             保存
           </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

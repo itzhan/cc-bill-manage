@@ -1,7 +1,8 @@
 "use client";
 import { use, useEffect, useRef, useState } from "react";
-import { Card, CardBody, CardHeader, Chip, Spinner } from "@heroui/react";
-import { Activity, Users } from "lucide-react";
+import { Activity, Loader2, Users } from "lucide-react";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { fmtMoneyShort } from "@/lib/format";
 
 interface ShareConfig {
@@ -57,13 +58,6 @@ export default function PublicSharePage({
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // 伪滑动窗口: sub2api 的 RPM 是"按分钟桶"存的, 整点会归零, 显示就会
-  // 看到从 N 跳回 0 然后又涨。这里给每个被观察的计数 (per-user 总 RPM /
-  // 每个分组) 记录上一次的 used; 检测到下降 = 到了整点切换, 把切换前
-  // 的最终值 stash 起来。展示时按本分钟内秒数线性混合:
-  //   displayed = current + prev_final × (60 − sec_into_minute) / 60
-  // 假设每分钟内流量均匀, 视觉上把跳变变平滑。整体上数字更接近"过去
-  // 一分钟的真实 RPM"而不是"本分钟到目前为止的累计"。
   const rollingRef = useRef<
     Map<string, { lastValue: number; prevMinuteFinal: number }>
   >(new Map());
@@ -91,14 +85,12 @@ export default function PublicSharePage({
     return Math.round(r.lastValue + r.prevMinuteFinal * decay);
   }
 
-  // tick 用于推动滑动窗口每秒重渲染, 否则 60→0 的衰减不会动。
   const [, forceTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => forceTick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // 启动 / 卸载时管理 2s 轮询。404 不重试。
   const aliveRef = useRef(true);
   useEffect(() => {
     aliveRef.current = true;
@@ -133,7 +125,6 @@ export default function PublicSharePage({
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = (await r.json()) as StatsResponse;
         if (aliveRef.current) {
-          // 喂给滑动窗口: per-user 总 RPM + 每个分组 RPM 都追踪。
           for (const [uid, rpmRow] of Object.entries(j.userRpm)) {
             if (typeof rpmRow.user_rpm_used === "number") {
               recordRolling(`u:${uid}`, rpmRow.user_rpm_used);
@@ -165,10 +156,10 @@ export default function PublicSharePage({
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <Card className="max-w-md">
-          <CardBody className="text-center p-8">
+          <CardContent className="text-center p-8">
             <p className="text-lg font-semibold mb-2">无法访问</p>
-            <p className="text-sm text-default-500">{error}</p>
-          </CardBody>
+            <p className="text-sm text-muted-foreground">{error}</p>
+          </CardContent>
         </Card>
       </div>
     );
@@ -177,7 +168,7 @@ export default function PublicSharePage({
   if (!config) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Spinner />
+        <Loader2 className="h-5 w-5 animate-spin" />
       </div>
     );
   }
@@ -194,32 +185,32 @@ export default function PublicSharePage({
               <h1 className="text-2xl sm:text-3xl font-bold">
                 {config.name || config.siteName}
               </h1>
-              <p className="text-sm text-default-500 mt-1">
+              <p className="text-sm text-muted-foreground mt-1">
                 {config.siteName} · 实时监控面板
               </p>
             </div>
-            <Chip size="sm" variant="flat" color="success">
+            <Badge variant="success">
               每 2 秒刷新
-            </Chip>
+            </Badge>
           </div>
         </header>
 
         {config.users.length === 0 ? (
           <Card>
-            <CardBody className="text-default-500 text-center p-8">
+            <CardContent className="text-muted-foreground text-center p-8">
               该链接尚未配置可展示的用户
-            </CardBody>
+            </CardContent>
           </Card>
         ) : (
-          <Card className="shadow-none border border-divider/50">
-            <CardHeader className="flex items-center gap-2 pb-1 pt-3">
-              <Users size={16} className="text-default-500" />
+          <Card className="shadow-sm border border-border">
+            <CardHeader className="flex flex-row items-center gap-2 pb-1 pt-3">
+              <Users size={16} className="text-muted-foreground" />
               <span className="font-semibold text-sm">用户实时状态</span>
-              <span className="text-[11px] text-default-400">
+              <span className="text-[11px] text-muted-foreground">
                 共 {config.users.length} 个用户
               </span>
             </CardHeader>
-            <CardBody className="pt-2">
+            <CardContent className="pt-2">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {config.users.map((u) => {
                   const conc = stats?.userConcurrency[String(u.id)];
@@ -231,9 +222,9 @@ export default function PublicSharePage({
                     cap > 0 ? Math.min(100, Math.round((used / cap) * 100)) : 0;
                   const concBar =
                     concPct >= 90
-                      ? "bg-danger"
+                      ? "bg-destructive"
                       : concPct >= 70
-                        ? "bg-warning"
+                        ? "bg-amber-500"
                         : "bg-primary";
                   const perGroup = [...(rpm?.per_group ?? [])]
                     .map((g) => ({
@@ -260,14 +251,14 @@ export default function PublicSharePage({
                       : 0;
                   const rpmBar =
                     rpmPct >= 90
-                      ? "bg-danger"
+                      ? "bg-destructive"
                       : rpmPct >= 70
-                        ? "bg-warning"
-                        : "bg-success";
+                        ? "bg-amber-500"
+                        : "bg-emerald-500";
                   return (
                     <div
                       key={u.id}
-                      className="rounded-md border border-divider/60 bg-content2/30 p-3"
+                      className="rounded-md border border-border bg-muted/30 p-3"
                     >
                       <div className="flex items-center justify-between gap-2 mb-2">
                         <span
@@ -276,24 +267,24 @@ export default function PublicSharePage({
                         >
                           {u.name}
                         </span>
-                        <span className="text-xs tabular-nums shrink-0 text-default-500">
+                        <span className="text-xs tabular-nums shrink-0 text-muted-foreground">
                           <Activity
                             size={11}
-                            className="inline mr-0.5 text-default-400"
+                            className="inline mr-0.5 text-muted-foreground"
                           />
                           {used}
                           {cap > 0 && (
-                            <span className="text-default-400"> / {cap}</span>
+                            <span className="text-muted-foreground"> / {cap}</span>
                           )}
                         </span>
                       </div>
 
-                      <div className="mb-2 rounded-lg bg-success/5 border border-success/15 p-2">
+                      <div className="mb-2 rounded-lg bg-emerald-500/5 border border-emerald-500/15 p-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] text-default-500">
+                          <span className="text-[11px] text-muted-foreground">
                             当前 RPM
                           </span>
-                          <span className="text-xs text-default-400 tabular-nums">
+                          <span className="text-xs text-muted-foreground tabular-nums">
                             {rpmLimit > 0 ? `${rpmPct}%` : ""}
                           </span>
                         </div>
@@ -302,13 +293,13 @@ export default function PublicSharePage({
                             {rpmUsed.toLocaleString()}
                           </span>
                           {rpmLimit > 0 && (
-                            <span className="text-xs text-default-400 tabular-nums">
+                            <span className="text-xs text-muted-foreground tabular-nums">
                               / {rpmLimit.toLocaleString()}
                             </span>
                           )}
                         </div>
                         {rpmLimit > 0 && (
-                          <div className="mt-1.5 h-1 rounded bg-default-100 overflow-hidden">
+                          <div className="mt-1.5 h-1 rounded bg-muted overflow-hidden">
                             <div
                               className={`h-full ${rpmBar}`}
                               style={{ width: `${rpmPct}%` }}
@@ -319,13 +310,13 @@ export default function PublicSharePage({
 
                       {cap > 0 && (
                         <>
-                          <div className="flex items-center justify-between text-[11px] text-default-500 mb-1">
+                          <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
                             <span>并发</span>
                             <span className="tabular-nums">
                               {used} / {cap}
                             </span>
                           </div>
-                          <div className="mb-2 h-1.5 rounded bg-default-100 overflow-hidden">
+                          <div className="mb-2 h-1.5 rounded bg-muted overflow-hidden">
                             <div
                               className={`h-full ${concBar}`}
                               style={{ width: `${concPct}%` }}
@@ -334,12 +325,12 @@ export default function PublicSharePage({
                         </>
                       )}
                       <div className="flex flex-col gap-0.5 mb-2">
-                        <p className="text-[11px] text-default-400 mb-0.5">
+                        <p className="text-[11px] text-muted-foreground mb-0.5">
                           分组 RPM
                         </p>
                         {perGroup.length === 0 ? (
-                          <span className="text-[11px] text-default-400">
-                            {rpm ? "暂无可见分组" : "加载中…"}
+                          <span className="text-[11px] text-muted-foreground">
+                            {rpm ? "暂无可见分组" : "加载中..."}
                           </span>
                         ) : (
                           perGroup.map((g) => (
@@ -353,10 +344,10 @@ export default function PublicSharePage({
                               >
                                 {g.group_name || `#${g.group_id}`}
                               </span>
-                              <span className="tabular-nums text-default-500 shrink-0 ml-2">
+                              <span className="tabular-nums text-muted-foreground shrink-0 ml-2">
                                 {g.slidingUsed}
                                 {g.limit != null && g.limit > 0 && (
-                                  <span className="text-default-400">
+                                  <span className="text-muted-foreground">
                                     {" "}
                                     / {g.limit}
                                   </span>
@@ -367,27 +358,27 @@ export default function PublicSharePage({
                         )}
                       </div>
                       {acct && (
-                        <div className="border-t border-divider/50 pt-2 grid grid-cols-2 gap-1 text-[11px]">
+                        <div className="border-t border-border pt-2 grid grid-cols-2 gap-1 text-[11px]">
                           <div>
-                            <p className="text-default-400">今日消费</p>
+                            <p className="text-muted-foreground">今日消费</p>
                             <p className="font-medium">
                               {fmtMoneyShort(acct.todayActualCost)}
                             </p>
                           </div>
                           <div>
-                            <p className="text-default-400">累计消费</p>
+                            <p className="text-muted-foreground">累计消费</p>
                             <p className="font-medium">
                               {fmtMoneyShort(acct.effectiveConsumed)}
                             </p>
                           </div>
                           <div>
-                            <p className="text-default-400">余额</p>
+                            <p className="text-muted-foreground">余额</p>
                             <p className="font-medium">
                               {fmtMoneyShort(acct.balance)}
                             </p>
                           </div>
                           <div>
-                            <p className="text-default-400">总充值</p>
+                            <p className="text-muted-foreground">总充值</p>
                             <p className="font-medium">
                               {fmtMoneyShort(acct.totalRecharged)}
                             </p>
@@ -398,15 +389,14 @@ export default function PublicSharePage({
                   );
                 })}
               </div>
-            </CardBody>
+            </CardContent>
           </Card>
         )}
 
-        <footer className="mt-8 text-center text-xs text-default-400">
+        <footer className="mt-8 text-center text-xs text-muted-foreground">
           shareId · {config.shareId}
         </footer>
       </div>
     </div>
   );
 }
-

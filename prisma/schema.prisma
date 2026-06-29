@@ -656,6 +656,7 @@ model Ledger {
   userLinks     LedgerSiteUserLink[]
   categories    LedgerCategory[]
   fixedCosts    LedgerFixedCost[]
+  fixedIncomes  LedgerFixedIncome[]
 }
 
 model LedgerUpstreamLink {
@@ -705,6 +706,17 @@ model LedgerFixedCost {
 
   ledger   Ledger         @relation(fields: [ledgerId], references: [id], onDelete: Cascade)
   category LedgerCategory @relation(fields: [categoryId], references: [id])
+}
+
+model LedgerFixedIncome {
+  id        Int      @id @default(autoincrement())
+  ledgerId  Int
+  amount    Float
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ledger Ledger @relation(fields: [ledgerId], references: [id], onDelete: Cascade)
 }
 
 model LedgerUpstreamKeyLink {

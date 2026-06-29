@@ -1,36 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import {
-  Autocomplete,
-  AutocompleteItem,
-  Button,
-  Card,
-  CardBody,
-  CardFooter,
-  CardHeader,
-  Checkbox,
-  Chip,
-  Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Select,
-  SelectItem,
-  Spinner,
-  Tab,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
-  Tabs,
-  Textarea,
-  addToast,
-  useDisclosure,
-} from "@heroui/react";
+import { toast } from "sonner";
 import {
   Bell,
   Building2,
@@ -39,6 +9,7 @@ import {
   Eye,
   EyeOff,
   KeyRound,
+  Loader2,
   Mail,
   Package,
   Pencil,
@@ -51,6 +22,44 @@ import {
 import Shell from "@/components/Shell";
 import { copyToClipboard } from "@/lib/clipboard";
 import { fmtDate, fmtMoneyShort } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 
 interface UpstreamCategory {
   id: number;
@@ -144,12 +153,12 @@ export default function UpstreamPage() {
   const [copyingKeyId, setCopyingKeyId] = useState<number | null>(null);
   const [benchPushingKeyId, setBenchPushingKeyId] = useState<number | null>(null);
 
-  const newDlg = useDisclosure();
-  const editDlg = useDisclosure();
-  const keysDlg = useDisclosure();
-  const balanceAlertDlg = useDisclosure();
-  const importSkAntDlg = useDisclosure();
-  const groupPresetDlg = useDisclosure();
+  const [newDlgOpen, setNewDlgOpen] = useState(false);
+  const [editDlgOpen, setEditDlgOpen] = useState(false);
+  const [keysDlgOpen, setKeysDlgOpen] = useState(false);
+  const [balanceAlertDlgOpen, setBalanceAlertDlgOpen] = useState(false);
+  const [importSkAntDlgOpen, setImportSkAntDlgOpen] = useState(false);
+  const [groupPresetDlgOpen, setGroupPresetDlgOpen] = useState(false);
   const [editing, setEditing] = useState<UpstreamAccount | null>(null);
   const [editTab, setEditTab] = useState<string>("creds");
   const [form, setForm] = useState({
@@ -175,7 +184,7 @@ export default function UpstreamPage() {
   const [categoryList, setCategoryList] = useState<UpstreamCategory[]>([]);
   // 新增分类对话框
   const [newCategoryName, setNewCategoryName] = useState("");
-  const newCategoryDlg = useDisclosure();
+  const [newCategoryDlgOpen, setNewCategoryDlgOpen] = useState(false);
   const [invDraft, setInvDraft] = useState<InventoryItem>({
     name: "",
     price: "",
@@ -244,7 +253,7 @@ export default function UpstreamPage() {
   async function addCategory() {
     const name = newCategoryName.trim();
     if (!name) {
-      addToast({ title: "分类名必填", color: "warning" });
+      toast.warning("分类名必填");
       return;
     }
     const res = await fetch("/api/upstream/categories", {
@@ -254,11 +263,11 @@ export default function UpstreamPage() {
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
-      addToast({ title: "新增失败", description: j.error, color: "danger" });
+      toast.error(`新增失败: ${j.error || ""}`);
       return;
     }
     setNewCategoryName("");
-    newCategoryDlg.onClose();
+    setNewCategoryDlgOpen(false);
     await load();
   }
 
@@ -271,7 +280,7 @@ export default function UpstreamPage() {
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      addToast({ title: "删除失败", description: j.error, color: "danger" });
+      toast.error(`删除失败: ${j.error || ""}`);
       return;
     }
     await load();
@@ -314,10 +323,10 @@ export default function UpstreamPage() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        addToast({ title: "加入失败", description: j.error, color: "danger" });
+        toast.error(`加入失败: ${j.error || ""}`);
         return;
       }
-      addToast({ title: "已加入货源", color: "success" });
+      toast.success("已加入货源");
       setPushInvKey(null);
       await load();
       // keysModalAccount 是引用旧 state, 在 load 后我们要更新它
@@ -346,11 +355,7 @@ export default function UpstreamPage() {
         ),
       );
     } catch (e) {
-      addToast({
-        title: "加载站点列表失败",
-        description: String(e),
-        color: "danger",
-      });
+      toast.error(`加载站点列表失败: ${String(e)}`);
     }
   }
   // === 批量 push 相关 helpers ===
@@ -365,7 +370,7 @@ export default function UpstreamPage() {
 
   async function openBulkPushDialog() {
     if (selectedKeyIds.size === 0) {
-      addToast({ title: "请先勾选 key", color: "warning" });
+      toast.warning("请先勾选 key");
       return;
     }
     // 复用 pushSite 的 site 列表加载逻辑(同一份数据)。
@@ -378,11 +383,7 @@ export default function UpstreamPage() {
         ),
       );
     } catch (e) {
-      addToast({
-        title: "加载站点列表失败",
-        description: String(e),
-        color: "danger",
-      });
+      toast.error(`加载站点列表失败: ${String(e)}`);
       return;
     }
     setTemplateAccounts([]);
@@ -413,11 +414,7 @@ export default function UpstreamPage() {
       items.sort((a, b) => a.name.localeCompare(b.name));
       setTemplateAccounts(items);
     } catch (e) {
-      addToast({
-        title: "加载模板账号失败",
-        description: String(e),
-        color: "danger",
-      });
+      toast.error(`加载模板账号失败: ${String(e)}`);
       setTemplateAccounts([]);
     } finally {
       setLoadingTemplates(false);
@@ -430,15 +427,15 @@ export default function UpstreamPage() {
       bulkPushForm.templateRemoteAccountId,
     );
     if (!siteAccountId) {
-      addToast({ title: "请选择目标站点", color: "warning" });
+      toast.warning("请选择目标站点");
       return;
     }
     if (!templateRemoteAccountId) {
-      addToast({ title: "请选择模板账号", color: "warning" });
+      toast.warning("请选择模板账号");
       return;
     }
     if (selectedKeyIds.size === 0) {
-      addToast({ title: "未选中 key", color: "warning" });
+      toast.warning("未选中 key");
       return;
     }
     setBulkPushBusy(true);
@@ -456,33 +453,24 @@ export default function UpstreamPage() {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        addToast({
-          title: "批量推送失败",
-          description: String(j.error || res.status),
-          color: "danger",
-        });
+        toast.error(`批量推送失败: ${String(j.error || res.status)}`);
         return;
       }
       const failedRows = (j.results ?? []).filter(
         (r: { ok: boolean }) => !r.ok,
       );
       if (failedRows.length > 0) {
-        addToast({
-          title: `成功 ${j.success} / 共 ${j.total}, 失败 ${j.failed}`,
-          description: failedRows
+        toast.warning(
+          `成功 ${j.success} / 共 ${j.total}, 失败 ${j.failed}: ${failedRows
             .slice(0, 3)
             .map(
               (r: { keyName: string; error?: string }) =>
                 `${r.keyName}: ${r.error}`,
             )
-            .join("; "),
-          color: "warning",
-        });
+            .join("; ")}`,
+        );
       } else {
-        addToast({
-          title: `已批量推送 ${j.success} 个 key`,
-          color: "success",
-        });
+        toast.success(`已批量推送 ${j.success} 个 key`);
       }
       setSelectedKeyIds(new Set());
       setBulkPushOpen(false);
@@ -501,11 +489,7 @@ export default function UpstreamPage() {
       if (!r.ok) throw new Error(j.error || `${r.status}`);
       setSiteGroups(j.items ?? []);
     } catch (e) {
-      addToast({
-        title: "加载分组失败",
-        description: String(e),
-        color: "danger",
-      });
+      toast.error(`加载分组失败: ${String(e)}`);
       setSiteGroups([]);
     } finally {
       setLoadingSiteGroups(false);
@@ -522,27 +506,27 @@ export default function UpstreamPage() {
       .map((s) => Number(s.trim()))
       .filter((n) => Number.isFinite(n) && n > 0);
     if (!siteId) {
-      addToast({ title: "请选择目标站点账号", color: "warning" });
+      toast.warning("请选择目标站点账号");
       return;
     }
     if (!pushSiteForm.name.trim()) {
-      addToast({ title: "请填账号名称", color: "warning" });
+      toast.warning("请填账号名称");
       return;
     }
     if (groupIds.length === 0) {
-      addToast({ title: "至少勾一个分组", color: "warning" });
+      toast.warning("至少勾一个分组");
       return;
     }
     if (!Number.isFinite(concurrency) || concurrency <= 0) {
-      addToast({ title: "并发非法", color: "warning" });
+      toast.warning("并发非法");
       return;
     }
     if (!Number.isFinite(rateMultiplier) || rateMultiplier <= 0) {
-      addToast({ title: "倍率非法", color: "warning" });
+      toast.warning("倍率非法");
       return;
     }
     if (!Number.isFinite(priority) || priority < 0) {
-      addToast({ title: "优先级非法", color: "warning" });
+      toast.warning("优先级非法");
       return;
     }
     setPushSiteBusy(true);
@@ -571,17 +555,10 @@ export default function UpstreamPage() {
       );
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        addToast({
-          title: "推送失败",
-          description: j.error,
-          color: "danger",
-        });
+        toast.error(`推送失败: ${j.error || ""}`);
         return;
       }
-      addToast({
-        title: `已创建账号 + binding (#${j.remoteAccountId})`,
-        color: "success",
-      });
+      toast.success(`已创建账号 + binding (#${j.remoteAccountId})`);
       setPushSiteKey(null);
     } finally {
       setPushSiteBusy(false);
@@ -594,9 +571,9 @@ export default function UpstreamPage() {
       const res = await fetch(`/api/upstream/${id}/sync`, { method: "POST" });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        addToast({ title: "同步失败", description: j.error, color: "danger" });
+        toast.error(`同步失败: ${j.error || ""}`);
       } else {
-        addToast({ title: "用量已更新", color: "success" });
+        toast.success("用量已更新");
         await load();
         if (keysModalAccount?.id === id) await loadKeys(id);
       }
@@ -613,9 +590,9 @@ export default function UpstreamPage() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        addToast({ title: "刷新失败", description: j.error, color: "danger" });
+        toast.error(`刷新失败: ${j.error || ""}`);
       } else {
-        addToast({ title: "结构已刷新", color: "success" });
+        toast.success("结构已刷新");
         await load();
         if (keysModalAccount?.id === id) await loadKeys(id);
       }
@@ -632,11 +609,7 @@ export default function UpstreamPage() {
       const res = await fetch("/api/upstream/refresh-sync", { method: "POST" });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        addToast({
-          title: "批量刷新失败",
-          description: j.error,
-          color: "danger",
-        });
+        toast.error(`批量刷新失败: ${j.error || ""}`);
         return;
       }
       const j = (await res.json()) as {
@@ -648,10 +621,7 @@ export default function UpstreamPage() {
       const total = j.refresh.length;
       const failedCount = failedRefresh.length + failedSync.length;
       if (failedCount === 0) {
-        addToast({
-          title: `已完成 ${total} 个渠道的刷新 + 同步`,
-          color: "success",
-        });
+        toast.success(`已完成 ${total} 个渠道的刷新 + 同步`);
       } else {
         const desc = [
           ...failedRefresh.map((x) => `刷新 ${x.name}: ${x.error}`),
@@ -659,20 +629,12 @@ export default function UpstreamPage() {
         ]
           .slice(0, 4)
           .join(" · ");
-        addToast({
-          title: `${total} 个中 ${failedCount} 项失败`,
-          description: desc,
-          color: "warning",
-        });
+        toast.warning(`${total} 个中 ${failedCount} 项失败: ${desc}`);
       }
       await load();
       if (keysModalAccount) await loadKeys(keysModalAccount.id);
     } catch (e) {
-      addToast({
-        title: "批量刷新失败",
-        description: e instanceof Error ? e.message : String(e),
-        color: "danger",
-      });
+      toast.error(`批量刷新失败: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusyAll(false);
     }
@@ -683,10 +645,10 @@ export default function UpstreamPage() {
     const res = await fetch(`/api/upstream/${id}`, { method: "DELETE" });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      addToast({ title: "删除失败", description: j.error, color: "danger" });
+      toast.error(`删除失败: ${j.error || ""}`);
       return;
     }
-    addToast({ title: "已删除", color: "success" });
+    toast.success("已删除");
     await load();
   }
 
@@ -696,7 +658,7 @@ export default function UpstreamPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ hidden }),
     });
-    addToast({ title: hidden ? "已隐藏" : "已显示", color: "success" });
+    toast.success(hidden ? "已隐藏" : "已显示");
     await load();
   }
 
@@ -715,7 +677,7 @@ export default function UpstreamPage() {
     });
     setInvDraft({ name: "", price: "", note: "" });
     setEditTab("creds");
-    newDlg.onOpen();
+    setNewDlgOpen(true);
   }
   function openEdit(a: UpstreamAccount) {
     setEditing(a);
@@ -733,13 +695,13 @@ export default function UpstreamPage() {
     });
     setInvDraft({ name: "", price: "", note: "" });
     setEditTab("inventory");
-    editDlg.onOpen();
+    setEditDlgOpen(true);
   }
 
   function openKeys(a: UpstreamAccount) {
     setKeysModalAccount(a);
     setSelectedKeyIds(new Set()); // 切换渠道时清空选择, 避免误带入
-    keysDlg.onOpen();
+    setKeysDlgOpen(true);
     if (!keys[a.id]) loadKeys(a.id);
   }
 
@@ -766,14 +728,11 @@ export default function UpstreamPage() {
 
   async function submitNew() {
     if (!form.name || !form.baseUrl) {
-      addToast({ title: "请填写名称和 Base URL", color: "warning" });
+      toast.warning("请填写名称和 Base URL");
       return;
     }
     if (!form.accessToken && (!form.email || !form.password)) {
-      addToast({
-        title: "请填写 Access Token，或同时填写 Email + 密码",
-        color: "warning",
-      });
+      toast.warning("请填写 Access Token，或同时填写 Email + 密码");
       return;
     }
     const inv = flushedInventory();
@@ -794,7 +753,7 @@ export default function UpstreamPage() {
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      addToast({ title: "创建失败", description: j.error, color: "danger" });
+      toast.error(`创建失败: ${j.error || ""}`);
       return;
     }
     const created = await res.json();
@@ -808,8 +767,8 @@ export default function UpstreamPage() {
         }),
       });
     }
-    newDlg.onClose();
-    addToast({ title: "已创建", color: "success" });
+    setNewDlgOpen(false);
+    toast.success("已创建");
     await load();
   }
 
@@ -834,11 +793,11 @@ export default function UpstreamPage() {
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      addToast({ title: "保存失败", description: j.error, color: "danger" });
+      toast.error(`保存失败: ${j.error || ""}`);
       return;
     }
-    editDlg.onClose();
-    addToast({ title: "已保存", color: "success" });
+    setEditDlgOpen(false);
+    toast.success("已保存");
     await load();
   }
 
@@ -853,10 +812,8 @@ export default function UpstreamPage() {
 
   function copy(text: string) {
     void copyToClipboard(text).then((ok) => {
-      addToast({
-        title: ok ? "已复制" : "复制失败",
-        color: ok ? "success" : "danger",
-      });
+      if (ok) toast.success("已复制");
+      else toast.error("复制失败");
     });
   }
 
@@ -871,33 +828,19 @@ export default function UpstreamPage() {
       });
       const j = await res.json();
       if (!res.ok) {
-        addToast({
-          title: "获取 key 失败",
-          description: j.error,
-          color: "danger",
-        });
+        toast.error(`获取 key 失败: ${j.error || ""}`);
         return;
       }
       const fullKey: string | null = j.item?.apiKey ?? null;
       if (!fullKey) {
-        addToast({
-          title: "未拿到完整 key",
-          description: j.item?.revealError || "上游可能也只返回了 mask",
-          color: "warning",
-        });
+        toast.warning(`未拿到完整 key: ${j.item?.revealError || "上游可能也只返回了 mask"}`);
         return;
       }
       const ok = await copyToClipboard(fullKey);
-      addToast({
-        title: ok ? `${name} 的 key 已复制` : "复制失败",
-        color: ok ? "success" : "danger",
-      });
+      if (ok) toast.success(`${name} 的 key 已复制`);
+      else toast.error("复制失败");
     } catch (e) {
-      addToast({
-        title: "复制失败",
-        description: e instanceof Error ? e.message : String(e),
-        color: "danger",
-      });
+      toast.error(`复制失败: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setCopyingKeyId(null);
     }
@@ -915,11 +858,7 @@ export default function UpstreamPage() {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        addToast({
-          title: "添加到智测失败",
-          description: String(j.error || res.status),
-          color: "danger",
-        });
+        toast.error(`添加到智测失败: ${String(j.error || res.status)}`);
         return;
       }
       const parts: string[] = [];
@@ -927,11 +866,7 @@ export default function UpstreamPage() {
       else parts.push("复用已有渠道");
       if (j.keyCreated) parts.push("已新建 key");
       else parts.push("key 已存在");
-      addToast({
-        title: `${name} 已加入智测`,
-        description: parts.join(" · "),
-        color: "success",
-      });
+      toast.success(`${name} 已加入智测: ${parts.join(" · ")}`);
     } finally {
       setBenchPushingKeyId(null);
     }
@@ -959,7 +894,7 @@ export default function UpstreamPage() {
   });
   // 当前 Tab 下"同名货源最低价"映射: name(lowercase) → {accountId, price}
   // 同 Tab 下显示的所有渠道里, 对每个 inventory 名字找最低价 (按 priceNumeric)。
-  // 该 (name, accountId) 在渲染时拿到 🏆 最低价 标识。
+  // 该 (name, accountId) 在渲染时拿到 最低价 标识。
   const bestPriceByName = (() => {
     type Best = { accountId: number; numeric: number };
     const m = new Map<string, Best>();
@@ -1026,133 +961,122 @@ export default function UpstreamPage() {
     });
   }
 
+  // Build tab items for category filter
+  const tabItems = [
+    ...categoryList.map((c) => ({
+      key: c.name,
+      label: c.name,
+      count: accounts.filter((a) =>
+        parseInventory(a.inventory).some((it) =>
+          (it.categories ?? []).includes(c.name),
+        ),
+      ).length,
+    })),
+    {
+      key: TAB_ALL,
+      label: "全部",
+      count: accounts.length,
+    },
+  ];
+
   return (
     <Shell>
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold">渠道管理</h1>
-          <p className="text-xs text-default-500 mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5">
             凭据 · 余额 · 货源情况 · 点卡片底部按钮查看消费明细
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button
-            variant="flat"
-            startContent={<Bell size={14} />}
-            onPress={() => balanceAlertDlg.onOpen()}
+            variant="secondary"
+            onClick={() => setBalanceAlertDlgOpen(true)}
           >
+            <Bell size={14} />
             余额提醒
           </Button>
           <Button
-            variant="flat"
-            startContent={<Package size={14} />}
-            onPress={() => groupPresetDlg.onOpen()}
+            variant="secondary"
+            onClick={() => setGroupPresetDlgOpen(true)}
             title="按本站分组维护可复用的分组集合, 录入 sk-ant / 推到本站时一键套用"
           >
+            <Package size={14} />
             分组预设
           </Button>
           <Button
-            variant="flat"
-            startContent={<KeyRound size={14} />}
-            onPress={() => importSkAntDlg.onOpen()}
+            variant="secondary"
+            onClick={() => setImportSkAntDlgOpen(true)}
           >
+            <KeyRound size={14} />
             批量录入 sk-ant
           </Button>
           <Button
-            variant="flat"
-            startContent={<RefreshCw size={14} />}
-            onPress={refreshAndSyncAll}
-            isLoading={busyAll}
+            variant="secondary"
+            onClick={refreshAndSyncAll}
+            disabled={busyAll}
           >
+            {busyAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw size={14} />}
             一键刷新同步
           </Button>
           <Button
-            variant="flat"
-            startContent={showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
-            onPress={() => setShowHidden((v) => !v)}
+            variant="secondary"
+            onClick={() => setShowHidden((v) => !v)}
           >
+            {showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
             {showHidden ? "查看启用" : "查看已隐藏"}
           </Button>
-          <Button color="primary" startContent={<Plus size={14} />} onPress={openNew}>
+          <Button onClick={openNew}>
+            <Plus size={14} />
             新建
           </Button>
         </div>
       </div>
 
       <BalanceAlertModal
-        isOpen={balanceAlertDlg.isOpen}
-        onOpenChange={balanceAlertDlg.onOpenChange}
+        open={balanceAlertDlgOpen}
+        onOpenChange={setBalanceAlertDlgOpen}
       />
       <ImportSkAntModal
-        isOpen={importSkAntDlg.isOpen}
-        onOpenChange={importSkAntDlg.onOpenChange}
+        open={importSkAntDlgOpen}
+        onOpenChange={setImportSkAntDlgOpen}
       />
       <GroupPresetsModal
-        isOpen={groupPresetDlg.isOpen}
-        onOpenChange={groupPresetDlg.onOpenChange}
+        open={groupPresetDlgOpen}
+        onOpenChange={setGroupPresetDlgOpen}
       />
 
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <Tabs
-          aria-label="category filter"
-          radius="full"
-          size="sm"
-          variant="solid"
-          selectedKey={categoryFilter}
-          onSelectionChange={(k) => setCategoryFilter(String(k))}
-          classNames={{
-            tabList: "bg-content2 p-1",
-            cursor: "bg-content1 shadow-sm",
-          }}
+          value={categoryFilter}
+          onValueChange={setCategoryFilter}
         >
-          {[
-            ...categoryList.map((c) => ({
-              key: c.name,
-              label: c.name,
-              // 渠道数 = 至少有一条货源属于该分类的渠道数
-              count: accounts.filter((a) =>
-                parseInventory(a.inventory).some((it) =>
-                  (it.categories ?? []).includes(c.name),
-                ),
-              ).length,
-              deletable: true,
-              id: c.id,
-            })),
-            {
-              key: TAB_ALL,
-              label: "全部",
-              count: accounts.length,
-              deletable: false,
-              id: -1,
-            },
-          ].map((t) => (
-            <Tab
-              key={t.key}
-              title={
+          <TabsList>
+            {tabItems.map((t) => (
+              <TabsTrigger key={t.key} value={t.key}>
                 <span className="flex items-center gap-1.5">
                   {t.label}
-                  <span className="text-[10px] text-default-400">{t.count}</span>
+                  <span className="text-[10px] text-muted-foreground/70">{t.count}</span>
                 </span>
-              }
-            />
-          ))}
+              </TabsTrigger>
+            ))}
+          </TabsList>
         </Tabs>
         <Button
           size="sm"
-          variant="flat"
-          startContent={<Plus size={12} />}
-          onPress={() => newCategoryDlg.onOpen()}
+          variant="secondary"
+          onClick={() => setNewCategoryDlgOpen(true)}
         >
+          <Plus size={12} />
           新建货源分类
         </Button>
         {categoryFilter !== TAB_ALL && (
           <Button
-            size="sm"
-            variant="light"
-            color="danger"
-            isIconOnly
+            size="icon-sm"
+            variant="ghost"
+            className="text-destructive"
             title="删除当前分类"
-            onPress={() => {
+            onClick={() => {
               const cat = categoryList.find((c) => c.name === categoryFilter);
               if (cat) deleteCategory(cat.id, cat.name);
             }}
@@ -1164,11 +1088,11 @@ export default function UpstreamPage() {
 
       {loading && !accounts.length ? (
         <div className="flex justify-center p-12">
-          <Spinner />
+          <Loader2 className="h-5 w-5 animate-spin" />
         </div>
       ) : accounts.length === 0 ? (
         <Card>
-          <CardBody className="text-default-500">暂无上游账号</CardBody>
+          <CardContent className="text-muted-foreground py-4">暂无上游账号</CardContent>
         </Card>
       ) : (
         <div className="space-y-6">
@@ -1189,56 +1113,55 @@ export default function UpstreamPage() {
                 const hasBalance = channels.some((c) => c.balance != null);
                 const anyError = channels.some((c) => c.lastSyncError);
                 return (
-                  <Card
-                    key={`sup:${sName}`}
-                    className="bg-content1 border border-divider/50 shadow-none"
-                  >
+                  <Card key={`sup:${sName}`}>
                     <CardHeader
-                      className="flex justify-between items-center gap-2 pb-2 cursor-pointer"
+                      className="flex flex-row justify-between items-center gap-2 pb-2 cursor-pointer"
                       onClick={() => toggleSupplier(sName)}
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <Building2
                           size={16}
-                          className="text-default-500 shrink-0"
+                          className="text-muted-foreground shrink-0"
                         />
                         <h3 className="font-semibold text-base truncate">
                           {sName}
                         </h3>
-                        <Chip size="sm" variant="flat">
+                        <Badge variant="secondary">
                           {channels.length} 渠道
-                        </Chip>
+                        </Badge>
                         {anyError && (
-                          <Chip size="sm" color="danger" variant="flat">
+                          <Badge variant="destructive">
                             部分同步失败
-                          </Chip>
+                          </Badge>
                         )}
                       </div>
                       <div className="flex items-center gap-4 shrink-0 text-xs">
                         <div className="flex flex-col items-end leading-tight">
-                          <span className="text-default-500">今日合计</span>
+                          <span className="text-muted-foreground">今日合计</span>
                           <span
-                            className={`font-bold ${
+                            className={cn(
+                              "font-bold",
                               totalToday > 0
                                 ? "text-foreground"
-                                : "text-default-400"
-                            }`}
+                                : "text-muted-foreground/70",
+                            )}
                           >
                             ${fmtMoneyShort(totalToday)}
                           </span>
                         </div>
                         <div className="flex flex-col items-end leading-tight">
-                          <span className="flex items-center gap-1 text-default-500">
+                          <span className="flex items-center gap-1 text-muted-foreground">
                             <Wallet size={11} /> 余额合计
                           </span>
                           <span
-                            className={`font-bold ${
+                            className={cn(
+                              "font-bold",
                               !hasBalance
-                                ? "text-default-400"
+                                ? "text-muted-foreground/70"
                                 : totalBalance > 0
-                                  ? "text-success"
-                                  : "text-warning"
-                            }`}
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-amber-600 dark:text-amber-400",
+                            )}
                           >
                             {hasBalance
                               ? `$${fmtMoneyShort(totalBalance)}`
@@ -1247,14 +1170,15 @@ export default function UpstreamPage() {
                         </div>
                         <ChevronDown
                           size={16}
-                          className={`text-default-400 transition-transform ${
-                            collapsed ? "" : "rotate-180"
-                          }`}
+                          className={cn(
+                            "text-muted-foreground/70 transition-transform",
+                            !collapsed && "rotate-180",
+                          )}
                         />
                       </div>
                     </CardHeader>
                     {!collapsed && (
-                      <CardBody className="pt-0 gap-1.5">
+                      <CardContent className="pt-0 space-y-1.5">
                         {channels.map((a) => (
                           <ChannelRow
                             key={a.id}
@@ -1266,10 +1190,11 @@ export default function UpstreamPage() {
                             onClickKeys={() => openKeys(a)}
                             onRefresh={() => refreshOne(a.id)}
                             onEdit={() => openEdit(a)}
+                            onToggleHidden={() => toggleHidden(a.id, !a.hidden)}
                             onRemove={() => remove(a.id)}
                           />
                         ))}
-                      </CardBody>
+                      </CardContent>
                     )}
                   </Card>
                 );
@@ -1281,7 +1206,7 @@ export default function UpstreamPage() {
           {grouped.ungrouped.length > 0 && (
             <div>
               {grouped.suppliers.length > 0 && (
-                <h2 className="text-sm font-semibold text-default-600 mb-3">
+                <h2 className="text-sm font-semibold text-foreground/80 mb-3">
                   未分组渠道 ({grouped.ungrouped.length})
                 </h2>
               )}
@@ -1290,54 +1215,53 @@ export default function UpstreamPage() {
                   const inv = visibleInventory(a);
                   const isRevealed = revealed.has(a.id);
                   return (
-                    <Card
-                      key={a.id}
-                      className="bg-content1 border border-divider/50 shadow-none"
-                    >
-                <CardHeader className="flex justify-between items-start gap-2 pb-2">
+                    <Card key={a.id}>
+                <CardHeader className="flex flex-row justify-between items-start gap-2 pb-2">
                   <div className="flex flex-col leading-tight min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-semibold text-base truncate">
                         {a.name}
                       </h3>
-                      <Chip size="sm" variant="flat">
+                      <Badge variant="secondary">
                         {a.type}
-                      </Chip>
+                      </Badge>
                       {a.lastSyncError && (
-                        <Chip size="sm" color="danger" variant="flat">
+                        <Badge variant="destructive">
                           同步失败
-                        </Chip>
+                        </Badge>
                       )}
                     </div>
-                    <span className="text-xs text-default-400 mt-0.5">
+                    <span className="text-xs text-muted-foreground/70 mt-0.5">
                       最后同步 {fmtDate(a.lastSyncAt)}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <div className="flex flex-col items-end leading-tight">
-                      <div className="text-default-500 text-xs">今日消费</div>
+                      <div className="text-muted-foreground text-xs">今日消费</div>
                       <span
-                        className={`font-bold ${
+                        className={cn(
+                          "font-bold",
                           (a.todayCost ?? 0) > 0
                             ? "text-foreground"
-                            : "text-default-400"
-                        }`}
+                            : "text-muted-foreground/70",
+                        )}
                       >
                         ${fmtMoneyShort(a.todayCost ?? 0)}
                       </span>
                     </div>
                     <div className="flex flex-col items-end leading-tight">
-                      <div className="flex items-center gap-1 text-default-500 text-xs">
+                      <div className="flex items-center gap-1 text-muted-foreground text-xs">
                         <Wallet size={12} /> 余额
                       </div>
                       <span
-                        className={`font-bold ${
+                        className={cn(
+                          "font-bold",
                           a.balance == null
-                            ? "text-default-400"
+                            ? "text-muted-foreground/70"
                             : a.balance > 0
-                              ? "text-success"
-                              : "text-warning"
-                        }`}
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-amber-600 dark:text-amber-400",
+                        )}
                       >
                         {a.balance == null
                           ? "—"
@@ -1345,21 +1269,24 @@ export default function UpstreamPage() {
                       </span>
                     </div>
                     <Button
-                      size="sm"
-                      variant="flat"
-                      isIconOnly
-                      onPress={() => refreshOne(a.id)}
-                      isLoading={busyRefresh === a.id || busy === a.id}
+                      size="icon-sm"
+                      variant="secondary"
+                      onClick={() => refreshOne(a.id)}
+                      disabled={busyRefresh === a.id || busy === a.id}
                       title="刷新（结构 + 用量）"
                     >
-                      <RefreshCw size={14} />
+                      {(busyRefresh === a.id || busy === a.id) ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw size={14} />
+                      )}
                     </Button>
                   </div>
                 </CardHeader>
 
-                <CardBody className="pt-0 gap-3">
+                <CardContent className="pt-0 space-y-3">
                   {/* 凭据 */}
-                  <section className="rounded-lg bg-content2/50 p-2.5 space-y-1.5">
+                  <section className="rounded-lg bg-muted/50 p-2.5 space-y-1.5">
                     <CredRow
                       icon={<KeyRound size={12} />}
                       label="URL"
@@ -1386,7 +1313,7 @@ export default function UpstreamPage() {
                       after={
                         a.password ? (
                           <button
-                            className="text-default-400 hover:text-default-700"
+                            className="text-muted-foreground/70 hover:text-foreground"
                             onClick={() => toggleReveal(a.id)}
                             title={isRevealed ? "隐藏" : "显示"}
                           >
@@ -1404,25 +1331,25 @@ export default function UpstreamPage() {
 
                   {/* 货源 */}
                   <section>
-                    <div className="flex items-center gap-1.5 text-xs text-default-500 mb-1.5">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
                       <Package size={12} />
                       <span>货源</span>
-                      <span className="text-default-400">{inv.length}</span>
+                      <span className="text-muted-foreground/70">{inv.length}</span>
                       {categoryFilter !== TAB_ALL && (
-                        <span className="text-[10px] text-default-400">
+                        <span className="text-[10px] text-muted-foreground/70">
                           · 已按 {categoryFilter} 过滤, 按价升序
                         </span>
                       )}
                     </div>
                     {inv.length === 0 ? (
-                      <p className="text-xs text-default-400 italic">
+                      <p className="text-xs text-muted-foreground/70 italic">
                         {categoryFilter === TAB_ALL
                           ? "未填写。点编辑添加。"
                           : `当前分类 (${categoryFilter}) 下无货源`}
                       </p>
                     ) : (
-                      <div className="rounded-lg overflow-hidden border border-divider/40">
-                        <div className="grid grid-cols-2 gap-1 px-2.5 py-1 text-[10px] uppercase tracking-wide text-default-400 bg-content2/40">
+                      <div className="rounded-lg overflow-hidden border border-border">
+                        <div className="grid grid-cols-2 gap-1 px-2.5 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70 bg-muted/40">
                           <span>名称</span>
                           <span>倍率 / 价格</span>
                         </div>
@@ -1431,12 +1358,10 @@ export default function UpstreamPage() {
                           return (
                             <div
                               key={i}
-                              className={
-                                "grid grid-cols-2 gap-1 px-2.5 py-1.5 text-xs border-t border-divider/40 items-center " +
-                                (best
-                                  ? "bg-success-50/40 dark:bg-success-950/20"
-                                  : "")
-                              }
+                              className={cn(
+                                "grid grid-cols-2 gap-1 px-2.5 py-1.5 text-xs border-t border-border items-center",
+                                best && "bg-emerald-50/40 dark:bg-emerald-950/20",
+                              )}
                               title={it.note || undefined}
                             >
                               <span className="font-medium truncate flex items-center gap-1">
@@ -1451,14 +1376,15 @@ export default function UpstreamPage() {
                                 {it.name}
                               </span>
                               <span
-                                className={
+                                className={cn(
+                                  "truncate",
                                   best
-                                    ? "font-semibold text-success truncate"
-                                    : "font-medium truncate"
-                                }
+                                    ? "font-semibold text-emerald-600 dark:text-emerald-400"
+                                    : "font-medium",
+                                )}
                               >
                                 {it.price || (
-                                  <span className="text-default-400">—</span>
+                                  <span className="text-muted-foreground/70">—</span>
                                 )}
                               </span>
                             </div>
@@ -1470,52 +1396,48 @@ export default function UpstreamPage() {
 
                   {/* 备注 */}
                   {a.notes && (
-                    <section className="text-xs text-default-500 whitespace-pre-wrap break-words border-l-2 border-default-200 pl-2">
+                    <section className="text-xs text-muted-foreground whitespace-pre-wrap break-words border-l-2 border-border pl-2">
                       {a.notes}
                     </section>
                   )}
 
                   {a.lastSyncError && (
-                    <p className="text-xs text-danger break-all">
+                    <p className="text-xs text-destructive break-all">
                       ⚠ {a.lastSyncError}
                     </p>
                   )}
-                </CardBody>
+                </CardContent>
 
                 <CardFooter className="flex justify-between items-center gap-2 pt-0 flex-wrap">
-                  <Chip
-                    size="sm"
-                    variant="flat"
+                  <Badge
+                    variant="secondary"
                     className="cursor-pointer"
                     onClick={() => openKeys(a)}
                   >
                     {a._count?.keys ?? 0} keys →
-                  </Chip>
+                  </Badge>
                   <div className="flex gap-1.5 flex-wrap">
                     <Button
-                      size="sm"
-                      variant="light"
-                      isIconOnly
-                      onPress={() => openEdit(a)}
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => openEdit(a)}
                       title="编辑"
                     >
                       <Pencil size={14} />
                     </Button>
                     <Button
-                      size="sm"
-                      variant="light"
-                      isIconOnly
-                      onPress={() => toggleHidden(a.id, !a.hidden)}
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => toggleHidden(a.id, !a.hidden)}
                       title={a.hidden ? "取消隐藏" : "隐藏"}
                     >
                       {a.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
                     </Button>
                     <Button
-                      size="sm"
-                      variant="light"
-                      isIconOnly
-                      color="danger"
-                      onPress={() => remove(a.id)}
+                      size="icon-sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => remove(a.id)}
                       title="删除"
                     >
                       <Trash2 size={14} />
@@ -1532,122 +1454,111 @@ export default function UpstreamPage() {
       )}
 
       {/* 新建 / 编辑 对话框 (共用同一套 Tabs UI) */}
-      <Modal
-        isOpen={newDlg.isOpen}
-        onClose={newDlg.onClose}
-        size="2xl"
-        scrollBehavior="inside"
-      >
-        <ModalContent>
-          <ModalHeader>新建上游账号</ModalHeader>
-          <ModalBody>
-            <AccountFormTabs
-              tab={editTab}
-              setTab={setEditTab}
-              form={form}
-              setForm={setForm}
-              invDraft={invDraft}
-              setInvDraft={setInvDraft}
-              addInventoryDraft={addInventoryDraft}
-              removeInventory={removeInventory}
-              isNew
-              supplierOptions={supplierOptions}
-              categoryList={categoryList}
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={newDlg.onClose}>
+      <Dialog open={newDlgOpen} onOpenChange={setNewDlgOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>新建上游账号</DialogTitle>
+          </DialogHeader>
+          <AccountFormTabs
+            tab={editTab}
+            setTab={setEditTab}
+            form={form}
+            setForm={setForm}
+            invDraft={invDraft}
+            setInvDraft={setInvDraft}
+            addInventoryDraft={addInventoryDraft}
+            removeInventory={removeInventory}
+            isNew
+            supplierOptions={supplierOptions}
+            categoryList={categoryList}
+          />
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setNewDlgOpen(false)}>
               取消
             </Button>
-            <Button color="primary" onPress={submitNew}>
+            <Button onClick={submitNew}>
               创建
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      <Modal
-        isOpen={editDlg.isOpen}
-        onClose={editDlg.onClose}
-        size="2xl"
-        scrollBehavior="inside"
-      >
-        <ModalContent>
-          <ModalHeader>编辑 · {editing?.name}</ModalHeader>
-          <ModalBody>
-            <AccountFormTabs
-              tab={editTab}
-              setTab={setEditTab}
-              form={form}
-              setForm={setForm}
-              invDraft={invDraft}
-              setInvDraft={setInvDraft}
-              addInventoryDraft={addInventoryDraft}
-              removeInventory={removeInventory}
-              isNew={false}
-              supplierOptions={supplierOptions}
-              categoryList={categoryList}
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={editDlg.onClose}>
+      <Dialog open={editDlgOpen} onOpenChange={setEditDlgOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>编辑 · {editing?.name}</DialogTitle>
+          </DialogHeader>
+          <AccountFormTabs
+            tab={editTab}
+            setTab={setEditTab}
+            form={form}
+            setForm={setForm}
+            invDraft={invDraft}
+            setInvDraft={setInvDraft}
+            addInventoryDraft={addInventoryDraft}
+            removeInventory={removeInventory}
+            isNew={false}
+            supplierOptions={supplierOptions}
+            categoryList={categoryList}
+          />
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setEditDlgOpen(false)}>
               取消
             </Button>
-            <Button color="primary" onPress={submitEdit}>
+            <Button onClick={submitEdit}>
               保存
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 新建货源分类 */}
-      <Modal
-        isOpen={newCategoryDlg.isOpen}
-        onClose={newCategoryDlg.onClose}
-        size="sm"
-      >
-        <ModalContent>
-          <ModalHeader>新建货源分类</ModalHeader>
-          <ModalBody>
-            <Input
-              label="分类名"
-              placeholder="例如 claude / openai / windsurf / kiro"
-              value={newCategoryName}
-              onValueChange={setNewCategoryName}
-              autoFocus
-            />
-            <p className="text-xs text-default-500">
+      <Dialog open={newCategoryDlgOpen} onOpenChange={setNewCategoryDlgOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>新建货源分类</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>分类名</Label>
+              <Input
+                placeholder="例如 claude / openai / windsurf / kiro"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
               创建后 Tab 列表会立刻出现这个分类。编辑某条货源时勾选它属于这个
               分类, 切到该 Tab 就只看到属于此分类的货源。
             </p>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={newCategoryDlg.onClose}>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setNewCategoryDlgOpen(false)}>
               取消
             </Button>
-            <Button color="primary" onPress={addCategory}>
+            <Button onClick={addCategory}>
               创建
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* keys 详情 modal */}
-      <Modal
-        isOpen={keysDlg.isOpen}
-        onClose={keysDlg.onClose}
-        size="4xl"
-        scrollBehavior="inside"
-      >
-        <ModalContent>
-          <ModalHeader>
-            {keysModalAccount?.name} · keys 消费
-          </ModalHeader>
-          <ModalBody>
+      <Dialog open={keysDlgOpen} onOpenChange={setKeysDlgOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {keysModalAccount?.name} · keys 消费
+            </DialogTitle>
+          </DialogHeader>
+          <div>
             {!keysModalAccount ? null : !keys[keysModalAccount.id] ? (
-              <Spinner size="sm" />
+              <div className="flex justify-center py-4">
+                <Loader2 className="h-4 w-4 animate-spin" />
+              </div>
             ) : keys[keysModalAccount.id].length === 0 ? (
-              <p className="text-default-500 text-sm">
+              <p className="text-muted-foreground text-sm">
                 暂无 keys。先点同步或结构刷新。
               </p>
             ) : (
@@ -1667,37 +1578,36 @@ export default function UpstreamPage() {
                 const hidden = all.length - filtered.length;
                 return (
                   <>
-                    <div className="rounded-lg border border-divider/50 p-2.5 mb-3 flex items-center gap-2 bg-content2/30">
-                      <KeyRound size={12} className="text-default-400 shrink-0" />
-                      <span className="text-xs text-default-500 shrink-0">站点 URL</span>
+                    <div className="rounded-lg border border-border p-2.5 mb-3 flex items-center gap-2 bg-muted/30">
+                      <KeyRound size={12} className="text-muted-foreground/70 shrink-0" />
+                      <span className="text-xs text-muted-foreground shrink-0">站点 URL</span>
                       <code className="font-mono text-xs flex-1 truncate" title={keysModalAccount.baseUrl}>
                         {keysModalAccount.baseUrl}
                       </code>
                       <Button
-                        size="sm"
-                        isIconOnly
-                        variant="flat"
-                        className="h-7 min-w-7"
-                        onPress={() => copy(keysModalAccount.baseUrl)}
+                        size="icon-sm"
+                        variant="secondary"
+                        className="h-7 w-7"
+                        onClick={() => copy(keysModalAccount.baseUrl)}
                         title="复制 URL"
                       >
                         <Copy size={13} />
                       </Button>
                     </div>
-                    <div className="flex items-center justify-between mb-2 text-xs text-default-500">
-                      <Checkbox
-                        size="sm"
-                        isSelected={showZero}
-                        onValueChange={setShowZero}
-                      >
-                        显示今日 0 消费的 key
-                      </Checkbox>
+                    <div className="flex items-center justify-between mb-2 text-xs text-muted-foreground">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <Checkbox
+                          checked={showZero}
+                          onCheckedChange={(v) => setShowZero(!!v)}
+                        />
+                        <span>显示今日 0 消费的 key</span>
+                      </label>
                       {!showZero && hidden > 0 && (
                         <span>已隐藏 {hidden} 个 0 消费 key</span>
                       )}
                     </div>
                     {filtered.length === 0 ? (
-                      <p className="text-default-500 text-sm">
+                      <p className="text-muted-foreground text-sm">
                         没有今日有消费的 key。
                       </p>
                     ) : (
@@ -1705,61 +1615,62 @@ export default function UpstreamPage() {
                       {/* 批量推到本站工具条 - 仅在勾了至少 1 个 key 时露出。
                           选中后弹模板选择窗, 新建账号复用模板配置, 一次性创建+建 binding。 */}
                       <div className="flex items-center gap-2 mb-2 flex-wrap text-[11px]">
-                        <Checkbox
-                          size="sm"
-                          isSelected={
-                            selectedKeyIds.size > 0 &&
-                            filtered.every((k) => selectedKeyIds.has(k.id))
-                          }
-                          isIndeterminate={
-                            selectedKeyIds.size > 0 &&
-                            !filtered.every((k) => selectedKeyIds.has(k.id))
-                          }
-                          onValueChange={(v) => {
-                            if (v) {
-                              setSelectedKeyIds(new Set(filtered.map((k) => k.id)));
-                            } else {
-                              setSelectedKeyIds(new Set());
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox
+                            checked={
+                              selectedKeyIds.size > 0 &&
+                              filtered.every((k) => selectedKeyIds.has(k.id))
+                                ? true
+                                : selectedKeyIds.size > 0
+                                  ? "indeterminate"
+                                  : false
                             }
-                          }}
-                        >
+                            onCheckedChange={(v) => {
+                              if (v) {
+                                setSelectedKeyIds(new Set(filtered.map((k) => k.id)));
+                              } else {
+                                setSelectedKeyIds(new Set());
+                              }
+                            }}
+                          />
                           <span className="text-[11px]">
                             {selectedKeyIds.size > 0
                               ? `已选 ${selectedKeyIds.size}`
                               : "全选"}
                           </span>
-                        </Checkbox>
+                        </label>
                         {selectedKeyIds.size > 0 && (
                           <>
                             <Button
                               size="sm"
-                              color="primary"
-                              variant="flat"
+                              variant="secondary"
                               className="h-6 px-2 min-w-0 text-[11px]"
-                              onPress={openBulkPushDialog}
+                              onClick={openBulkPushDialog}
                             >
                               批量加到本站(用模板配置)
                             </Button>
                             <Button
                               size="sm"
-                              variant="light"
+                              variant="ghost"
                               className="h-6 px-2 min-w-0 text-[11px]"
-                              onPress={() => setSelectedKeyIds(new Set())}
+                              onClick={() => setSelectedKeyIds(new Set())}
                             >
                               取消选择
                             </Button>
                           </>
                         )}
                       </div>
-                      <Table removeWrapper aria-label="keys">
+                      <Table>
                         <TableHeader>
-                          <TableColumn>{" "}</TableColumn>
-                          <TableColumn>名称</TableColumn>
-                          <TableColumn>分组×倍率</TableColumn>
-                          <TableColumn>今日</TableColumn>
-                          <TableColumn>累计</TableColumn>
-                          <TableColumn>充值倍率</TableColumn>
-                          <TableColumn>操作</TableColumn>
+                          <TableRow>
+                            <TableHead>{" "}</TableHead>
+                            <TableHead>名称</TableHead>
+                            <TableHead>分组×倍率</TableHead>
+                            <TableHead>今日</TableHead>
+                            <TableHead>累计</TableHead>
+                            <TableHead>充值倍率</TableHead>
+                            <TableHead>操作</TableHead>
+                          </TableRow>
                         </TableHeader>
                         <TableBody>
                           {filtered.map((k) => {
@@ -1768,29 +1679,31 @@ export default function UpstreamPage() {
                             <TableRow key={k.id}>
                               <TableCell className="w-8">
                                 <Checkbox
-                                  size="sm"
-                                  isSelected={selectedKeyIds.has(k.id)}
-                                  onValueChange={() => toggleKeySelect(k.id)}
+                                  checked={selectedKeyIds.has(k.id)}
+                                  onCheckedChange={() => toggleKeySelect(k.id)}
                                 />
                               </TableCell>
                               <TableCell>
                                 <div className="flex items-center gap-2">
                                   <div className="flex flex-col leading-tight min-w-0">
                                     <span className="text-sm">{k.name}</span>
-                                    <span className="font-mono text-xs text-default-400 truncate">
+                                    <span className="font-mono text-xs text-muted-foreground/70 truncate">
                                       {k.keyMasked}
                                     </span>
                                   </div>
                                   <Button
-                                    size="sm"
-                                    isIconOnly
-                                    variant="light"
-                                    className="h-6 min-w-6"
-                                    onPress={() => copyFullKey(k.id, k.name)}
+                                    size="icon-sm"
+                                    variant="ghost"
+                                    className="h-6 w-6"
+                                    onClick={() => copyFullKey(k.id, k.name)}
                                     title="复制完整 key"
-                                    isLoading={copyingKeyId === k.id}
+                                    disabled={copyingKeyId === k.id}
                                   >
-                                    <Copy size={12} />
+                                    {copyingKeyId === k.id ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Copy size={12} />
+                                    )}
                                   </Button>
                                 </div>
                               </TableCell>
@@ -1799,7 +1712,7 @@ export default function UpstreamPage() {
                                   <span className="text-sm">
                                     {k.groupName}
                                   </span>
-                                  <span className="text-xs text-default-400">
+                                  <span className="text-xs text-muted-foreground/70">
                                     {k.hasExclusiveRate ? (
                                       <span className="text-primary">
                                         专属 ×{k.effectiveRateMultiplier}
@@ -1813,19 +1726,19 @@ export default function UpstreamPage() {
                               <TableCell>
                                 <div className="flex flex-col leading-tight">
                                   <span
-                                    className={`font-medium ${k.isStale ? "text-default-400" : ""}`}
+                                    className={cn("font-medium", k.isStale && "text-muted-foreground/70")}
                                   >
                                     {fmtMoneyShort(effToday(k) * rm)}
                                   </span>
                                   {k.isStale ? (
                                     <span
-                                      className="text-[10px] text-warning"
+                                      className="text-[10px] text-amber-600 dark:text-amber-400"
                                       title={`上次同步 ${k.lastUpdatedAt ? new Date(k.lastUpdatedAt).toLocaleString("zh-CN") : "—"} 时为 ${fmtMoneyShort(k.todayActualCost * rm)}`}
                                     >
                                       ⚠ 数据过期(同步失败)
                                     </span>
                                   ) : rm !== 1 ? (
-                                    <span className="text-[10px] text-default-400">
+                                    <span className="text-[10px] text-muted-foreground/70">
                                       面值 {fmtMoneyShort(k.todayActualCost)}
                                     </span>
                                   ) : null}
@@ -1833,11 +1746,11 @@ export default function UpstreamPage() {
                               </TableCell>
                               <TableCell>
                                 <div className="flex flex-col leading-tight">
-                                  <span className="text-default-700">
+                                  <span className="text-foreground/80">
                                     {fmtMoneyShort(k.totalActualCost * rm)}
                                   </span>
                                   {rm !== 1 && (
-                                    <span className="text-[10px] text-default-400">
+                                    <span className="text-[10px] text-muted-foreground/70">
                                       面值 {fmtMoneyShort(k.totalActualCost)}
                                     </span>
                                   )}
@@ -1865,32 +1778,32 @@ export default function UpstreamPage() {
                                 <div className="flex gap-1">
                                   <Button
                                     size="sm"
-                                    variant="flat"
+                                    variant="secondary"
                                     className="h-7 min-w-0 px-2 text-[10px]"
-                                    onPress={() => openPushToInventory(k)}
+                                    onClick={() => openPushToInventory(k)}
                                     title="加入到此渠道的货源(选分类)"
                                   >
                                     → 货源
                                   </Button>
                                   <Button
                                     size="sm"
-                                    color="primary"
-                                    variant="flat"
                                     className="h-7 min-w-0 px-2 text-[10px]"
-                                    onPress={() => openPushToSite(k)}
+                                    onClick={() => openPushToSite(k)}
                                     title="一键添加到本站(创建账号+建绑定)"
                                   >
                                     → 本站
                                   </Button>
                                   <Button
                                     size="sm"
-                                    color="secondary"
-                                    variant="flat"
+                                    variant="secondary"
                                     className="h-7 min-w-0 px-2 text-[10px]"
-                                    onPress={() => pushKeyToBench(k.id, k.name)}
-                                    isLoading={benchPushingKeyId === k.id}
+                                    onClick={() => pushKeyToBench(k.id, k.name)}
+                                    disabled={benchPushingKeyId === k.id}
                                     title="一键加入智商测试(自动复用 baseUrl, 同 key 不重复)"
                                   >
+                                    {benchPushingKeyId === k.id && (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    )}
                                     → 智测
                                   </Button>
                                 </div>
@@ -1906,56 +1819,56 @@ export default function UpstreamPage() {
                 );
               })()
             )}
-          </ModalBody>
-          <ModalFooter>
+          </div>
+          <DialogFooter>
             <Button
               size="sm"
-              variant="flat"
-              onPress={() =>
+              variant="secondary"
+              onClick={() =>
                 keysModalAccount && syncOne(keysModalAccount.id)
               }
-              isLoading={busy === keysModalAccount?.id}
+              disabled={busy === keysModalAccount?.id}
             >
+              {busy === keysModalAccount?.id && <Loader2 className="h-4 w-4 animate-spin" />}
               同步用量
             </Button>
             <Button
               size="sm"
-              variant="flat"
-              onPress={() =>
+              variant="secondary"
+              onClick={() =>
                 keysModalAccount && refreshOne(keysModalAccount.id)
               }
-              isLoading={busyRefresh === keysModalAccount?.id}
+              disabled={busyRefresh === keysModalAccount?.id}
             >
+              {busyRefresh === keysModalAccount?.id && <Loader2 className="h-4 w-4 animate-spin" />}
               结构刷新
             </Button>
-            <Button variant="flat" onPress={keysDlg.onClose}>
+            <Button variant="secondary" onClick={() => setKeysDlgOpen(false)}>
               关闭
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* "→ 货源" 弹窗: 把 key 加进所在渠道 inventory + 选分类 */}
-      <Modal
-        isOpen={pushInvKey !== null}
-        onClose={() => setPushInvKey(null)}
-        size="md"
-      >
-        <ModalContent>
-          <ModalHeader>
-            将 key 加入货源 · {pushInvKey?.name}
-          </ModalHeader>
-          <ModalBody>
-            <p className="text-xs text-default-500">
+      <Dialog open={pushInvKey !== null} onOpenChange={(v) => { if (!v) setPushInvKey(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              将 key 加入货源 · {pushInvKey?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
               这条货源将以 <b>{pushInvKey?.name}</b> 为名,价格用{" "}
               <b>×{pushInvKey?.effectiveRateMultiplier}</b> (跨渠道比价用),
               备注自动填 {pushInvKey?.groupName}。
             </p>
             <div className="flex flex-col gap-1.5">
-              <span className="text-xs text-default-500">所属分类(可多选)</span>
+              <span className="text-xs text-muted-foreground">所属分类(可多选)</span>
               <div className="flex flex-wrap gap-1.5">
                 {categoryList.length === 0 ? (
-                  <span className="text-xs text-default-400">
+                  <span className="text-xs text-muted-foreground/70">
                     还没有分类, 关闭后去顶部"新建分类"
                   </span>
                 ) : (
@@ -1972,12 +1885,12 @@ export default function UpstreamPage() {
                               : [...cur, c.name],
                           )
                         }
-                        className={
-                          "px-2.5 py-1 rounded-full text-xs border " +
-                          (on
+                        className={cn(
+                          "px-2.5 py-1 rounded-full text-xs border",
+                          on
                             ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-content2/60 border-divider/60")
-                        }
+                            : "bg-muted/60 border-border",
+                        )}
                       >
                         {on ? "✓ " : ""}
                         {c.name}
@@ -1987,204 +1900,205 @@ export default function UpstreamPage() {
                 )}
               </div>
               {pushInvCats.length === 0 && (
-                <span className="text-[11px] text-default-400">
+                <span className="text-[11px] text-muted-foreground/70">
                   留空 = 继承所在渠道的全部分类
                 </span>
               )}
             </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={() => setPushInvKey(null)}>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPushInvKey(null)}>
               取消
             </Button>
             <Button
-              color="primary"
-              isLoading={pushInvBusy}
-              onPress={submitPushToInventory}
+              disabled={pushInvBusy}
+              onClick={submitPushToInventory}
             >
+              {pushInvBusy && <Loader2 className="h-4 w-4 animate-spin" />}
               加入
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 批量推到本站(模板复用)弹窗 — 选 site + template, 一次性把
           多个 key 创建为账号 + 建 binding。配置完全继承模板, 只换
           base_url + api_key + 账号名。 */}
-      <Modal
-        isOpen={bulkPushOpen}
-        onOpenChange={setBulkPushOpen}
-        size="lg"
-        scrollBehavior="inside"
-      >
-        <ModalContent>
-          {(close) => (
-            <>
-              <ModalHeader>
-                <div className="flex flex-col">
-                  <span>批量加到本站(用模板配置)</span>
-                  <span className="text-xs text-default-500 font-normal mt-0.5">
-                    已勾选 {selectedKeyIds.size} 个 key · 将复用模板账号的
-                    platform / 并发 / 优先级 / 倍率 / 分组 / model_mapping
-                  </span>
-                </div>
-              </ModalHeader>
-              <ModalBody className="gap-3">
-                <Select
-                  label="目标站点"
-                  selectedKeys={
-                    bulkPushForm.siteAccountId
-                      ? [bulkPushForm.siteAccountId]
-                      : []
-                  }
-                  onSelectionChange={(keys) => {
-                    const v = String(Array.from(keys)[0] ?? "");
-                    setBulkPushForm((f) => ({
-                      ...f,
-                      siteAccountId: v,
-                      templateRemoteAccountId: "",
-                    }));
-                    if (v) void loadTemplateAccounts(Number(v));
-                    else setTemplateAccounts([]);
-                  }}
-                >
+      <Dialog open={bulkPushOpen} onOpenChange={setBulkPushOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>批量加到本站(用模板配置)</DialogTitle>
+            <DialogDescription>
+              已勾选 {selectedKeyIds.size} 个 key · 将复用模板账号的
+              platform / 并发 / 优先级 / 倍率 / 分组 / model_mapping
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>目标站点</Label>
+              <Select
+                value={bulkPushForm.siteAccountId}
+                onValueChange={(v) => {
+                  setBulkPushForm((f) => ({
+                    ...f,
+                    siteAccountId: v,
+                    templateRemoteAccountId: "",
+                  }));
+                  if (v) void loadTemplateAccounts(Number(v));
+                  else setTemplateAccounts([]);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="选择站点" />
+                </SelectTrigger>
+                <SelectContent>
                   {siteAccounts.map((s) => (
-                    <SelectItem key={String(s.id)}>{s.name}</SelectItem>
+                    <SelectItem key={String(s.id)} value={String(s.id)}>{s.name}</SelectItem>
                   ))}
-                </Select>
-                <Autocomplete
-                  label={
-                    loadingTemplates
-                      ? "模板账号(加载中…)"
-                      : `模板账号(共 ${templateAccounts.length} 个)`
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>
+                {loadingTemplates
+                  ? "模板账号(加载中…)"
+                  : `模板账号(共 ${templateAccounts.length} 个)`}
+              </Label>
+              <Input
+                placeholder="输入名字搜索…"
+                disabled={!bulkPushForm.siteAccountId || loadingTemplates}
+                list="template-accounts-list"
+                value={
+                  templateAccounts.find(
+                    (t) => String(t.remoteAccountId) === bulkPushForm.templateRemoteAccountId,
+                  )?.name ?? bulkPushForm.templateRemoteAccountId
+                }
+                onChange={(e) => {
+                  const val = e.target.value;
+                  // Check if the entered value matches a template account name
+                  const match = templateAccounts.find((t) => t.name === val);
+                  setBulkPushForm((f) => ({
+                    ...f,
+                    templateRemoteAccountId: match ? String(match.remoteAccountId) : "",
+                  }));
+                }}
+              />
+              <datalist id="template-accounts-list">
+                {templateAccounts.map((t) => (
+                  <option key={t.remoteAccountId} value={t.name} />
+                ))}
+              </datalist>
+              <p className="text-xs text-muted-foreground">
+                新账号的 platform / 并发 / 优先级 / 倍率 / 分组 / model_mapping 等都会跟此账号一致
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <Label>账号名前缀(可空)</Label>
+                <Input
+                  className="h-8"
+                  value={bulkPushForm.namePrefix}
+                  onChange={(e) =>
+                    setBulkPushForm((f) => ({ ...f, namePrefix: e.target.value }))
                   }
-                  isDisabled={!bulkPushForm.siteAccountId || loadingTemplates}
-                  placeholder="输入名字搜索…"
-                  defaultItems={templateAccounts.map((t) => ({
-                    key: String(t.remoteAccountId),
-                    label: t.name,
-                  }))}
-                  selectedKey={
-                    bulkPushForm.templateRemoteAccountId || null
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>账号名后缀(可空)</Label>
+                <Input
+                  className="h-8"
+                  value={bulkPushForm.nameSuffix}
+                  onChange={(e) =>
+                    setBulkPushForm((f) => ({ ...f, nameSuffix: e.target.value }))
                   }
-                  onSelectionChange={(k) => {
-                    setBulkPushForm((f) => ({
-                      ...f,
-                      templateRemoteAccountId: k != null ? String(k) : "",
-                    }));
-                  }}
-                  description="新账号的 platform / 并发 / 优先级 / 倍率 / 分组 / model_mapping 等都会跟此账号一致"
-                >
-                  {(item) => (
-                    <AutocompleteItem key={item.key}>
-                      {item.label}
-                    </AutocompleteItem>
-                  )}
-                </Autocomplete>
-                <div className="grid grid-cols-2 gap-2">
-                  <Input
-                    size="sm"
-                    label="账号名前缀(可空)"
-                    placeholder=""
-                    value={bulkPushForm.namePrefix}
-                    onValueChange={(v) =>
-                      setBulkPushForm((f) => ({ ...f, namePrefix: v }))
-                    }
-                  />
-                  <Input
-                    size="sm"
-                    label="账号名后缀(可空)"
-                    placeholder=""
-                    value={bulkPushForm.nameSuffix}
-                    onValueChange={(v) =>
-                      setBulkPushForm((f) => ({ ...f, nameSuffix: v }))
-                    }
-                  />
-                </div>
-                <p className="text-[11px] text-default-500 leading-relaxed">
-                  新账号名 = 前缀 + 上游 key 名 + 后缀。重名时 sub2api 会报错,
-                  失败的 key 会在结果里列出, 不影响其他成功创建的。
-                </p>
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="light" onPress={close}>
-                  取消
-                </Button>
-                <Button
-                  color="primary"
-                  isLoading={bulkPushBusy}
-                  onPress={submitBulkPush}
-                >
-                  推送 {selectedKeyIds.size} 个 key
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              新账号名 = 前缀 + 上游 key 名 + 后缀。重名时 sub2api 会报错,
+              失败的 key 会在结果里列出, 不影响其他成功创建的。
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setBulkPushOpen(false)}>
+              取消
+            </Button>
+            <Button
+              disabled={bulkPushBusy}
+              onClick={submitBulkPush}
+            >
+              {bulkPushBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+              推送 {selectedKeyIds.size} 个 key
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* "→ 本站" 弹窗: 选目标站点+填表 → 创建账号 + 建 binding */}
-      <Modal
-        isOpen={pushSiteKey !== null}
-        onClose={() => setPushSiteKey(null)}
-        size="lg"
-        scrollBehavior="inside"
-      >
-        <ModalContent>
-          <ModalHeader>
-            添加到本站 · {pushSiteKey?.name}
-          </ModalHeader>
-          <ModalBody className="gap-3">
-            <p className="text-xs text-default-500">
+      <Dialog open={pushSiteKey !== null} onOpenChange={(v) => { if (!v) setPushSiteKey(null); }}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              添加到本站 · {pushSiteKey?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
               在选定的站点账号上创建一个 sub2api admin 账号 ,
               credentials 用此 upstream key, 然后自动建 binding。
             </p>
-            <Select
-              label="目标站点账号"
-              selectedKeys={
-                pushSiteForm.siteAccountId
-                  ? new Set([pushSiteForm.siteAccountId])
-                  : new Set()
-              }
-              onSelectionChange={(k) => {
-                const v = Array.from(k as Set<string>)[0] ?? "";
-                setPushSiteForm((f) => ({ ...f, siteAccountId: v }));
-                if (v) loadSiteGroups(Number(v));
-              }}
-            >
-              {siteAccounts.map((s) => (
-                <SelectItem key={String(s.id)}>{s.name}</SelectItem>
-              ))}
-            </Select>
-            <Input
-              label="账号名称"
-              value={pushSiteForm.name}
-              onValueChange={(v) =>
-                setPushSiteForm((f) => ({ ...f, name: v }))
-              }
-            />
+            <div className="space-y-1.5">
+              <Label>目标站点账号</Label>
+              <Select
+                value={pushSiteForm.siteAccountId}
+                onValueChange={(v) => {
+                  setPushSiteForm((f) => ({ ...f, siteAccountId: v }));
+                  if (v) loadSiteGroups(Number(v));
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="选择站点" />
+                </SelectTrigger>
+                <SelectContent>
+                  {siteAccounts.map((s) => (
+                    <SelectItem key={String(s.id)} value={String(s.id)}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>账号名称</Label>
+              <Input
+                value={pushSiteForm.name}
+                onChange={(e) =>
+                  setPushSiteForm((f) => ({ ...f, name: e.target.value }))
+                }
+              />
+            </div>
             <div className="flex flex-col gap-1.5">
-              <span className="text-xs text-default-500">
+              <span className="text-xs text-muted-foreground">
                 分组(可多选)
                 {loadingSiteGroups && (
-                  <span className="ml-1 text-default-400">加载中…</span>
+                  <span className="ml-1 text-muted-foreground/70">加载中…</span>
                 )}
               </span>
               <div className="flex flex-wrap gap-1.5">
                 {!pushSiteForm.siteAccountId ? (
-                  <span className="text-xs text-default-400">
+                  <span className="text-xs text-muted-foreground/70">
                     先选目标站点账号
                   </span>
                 ) : siteGroups.length === 0 && !loadingSiteGroups ? (
-                  <Input
-                    size="sm"
-                    label="分组 IDs (逗号分隔)"
-                    placeholder="例如 1,2"
-                    value={pushSiteForm.groupIds}
-                    onValueChange={(v) =>
-                      setPushSiteForm((f) => ({ ...f, groupIds: v }))
-                    }
-                  />
+                  <div className="space-y-1.5 w-full">
+                    <Label>分组 IDs (逗号分隔)</Label>
+                    <Input
+                      className="h-8"
+                      placeholder="例如 1,2"
+                      value={pushSiteForm.groupIds}
+                      onChange={(e) =>
+                        setPushSiteForm((f) => ({ ...f, groupIds: e.target.value }))
+                      }
+                    />
+                  </div>
                 ) : (
                   siteGroups.map((g) => {
                     const set = new Set(
@@ -2207,12 +2121,12 @@ export default function UpstreamPage() {
                             groupIds: [...cur].join(","),
                           }));
                         }}
-                        className={
-                          "px-2.5 py-1 rounded-full text-xs border " +
-                          (on
+                        className={cn(
+                          "px-2.5 py-1 rounded-full text-xs border",
+                          on
                             ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-content2/60 border-divider/60")
-                        }
+                            : "bg-muted/60 border-border",
+                        )}
                         title={`#${g.id} · ×${g.rate_multiplier}`}
                       >
                         {on ? "✓ " : ""}
@@ -2227,88 +2141,104 @@ export default function UpstreamPage() {
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
-              <Input
-                type="number"
-                label="并发"
-                value={pushSiteForm.concurrency}
-                onValueChange={(v) =>
-                  setPushSiteForm((f) => ({ ...f, concurrency: v }))
-                }
-              />
-              <Input
-                type="number"
-                label="优先级"
-                description="数字越小越优先 (默认 1)"
-                value={pushSiteForm.priority}
-                onValueChange={(v) =>
-                  setPushSiteForm((f) => ({ ...f, priority: v }))
-                }
-              />
-              <Input
-                type="number"
-                step="0.01"
-                label="rate_multiplier"
-                description="账号倍率"
-                value={pushSiteForm.rateMultiplier}
-                onValueChange={(v) =>
-                  setPushSiteForm((f) => ({ ...f, rateMultiplier: v }))
-                }
-              />
+              <div className="space-y-1.5">
+                <Label>并发</Label>
+                <Input
+                  type="number"
+                  value={pushSiteForm.concurrency}
+                  onChange={(e) =>
+                    setPushSiteForm((f) => ({ ...f, concurrency: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>优先级</Label>
+                <Input
+                  type="number"
+                  value={pushSiteForm.priority}
+                  onChange={(e) =>
+                    setPushSiteForm((f) => ({ ...f, priority: e.target.value }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground">数字越小越优先 (默认 1)</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>rate_multiplier</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={pushSiteForm.rateMultiplier}
+                  onChange={(e) =>
+                    setPushSiteForm((f) => ({ ...f, rateMultiplier: e.target.value }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground">账号倍率</p>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Select
-                size="sm"
-                label="平台"
-                selectedKeys={new Set([pushSiteForm.platform])}
-                onSelectionChange={(k) => {
-                  const v =
-                    Array.from(k as Set<string>)[0] ?? "anthropic";
-                  setPushSiteForm((f) => ({ ...f, platform: v }));
-                }}
-              >
-                <SelectItem key="anthropic">Anthropic (Claude)</SelectItem>
-                <SelectItem key="openai">OpenAI</SelectItem>
-                <SelectItem key="gemini">Gemini</SelectItem>
-              </Select>
-              {pushSiteForm.platform === "gemini" ? (
+              <div className="space-y-1.5">
+                <Label>平台</Label>
                 <Select
-                  size="sm"
-                  label="Gemini tier"
-                  selectedKeys={new Set([pushSiteForm.geminiTier])}
-                  onSelectionChange={(k) => {
-                    const v =
-                      Array.from(k as Set<string>)[0] ?? "aistudio_paid";
-                    setPushSiteForm((f) => ({ ...f, geminiTier: v }));
-                  }}
+                  value={pushSiteForm.platform}
+                  onValueChange={(v) =>
+                    setPushSiteForm((f) => ({ ...f, platform: v }))
+                  }
                 >
-                  <SelectItem key="aistudio_paid">AI Studio Paid</SelectItem>
-                  <SelectItem key="aistudio_free">AI Studio Free</SelectItem>
+                  <SelectTrigger className="h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                    <SelectItem value="gemini">Gemini</SelectItem>
+                  </SelectContent>
                 </Select>
+              </div>
+              {pushSiteForm.platform === "gemini" ? (
+                <div className="space-y-1.5">
+                  <Label>Gemini tier</Label>
+                  <Select
+                    value={pushSiteForm.geminiTier}
+                    onValueChange={(v) =>
+                      setPushSiteForm((f) => ({ ...f, geminiTier: v }))
+                    }
+                  >
+                    <SelectTrigger className="h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="aistudio_paid">AI Studio Paid</SelectItem>
+                      <SelectItem value="aistudio_free">AI Studio Free</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               ) : (
-                <Input
-                  size="sm"
-                  label="type"
-                  value="apikey"
-                  isReadOnly
-                  description="type 固定 apikey"
-                />
+                <div className="space-y-1.5">
+                  <Label>type</Label>
+                  <Input
+                    className="h-8"
+                    value="apikey"
+                    readOnly
+                  />
+                  <p className="text-xs text-muted-foreground">type 固定 apikey</p>
+                </div>
               )}
             </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={() => setPushSiteKey(null)}>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPushSiteKey(null)}>
               取消
             </Button>
             <Button
-              color="primary"
-              isLoading={pushSiteBusy}
-              onPress={submitPushToSite}
+              disabled={pushSiteBusy}
+              onClick={submitPushToSite}
             >
+              {pushSiteBusy && <Loader2 className="h-4 w-4 animate-spin" />}
               创建+绑定
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Shell>
   );
 }
@@ -2324,67 +2254,69 @@ function ChannelRow({
   onClickKeys,
   onRefresh,
   onEdit,
+  onToggleHidden,
   onRemove,
 }: {
   a: UpstreamAccount;
   busy: boolean;
-  inv: InventoryItem[]; // 已过滤 + 按价升序
+  inv: InventoryItem[];
   isBest: (it: InventoryItem) => boolean;
   categoryFilter: string;
   onClickKeys: () => void;
   onRefresh: () => void;
   onEdit: () => void;
+  onToggleHidden: () => void;
   onRemove: () => void;
 }) {
   return (
     <div
-      className="flex flex-col gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-content2/60 cursor-pointer border border-divider/30"
+      className="flex flex-col gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-muted/60 cursor-pointer border border-border/30"
       onClick={onClickKeys}
     >
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
           <span className="font-medium text-sm truncate">{a.name}</span>
-          <Chip size="sm" variant="flat" classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}>
+          <Badge variant="secondary" className="h-5 text-[10px] px-1.5">
             {a.type}
-          </Chip>
+          </Badge>
           {a.lastSyncError && (
-            <Chip
-              size="sm"
-              color="danger"
-              variant="flat"
-              classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}
+            <Badge
+              variant="destructive"
+              className="h-5 text-[10px] px-1.5"
               title={a.lastSyncError}
             >
               ⚠ 同步失败
-            </Chip>
+            </Badge>
           )}
         </div>
         <div className="flex items-center gap-4 shrink-0 text-xs">
           <div className="flex flex-col items-end leading-tight w-16">
-            <span className="text-default-400">今日</span>
+            <span className="text-muted-foreground/70">今日</span>
             <span
-              className={
-                (a.todayCost ?? 0) > 0 ? "font-semibold tabular-nums" : "text-default-400 tabular-nums"
-              }
+              className={cn(
+                "tabular-nums",
+                (a.todayCost ?? 0) > 0 ? "font-semibold" : "text-muted-foreground/70",
+              )}
             >
               ${fmtMoneyShort(a.todayCost ?? 0)}
             </span>
           </div>
           <div className="flex flex-col items-end leading-tight w-20">
-            <span className="text-default-400">余额</span>
+            <span className="text-muted-foreground/70">余额</span>
             <span
-              className={`font-semibold tabular-nums ${
+              className={cn(
+                "font-semibold tabular-nums",
                 a.balance == null
-                  ? "text-default-400"
+                  ? "text-muted-foreground/70"
                   : a.balance > 0
-                    ? "text-success"
-                    : "text-warning"
-              }`}
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-amber-600 dark:text-amber-400",
+              )}
             >
               {a.balance == null ? "—" : `$${fmtMoneyShort(a.balance)}`}
             </span>
           </div>
-          <span className="text-default-400 hidden md:inline">
+          <span className="text-muted-foreground/70 hidden md:inline">
             {a._count?.keys ?? 0} keys
           </span>
           <div
@@ -2392,33 +2324,42 @@ function ChannelRow({
             onClick={(e) => e.stopPropagation()}
           >
             <Button
-              size="sm"
-              variant="light"
-              isIconOnly
-              className="h-7 min-w-7"
-              onPress={onRefresh}
-              isLoading={busy}
+              size="icon-sm"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={onRefresh}
+              disabled={busy}
               title="刷新+同步"
             >
-              <RefreshCw size={13} />
+              {busy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw size={13} />
+              )}
             </Button>
             <Button
-              size="sm"
-              variant="light"
-              isIconOnly
-              className="h-7 min-w-7"
-              onPress={onEdit}
+              size="icon-sm"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={onEdit}
               title="编辑"
             >
               <Pencil size={13} />
             </Button>
             <Button
-              size="sm"
-              variant="light"
-              isIconOnly
-              color="danger"
-              className="h-7 min-w-7"
-              onPress={onRemove}
+              size="icon-sm"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={onToggleHidden}
+              title={a.hidden ? "取消隐藏" : "隐藏"}
+            >
+              {a.hidden ? <Eye size={13} /> : <EyeOff size={13} />}
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="h-7 w-7 text-destructive hover:text-destructive"
+              onClick={onRemove}
               title="删除"
             >
               <Trash2 size={13} />
@@ -2434,18 +2375,18 @@ function ChannelRow({
             return (
               <span
                 key={i}
-                className={
-                  "text-[10px] px-1.5 py-0.5 rounded border " +
-                  (best
-                    ? "bg-success-50 border-success-300 dark:bg-success-950/30"
-                    : "bg-content2/60 border-divider/60")
-                }
+                className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded border",
+                  best
+                    ? "bg-emerald-50 border-emerald-300 dark:bg-emerald-950/30"
+                    : "bg-muted/60 border-border",
+                )}
                 title={it.note || undefined}
                 onClick={(e) => e.stopPropagation()}
               >
                 {best && "🏆 "}
                 <b>{it.name}</b>{" "}
-                <span className={best ? "text-success font-semibold" : "text-default-500"}>
+                <span className={best ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-muted-foreground"}>
                   {it.price || "—"}
                 </span>
               </span>
@@ -2454,7 +2395,7 @@ function ChannelRow({
         </div>
       )}
       {inv.length === 0 && categoryFilter !== TAB_ALL && (
-        <div className="text-[10px] text-default-400 pl-1">
+        <div className="text-[10px] text-muted-foreground/70 pl-1">
           当前分类 ({categoryFilter}) 下无货源
         </div>
       )}
@@ -2477,22 +2418,20 @@ function RechargeMultiplierEditor({
   return (
     <div className="flex items-center gap-1">
       <Input
-        size="sm"
+        className="h-7 w-20"
         type="number"
         value={val}
-        onValueChange={setVal}
-        classNames={{ inputWrapper: "h-7 min-h-7 w-20" }}
+        onChange={(e) => setVal(e.target.value)}
         step={0.01}
         min={0}
       />
       {dirty && (
         <Button
           size="sm"
-          variant="flat"
-          color="primary"
-          isLoading={busy}
+          variant="secondary"
+          disabled={busy}
           className="h-7 min-w-0 px-2"
-          onPress={async () => {
+          onClick={async () => {
             const n = Number(val);
             if (!Number.isFinite(n) || n < 0) return;
             setBusy(true);
@@ -2503,16 +2442,17 @@ function RechargeMultiplierEditor({
                 body: JSON.stringify({ rechargeMultiplier: n }),
               });
               if (!res.ok) {
-                addToast({ title: "保存失败", color: "danger" });
+                toast.error("保存失败");
                 return;
               }
-              addToast({ title: "已保存", color: "success" });
+              toast.success("已保存");
               onSaved(n);
             } finally {
               setBusy(false);
             }
           }}
         >
+          {busy && <Loader2 className="h-3 w-3 animate-spin" />}
           保存
         </Button>
       )}
@@ -2537,12 +2477,12 @@ function CredRow({
 }) {
   return (
     <div className="flex items-center gap-2 text-xs">
-      <span className="text-default-400 flex items-center gap-1 w-12 shrink-0">
+      <span className="text-muted-foreground/70 flex items-center gap-1 w-12 shrink-0">
         {icon}
         {label}
       </span>
       <span
-        className={`flex-1 truncate ${mono ? "font-mono" : ""}`}
+        className={cn("flex-1 truncate", mono && "font-mono")}
         title={value}
       >
         {value}
@@ -2550,7 +2490,7 @@ function CredRow({
       {after}
       {onCopy && (
         <button
-          className="text-default-400 hover:text-default-700"
+          className="text-muted-foreground/70 hover:text-foreground"
           onClick={onCopy}
           title="复制"
         >
@@ -2634,62 +2574,63 @@ function AccountFormTabs({
     });
   }
   return (
-    <Tabs
-      selectedKey={tab}
-      onSelectionChange={(k) => setTab(String(k))}
-      variant="underlined"
-      classNames={{ tabList: "px-0" }}
-    >
-      <Tab key="inventory" title="货源">
+    <Tabs value={tab} onValueChange={setTab}>
+      <TabsList>
+        <TabsTrigger value="inventory">货源</TabsTrigger>
+        <TabsTrigger value="creds">凭据</TabsTrigger>
+        <TabsTrigger value="notes">备注</TabsTrigger>
+      </TabsList>
+      <TabsContent value="inventory">
         <div className="space-y-3 pt-2">
           <div className="grid grid-cols-12 gap-2 items-end">
-            <Input
-              size="sm"
-              label="名称"
-              placeholder="Claude Sonnet"
-              className="col-span-4"
-              value={invDraft.name}
-              onValueChange={(v) =>
-                setInvDraft({ ...invDraft, name: v })
-              }
-            />
-            <Input
-              size="sm"
-              label="价格"
-              placeholder="$5/M"
-              className="col-span-3"
-              value={invDraft.price ?? ""}
-              onValueChange={(v) =>
-                setInvDraft({ ...invDraft, price: v })
-              }
-            />
-            <Input
-              size="sm"
-              label="备注"
-              placeholder="可选"
-              className="col-span-4"
-              value={invDraft.note ?? ""}
-              onValueChange={(v) => setInvDraft({ ...invDraft, note: v })}
-            />
+            <div className="col-span-4 space-y-1">
+              <Label className="text-xs">名称</Label>
+              <Input
+                className="h-8"
+                placeholder="Claude Sonnet"
+                value={invDraft.name}
+                onChange={(e) =>
+                  setInvDraft({ ...invDraft, name: e.target.value })
+                }
+              />
+            </div>
+            <div className="col-span-3 space-y-1">
+              <Label className="text-xs">价格</Label>
+              <Input
+                className="h-8"
+                placeholder="$5/M"
+                value={invDraft.price ?? ""}
+                onChange={(e) =>
+                  setInvDraft({ ...invDraft, price: e.target.value })
+                }
+              />
+            </div>
+            <div className="col-span-4 space-y-1">
+              <Label className="text-xs">备注</Label>
+              <Input
+                className="h-8"
+                placeholder="可选"
+                value={invDraft.note ?? ""}
+                onChange={(e) => setInvDraft({ ...invDraft, note: e.target.value })}
+              />
+            </div>
             <Button
-              size="sm"
-              color="primary"
-              variant="flat"
-              isIconOnly
+              size="icon-sm"
+              variant="secondary"
               className="col-span-1"
-              onPress={addInventoryDraft}
-              isDisabled={!invDraft.name.trim()}
+              onClick={addInventoryDraft}
+              disabled={!invDraft.name.trim()}
             >
               <Plus size={14} />
             </Button>
           </div>
           {invDraft.name.trim() && (
-            <p className="text-xs text-warning">
+            <p className="text-xs text-amber-600 dark:text-amber-400">
               ⚠ 上方有未添加的草稿「{invDraft.name}」，点 + 添加；保存时也会自动加入
             </p>
           )}
           {form.inventory.length === 0 ? (
-            <p className="text-xs text-default-400 italic">
+            <p className="text-xs text-muted-foreground/70 italic">
               未添加货源。填上面的输入框 + 点 + 添加。
             </p>
           ) : (
@@ -2699,15 +2640,15 @@ function AccountFormTabs({
                 return (
                   <div
                     key={i}
-                    className="rounded-lg border border-divider/50 p-2.5 bg-content2/30"
+                    className="rounded-lg border border-border p-2.5 bg-muted/30"
                   >
                     <div className="flex items-start gap-2 justify-between">
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium">{it.name}</div>
-                        <div className="text-xs text-default-500 mt-0.5">
+                        <div className="text-xs text-muted-foreground mt-0.5">
                           价格 <b>{it.price || "—"}</b>
                           {it.note && (
-                            <span className="text-default-400">
+                            <span className="text-muted-foreground/70">
                               {" "}
                               · {it.note}
                             </span>
@@ -2715,11 +2656,10 @@ function AccountFormTabs({
                         </div>
                       </div>
                       <Button
-                        size="sm"
-                        variant="light"
-                        isIconOnly
-                        color="danger"
-                        onPress={() => removeInventory(i)}
+                        size="icon-sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => removeInventory(i)}
                       >
                         <X size={14} />
                       </Button>
@@ -2728,7 +2668,7 @@ function AccountFormTabs({
                         留空 = 只在"全部" Tab 显示 (其它分类 Tab 不会出现这条货源). */}
                     {categoryList.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
-                        <span className="text-[10px] text-default-400 self-center">
+                        <span className="text-[10px] text-muted-foreground/70 self-center">
                           属于分类:
                         </span>
                         {categoryList.map((c) => {
@@ -2738,12 +2678,12 @@ function AccountFormTabs({
                               key={c.id}
                               type="button"
                               onClick={() => toggleInventoryCategory(i, c.name)}
-                              className={
-                                "px-1.5 py-0.5 rounded text-[10px] border transition-colors " +
-                                (on
+                              className={cn(
+                                "px-1.5 py-0.5 rounded text-[10px] border transition-colors",
+                                on
                                   ? "bg-primary text-primary-foreground border-primary"
-                                  : "bg-content2/60 border-divider/60 hover:bg-content2")
-                              }
+                                  : "bg-muted/60 border-border hover:bg-muted",
+                              )}
                             >
                               {on ? "✓ " : ""}
                               {c.name}
@@ -2751,7 +2691,7 @@ function AccountFormTabs({
                           );
                         })}
                         {itemCats.length === 0 && (
-                          <span className="text-[10px] text-default-400 self-center">
+                          <span className="text-[10px] text-muted-foreground/70 self-center">
                             (空 = 只在&quot;全部&quot;显示)
                           </span>
                         )}
@@ -2763,92 +2703,110 @@ function AccountFormTabs({
             </div>
           )}
         </div>
-      </Tab>
-      <Tab key="creds" title="凭据">
+      </TabsContent>
+      <TabsContent value="creds">
         <div className="space-y-3 pt-2">
-          <Input
-            label="名称"
-            value={form.name}
-            onValueChange={(v) => setForm((f) => ({ ...f, name: v }))}
-          />
+          <div className="space-y-1.5">
+            <Label>名称</Label>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            />
+          </div>
           {isNew && (
-            <Select
-              label="类型"
-              selectedKeys={new Set([form.type])}
-              onSelectionChange={(k) =>
-                setForm((f) => ({
-                  ...f,
-                  type: Array.from(k as Set<string>)[0] ?? "sub2api",
-                }))
-              }
-            >
-              <SelectItem key="sub2api">sub2api</SelectItem>
-              <SelectItem key="newapi">newapi</SelectItem>
-            </Select>
+            <div className="space-y-1.5">
+              <Label>类型</Label>
+              <Select
+                value={form.type}
+                onValueChange={(v) =>
+                  setForm((f) => ({ ...f, type: v }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sub2api">sub2api</SelectItem>
+                  <SelectItem value="newapi">newapi</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           )}
           {/* 渠道本身不再有分类概念 — 分类只属于"货源"条目 (在下面"货源"
               Tab 里配置). 表单底层 form.categories 留空数组提交即可。 */}
-          <Autocomplete
-            label="上游/货源 (可选)"
-            description="同名 supplier 在管理页会聚成一张卡。留空 = 散户渠道。已有的可从下拉选,也可手填新名。"
-            allowsCustomValue
-            // 控制为受控: defaultItems + onInputChange/onSelectionChange 配合
-            // (heroui Autocomplete 在 selectedKey + 自定义 value 模式下容易状态打架,
-            // 这里只用 inputValue + 推荐 items, 写 form.supplier 由 onInputChange 统一处理)
-            inputValue={form.supplier}
-            onInputChange={(v) =>
-              setForm((f) => ({ ...f, supplier: v }))
-            }
-            defaultItems={supplierOptions.map((s) => ({ key: s, label: s }))}
-          >
-            {(item) => (
-              <AutocompleteItem key={item.key}>{item.label}</AutocompleteItem>
-            )}
-          </Autocomplete>
-          <Input
-            label="Base URL"
-            placeholder="http://1.2.3.4:8080"
-            value={form.baseUrl}
-            onValueChange={(v) => setForm((f) => ({ ...f, baseUrl: v }))}
-          />
-          <Input
-            label="Email / 用户名"
-            description="newapi 的话填用户名（不是邮箱），sub2api 填邮箱"
-            value={form.email}
-            onValueChange={(v) => setForm((f) => ({ ...f, email: v }))}
-          />
-          <Input
-            label={isNew ? "密码" : "新密码（留空则不修改）"}
-            type="password"
-            value={form.password}
-            onValueChange={(v) => setForm((f) => ({ ...f, password: v }))}
-          />
-          <Input
-            label={
-              isNew
+          <div className="space-y-1.5">
+            <Label>上游/货源 (可选)</Label>
+            <Input
+              placeholder="输入或选择供应商名"
+              list="supplier-options-list"
+              value={form.supplier}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, supplier: e.target.value }))
+              }
+            />
+            <datalist id="supplier-options-list">
+              {supplierOptions.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+            <p className="text-xs text-muted-foreground">
+              同名 supplier 在管理页会聚成一张卡。留空 = 散户渠道。已有的可从下拉选,也可手填新名。
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Base URL</Label>
+            <Input
+              placeholder="http://1.2.3.4:8080"
+              value={form.baseUrl}
+              onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Email / 用户名</Label>
+            <Input
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+            />
+            <p className="text-xs text-muted-foreground">newapi 的话填用户名（不是邮箱），sub2api 填邮箱</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>{isNew ? "密码" : "新密码（留空则不修改）"}</Label>
+            <Input
+              type="password"
+              value={form.password}
+              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>
+              {isNew
                 ? "Access Token（可选，跳过登录）"
-                : "Access Token（留空则不修改）"
-            }
-            description="粘贴手动登录获取的 token，sub2api 渠道有 cf 盾时可绕过登录。token 过期后会自动尝试用上面的账号密码 relogin；只填 token 没填账号密码则会报错，需手动更新。"
-            type="password"
-            value={form.accessToken}
-            onValueChange={(v) =>
-              setForm((f) => ({ ...f, accessToken: v }))
-            }
-          />
+                : "Access Token（留空则不修改）"}
+            </Label>
+            <Input
+              type="password"
+              value={form.accessToken}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, accessToken: e.target.value }))
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              粘贴手动登录获取的 token，sub2api 渠道有 cf 盾时可绕过登录。token 过期后会自动尝试用上面的账号密码 relogin；只填 token 没填账号密码则会报错，需手动更新。
+            </p>
+          </div>
         </div>
-      </Tab>
-      <Tab key="notes" title="备注">
-        <div className="pt-2">
+      </TabsContent>
+      <TabsContent value="notes">
+        <div className="pt-2 space-y-1.5">
+          <Label>备注</Label>
           <Textarea
-            label="备注"
-            description="续费提醒、合同细节、联系人等。无格式要求"
-            minRows={6}
+            rows={6}
             value={form.notes}
-            onValueChange={(v) => setForm((f) => ({ ...f, notes: v }))}
+            onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
           />
+          <p className="text-xs text-muted-foreground">续费提醒、合同细节、联系人等。无格式要求</p>
         </div>
-      </Tab>
+      </TabsContent>
     </Tabs>
   );
 }
@@ -2888,10 +2846,10 @@ function parseThresholdsInput(raw: string): number[] {
 }
 
 function BalanceAlertModal({
-  isOpen,
+  open,
   onOpenChange,
 }: {
-  isOpen: boolean;
+  open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
   const [items, setItems] = useState<BalanceAlertItem[]>([]);
@@ -2919,8 +2877,8 @@ function BalanceAlertModal({
   }
 
   useEffect(() => {
-    if (isOpen) load();
-  }, [isOpen]);
+    if (open) load();
+  }, [open]);
 
   function update(id: number, patch: Partial<BalanceAlertItem>) {
     setItems((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch } : x)));
@@ -2942,15 +2900,11 @@ function BalanceAlertModal({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({
-          title: "保存失败",
-          description: String(j.error || r.status),
-          color: "danger",
-        });
+        toast.error(`保存失败: ${String(j.error || r.status)}`);
         return;
       }
       const j = (await r.json()) as { updated: number };
-      addToast({ title: `已保存 ${j.updated} 个渠道`, color: "success" });
+      toast.success(`已保存 ${j.updated} 个渠道`);
       await load();
     } finally {
       setSaving(false);
@@ -2963,18 +2917,10 @@ function BalanceAlertModal({
     });
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
-      addToast({
-        title: "触发失败",
-        description: String(j.error || r.status),
-        color: "danger",
-      });
+      toast.error(`触发失败: ${String(j.error || r.status)}`);
       return;
     }
-    addToast({
-      title: "已触发一次检测",
-      description: "受 intervalMin 节流; 想立刻发邮件可临时把间隔改成 1 分钟",
-      color: "success",
-    });
+    toast.success("已触发一次检测 (受 intervalMin 节流; 想立刻发邮件可临时把间隔改成 1 分钟)");
     await load();
   }
 
@@ -2989,164 +2935,158 @@ function BalanceAlertModal({
   const enabledCount = items.filter((x) => x.enabled).length;
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onOpenChange={onOpenChange}
-      size="5xl"
-      scrollBehavior="inside"
-    >
-      <ModalContent>
-        {(close) => (
-          <>
-            <ModalHeader>
-              <div className="flex flex-col">
-                <span className="flex items-center gap-2">
-                  <Bell size={16} /> 渠道余额提醒
-                </span>
-                <span className="text-xs text-default-500 font-normal mt-0.5">
-                  跌破阈值 → 邮件提醒;充值回到阈值之上后,下次再跌破时重新提醒。
-                  邮件使用「设置」页里配置的发件/收件邮箱。
-                </span>
-              </div>
-            </ModalHeader>
-            <ModalBody className="gap-3">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Input
-                  size="sm"
-                  placeholder="按渠道名 / 货源筛选…"
-                  value={filter}
-                  onValueChange={setFilter}
-                  className="flex-1 min-w-[200px]"
-                />
-                <span className="text-xs text-default-500">
-                  已启用 {enabledCount} / {items.length}
-                </span>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  onPress={runCheckNow}
-                  isDisabled={loading || saving}
-                >
-                  立即触发一次检测
-                </Button>
-              </div>
-              {loading ? (
-                <div className="flex justify-center py-8">
-                  <Spinner />
-                </div>
-              ) : (
-                <Table removeWrapper aria-label="balance alerts">
-                  <TableHeader>
-                    <TableColumn>渠道</TableColumn>
-                    <TableColumn>当前余额</TableColumn>
-                    <TableColumn>启用</TableColumn>
-                    <TableColumn>间隔(分)</TableColumn>
-                    <TableColumn>阈值(USD, 多个用空格/逗号/换行)</TableColumn>
-                    <TableColumn>已触发</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="没有匹配的渠道">
-                    {filtered.map((it) => (
-                      <TableRow key={it.id}>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{it.name}</span>
-                            {it.supplier && (
-                              <span className="text-[10px] text-default-400">
-                                {it.supplier}
-                              </span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={`font-mono ${
-                              it.balance == null
-                                ? "text-default-400"
-                                : it.balance > 0
-                                  ? "text-foreground"
-                                  : "text-warning"
-                            }`}
-                          >
-                            {it.balance == null
-                              ? "—"
-                              : `$${fmtMoneyShort(it.balance)}`}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Checkbox
-                            isSelected={it.enabled}
-                            onValueChange={(v) =>
-                              update(it.id, { enabled: v })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            size="sm"
-                            min={1}
-                            className="w-20"
-                            value={String(it.intervalMin)}
-                            onValueChange={(v) =>
-                              update(it.id, {
-                                intervalMin: Math.max(
-                                  1,
-                                  Math.floor(Number(v) || 60),
-                                ),
-                              })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            size="sm"
-                            placeholder="例: 10000, 5000, 1000"
-                            value={draftText[it.id] ?? ""}
-                            onValueChange={(v) =>
-                              setDraftText((m) => ({ ...m, [it.id]: v }))
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          {it.fired.length === 0 ? (
-                            <span className="text-default-400 text-xs">—</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1">
-                              {it.fired.map((t) => (
-                                <Chip
-                                  key={t}
-                                  size="sm"
-                                  color="warning"
-                                  variant="flat"
-                                  classNames={{
-                                    base: "h-5",
-                                    content: "text-[10px] px-1.5",
-                                  }}
-                                >
-                                  ${fmtMoneyShort(t)}
-                                </Chip>
-                              ))}
-                            </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Bell size={16} /> 渠道余额提醒
+          </DialogTitle>
+          <DialogDescription>
+            跌破阈值 → 邮件提醒;充值回到阈值之上后,下次再跌破时重新提醒。
+            邮件使用「设置」页里配置的发件/收件邮箱。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Input
+              className="h-8 flex-1 min-w-[200px]"
+              placeholder="按渠道名 / 货源筛选…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">
+              已启用 {enabledCount} / {items.length}
+            </span>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={runCheckNow}
+              disabled={loading || saving}
+            >
+              立即触发一次检测
+            </Button>
+          </div>
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>渠道</TableHead>
+                  <TableHead>当前余额</TableHead>
+                  <TableHead>启用</TableHead>
+                  <TableHead>间隔(分)</TableHead>
+                  <TableHead>阈值(USD, 多个用空格/逗号/换行)</TableHead>
+                  <TableHead>已触发</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      没有匹配的渠道
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filtered.map((it) => (
+                    <TableRow key={it.id}>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{it.name}</span>
+                          {it.supplier && (
+                            <span className="text-[10px] text-muted-foreground/70">
+                              {it.supplier}
+                            </span>
                           )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="light" onPress={close}>
-                关闭
-              </Button>
-              <Button color="primary" onPress={save} isLoading={saving}>
-                保存全部
-              </Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={cn(
+                            "font-mono",
+                            it.balance == null
+                              ? "text-muted-foreground/70"
+                              : it.balance > 0
+                                ? "text-foreground"
+                                : "text-amber-600 dark:text-amber-400",
+                          )}
+                        >
+                          {it.balance == null
+                            ? "—"
+                            : `$${fmtMoneyShort(it.balance)}`}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <Checkbox
+                          checked={it.enabled}
+                          onCheckedChange={(v) =>
+                            update(it.id, { enabled: !!v })
+                          }
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          className="h-8 w-20"
+                          min={1}
+                          value={String(it.intervalMin)}
+                          onChange={(e) =>
+                            update(it.id, {
+                              intervalMin: Math.max(
+                                1,
+                                Math.floor(Number(e.target.value) || 60),
+                              ),
+                            })
+                          }
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          className="h-8"
+                          placeholder="例: 10000, 5000, 1000"
+                          value={draftText[it.id] ?? ""}
+                          onChange={(e) =>
+                            setDraftText((m) => ({ ...m, [it.id]: e.target.value }))
+                          }
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {it.fired.length === 0 ? (
+                          <span className="text-muted-foreground/70 text-xs">—</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {it.fired.map((t) => (
+                              <Badge
+                                key={t}
+                                variant="warning"
+                                className="h-5 text-[10px] px-1.5"
+                              >
+                                ${fmtMoneyShort(t)}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            保存全部
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -3165,10 +3105,10 @@ interface ImportSkAntResultRow {
 }
 
 function ImportSkAntModal({
-  isOpen,
+  open,
   onOpenChange,
 }: {
-  isOpen: boolean;
+  open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
   const [sites, setSites] = useState<Array<{ id: number; name: string }>>([]);
@@ -3193,7 +3133,7 @@ function ImportSkAntModal({
   const [startIdx, setStartIdx] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!open) return;
     setResults(null);
     setStartIdx(null);
     fetch("/api/site", { cache: "no-store" })
@@ -3207,13 +3147,13 @@ function ImportSkAntModal({
         ),
       )
       .catch(() => {
-        addToast({ title: "加载站点失败", color: "danger" });
+        toast.error("加载站点失败");
       });
-  }, [isOpen]);
+  }, [open]);
 
   // 切换站点时拉该站点的分组列表 + 预设列表
   useEffect(() => {
-    if (!isOpen) return;
+    if (!open) return;
     const sid = Number(form.siteAccountId);
     if (!sid) {
       setGroups([]);
@@ -3241,7 +3181,7 @@ function ImportSkAntModal({
           );
         } else {
           setGroups([]);
-          addToast({ title: "加载分组失败", color: "danger" });
+          toast.error("加载分组失败");
         }
         if (pRes.status === "fulfilled") {
           setPresets(
@@ -3258,19 +3198,19 @@ function ImportSkAntModal({
         setForm((f) => ({ ...f, groupIds: [] }));
       })
       .finally(() => setLoadingGroups(false));
-  }, [isOpen, form.siteAccountId]);
+  }, [open, form.siteAccountId]);
 
   async function submit() {
     const siteId = Number(form.siteAccountId);
     if (!siteId) {
-      addToast({ title: "请选择目标站点", color: "warning" });
+      toast.warning("请选择目标站点");
       return;
     }
     // namePrefix 可空 — 后端留空时直接用 sk 当账号名
     const namePrefix = form.namePrefix.trim();
     const concurrency = Math.max(1, Math.floor(Number(form.concurrency) || 0));
     if (!concurrency) {
-      addToast({ title: "并发数非法", color: "warning" });
+      toast.warning("并发数非法");
       return;
     }
     const windowCostLimit = Math.max(0, Number(form.windowCostLimit) || 0);
@@ -3284,7 +3224,7 @@ function ImportSkAntModal({
       .map((t) => t.trim())
       .filter(Boolean);
     if (tokens.length === 0) {
-      addToast({ title: "请粘贴至少 1 个 token", color: "warning" });
+      toast.warning("请粘贴至少 1 个 token");
       return;
     }
     setBusy(true);
@@ -3304,19 +3244,16 @@ function ImportSkAntModal({
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        addToast({
-          title: "提交失败",
-          description: String(j.error || r.status),
-          color: "danger",
-        });
+        toast.error(`提交失败: ${String(j.error || r.status)}`);
         return;
       }
       setResults(j.results || []);
       setStartIdx(j.startIdx ?? null);
-      addToast({
-        title: `录入完成: 成功 ${j.success} / 共 ${j.total}, 失败 ${j.failed}`,
-        color: j.failed > 0 ? "warning" : "success",
-      });
+      if (j.failed > 0) {
+        toast.warning(`录入完成: 成功 ${j.success} / 共 ${j.total}, 失败 ${j.failed}`);
+      } else {
+        toast.success(`录入完成: 成功 ${j.success} / 共 ${j.total}, 失败 ${j.failed}`);
+      }
     } finally {
       setBusy(false);
     }
@@ -3329,120 +3266,144 @@ function ImportSkAntModal({
       .map((r) => `${r.name}\t${r.tokenMasked}\t${r.error ?? ""}`)
       .join("\n");
     if (!failed) {
-      addToast({ title: "没有失败行", color: "default" });
+      toast("没有失败行");
       return;
     }
-    void copyToClipboard(failed).then((ok) =>
-      addToast({
-        title: ok ? "失败列表已复制" : "复制失败",
-        color: ok ? "success" : "danger",
-      }),
-    );
+    void copyToClipboard(failed).then((ok) => {
+      if (ok) toast.success("失败列表已复制");
+      else toast.error("复制失败");
+    });
   }
 
+  // Multi-select groups via Popover+Checkbox pattern
+  const groupLabel = loadingGroups
+    ? "分组(加载中…)"
+    : form.siteAccountId
+      ? `分组 (共 ${groups.length} 个, 可多选)`
+      : "分组 (先选站点)";
+
   return (
-    <Modal
-      isOpen={isOpen}
-      onOpenChange={onOpenChange}
-      size="3xl"
-      scrollBehavior="inside"
-    >
-      <ModalContent>
-        {(close) => (
-          <>
-            <ModalHeader>
-              <div className="flex flex-col">
-                <span>批量录入 sk-ant Token (setup-token)</span>
-                <span className="text-xs text-default-500 font-normal mt-0.5">
-                  每个 sk 走完整 2 步:cookie-auth 换 oauth → 创建账号 ·
-                  失败行会标 cookie-auth/create 哪个阶段挂了
-                </span>
-              </div>
-            </ModalHeader>
-            <ModalBody className="gap-3">
-              <Select
-                label="目标站点"
-                selectedKeys={
-                  form.siteAccountId ? [form.siteAccountId] : []
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>批量录入 sk-ant Token (setup-token)</DialogTitle>
+          <DialogDescription>
+            每个 sk 走完整 2 步:cookie-auth 换 oauth → 创建账号 ·
+            失败行会标 cookie-auth/create 哪个阶段挂了
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>目标站点</Label>
+            <Select
+              value={form.siteAccountId}
+              onValueChange={(v) => setForm((f) => ({ ...f, siteAccountId: v }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择站点" />
+              </SelectTrigger>
+              <SelectContent>
+                {sites.map((s) => (
+                  <SelectItem key={String(s.id)} value={String(s.id)}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5">
+              <Label>名称前缀(可空)</Label>
+              <Input
+                className="h-8"
+                placeholder="留空 = 用 sk 当账号名"
+                value={form.namePrefix}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, namePrefix: e.target.value }))
                 }
-                onSelectionChange={(keys) => {
-                  const v = String(Array.from(keys)[0] ?? "");
-                  setForm((f) => ({ ...f, siteAccountId: v }));
+              />
+              <p className="text-xs text-muted-foreground">留空: 账号名 = sk 字符串 (方便人工对账)。填了: prefix-N, N 自动续上已有最大值。</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{groupLabel}</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-between h-8 text-sm font-normal"
+                    disabled={!form.siteAccountId || loadingGroups}
+                  >
+                    <span className="truncate">
+                      {form.groupIds.length === 0
+                        ? "选择分组…"
+                        : form.groupIds
+                            .map((id) => {
+                              const g = groups.find((x) => x.id === id);
+                              return g ? g.name : `#${id}`;
+                            })
+                            .join(", ")}
+                    </span>
+                    <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-2" align="start">
+                  <div className="space-y-1 max-h-60 overflow-y-auto">
+                    {groups.map((g) => {
+                      const checked = form.groupIds.includes(g.id);
+                      return (
+                        <label
+                          key={g.id}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted cursor-pointer text-sm"
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(v) => {
+                              if (v) {
+                                setForm((f) => ({ ...f, groupIds: [...f.groupIds, g.id] }));
+                              } else {
+                                setForm((f) => ({ ...f, groupIds: f.groupIds.filter((x) => x !== g.id) }));
+                              }
+                            }}
+                          />
+                          <span>
+                            {g.name}
+                            {g.rate_multiplier != null
+                              ? ` ×${g.rate_multiplier}`
+                              : ""}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
+          {form.siteAccountId && presets.length > 0 && (
+            <div className="space-y-1.5">
+              <Label>{`套用预设 (该站 ${presets.length} 个可选)`}</Label>
+              <Select
+                value=""
+                onValueChange={(v) => {
+                  const preset = presets.find((p) => String(p.id) === v);
+                  if (!preset) return;
+                  const valid = new Set(groups.map((g) => g.id));
+                  const arr = preset.groupIds.filter((n) => valid.has(n));
+                  setForm((f) => ({ ...f, groupIds: arr }));
+                  if (arr.length < preset.groupIds.length) {
+                    toast.warning(
+                      `预设里 ${preset.groupIds.length - arr.length} 个分组当前站点不存在, 已忽略`,
+                    );
+                  }
                 }}
               >
-                {sites.map((s) => (
-                  <SelectItem key={String(s.id)}>{s.name}</SelectItem>
-                ))}
-              </Select>
-              <div className="grid grid-cols-2 gap-2">
-                <Input
-                  size="sm"
-                  label="名称前缀(可空)"
-                  placeholder="留空 = 用 sk 当账号名"
-                  description="留空: 账号名 = sk 字符串 (方便人工对账)。填了: prefix-N, N 自动续上已有最大值。"
-                  value={form.namePrefix}
-                  onValueChange={(v) =>
-                    setForm((f) => ({ ...f, namePrefix: v }))
-                  }
-                />
-                <Select
-                  size="sm"
-                  label={
-                    loadingGroups
-                      ? "分组(加载中…)"
-                      : form.siteAccountId
-                        ? `分组 (共 ${groups.length} 个, 可多选)`
-                        : "分组 (先选站点)"
-                  }
-                  selectionMode="multiple"
-                  isDisabled={!form.siteAccountId || loadingGroups}
-                  selectedKeys={form.groupIds.map((n) => String(n))}
-                  onSelectionChange={(keys) => {
-                    const arr = Array.from(keys as Set<string>)
-                      .map((s) => Number(s))
-                      .filter((n) => Number.isFinite(n) && n > 0);
-                    setForm((f) => ({ ...f, groupIds: arr }));
-                  }}
-                >
-                  {groups.map((g) => (
-                    <SelectItem key={String(g.id)}>
-                      {g.name}
-                      {g.rate_multiplier != null
-                        ? ` ×${g.rate_multiplier}`
-                        : ""}
-                    </SelectItem>
-                  ))}
-                </Select>
-              </div>
-              {form.siteAccountId && presets.length > 0 && (
-                <Select
-                  size="sm"
-                  label={`套用预设 (该站 ${presets.length} 个可选)`}
-                  description="选预设 = 一键回填分组; 选后还能手动加/减"
-                  selectedKeys={[]}
-                  onSelectionChange={(keys) => {
-                    const v = String(Array.from(keys)[0] ?? "");
-                    const preset = presets.find((p) => String(p.id) === v);
-                    if (!preset) return;
-                    const valid = new Set(groups.map((g) => g.id));
-                    const arr = preset.groupIds.filter((n) => valid.has(n));
-                    setForm((f) => ({ ...f, groupIds: arr }));
-                    if (arr.length < preset.groupIds.length) {
-                      addToast({
-                        title: `预设里 ${preset.groupIds.length - arr.length} 个分组当前站点不存在, 已忽略`,
-                        color: "warning",
-                      });
-                    }
-                  }}
-                >
+                <SelectTrigger className="h-8">
+                  <SelectValue placeholder="选择预设以回填分组" />
+                </SelectTrigger>
+                <SelectContent>
                   {presets.map((p) => (
-                    <SelectItem
-                      key={String(p.id)}
-                      textValue={p.name}
-                    >
+                    <SelectItem key={String(p.id)} value={String(p.id)}>
                       <div className="flex flex-col">
                         <span>{p.name}</span>
-                        <span className="text-[10px] text-default-400">
+                        <span className="text-[10px] text-muted-foreground/70">
                           {p.groupIds
                             .map((gid) => {
                               const g = groups.find((x) => x.id === gid);
@@ -3453,158 +3414,164 @@ function ImportSkAntModal({
                       </div>
                     </SelectItem>
                   ))}
-                </Select>
-              )}
-              <div className="grid grid-cols-3 gap-2">
-                <Input
-                  type="number"
-                  size="sm"
-                  label="并发数"
-                  min={1}
-                  value={form.concurrency}
-                  onValueChange={(v) =>
-                    setForm((f) => ({ ...f, concurrency: v }))
-                  }
-                />
-                <Input
-                  type="number"
-                  size="sm"
-                  label="5h 金额上限 USD"
-                  description="0 = 不启用"
-                  min={0}
-                  step="0.5"
-                  value={form.windowCostLimit}
-                  onValueChange={(v) =>
-                    setForm((f) => ({ ...f, windowCostLimit: v }))
-                  }
-                />
-                <Input
-                  type="number"
-                  size="sm"
-                  label="倍率"
-                  min={0}
-                  step="0.01"
-                  value={form.rateMultiplier}
-                  onValueChange={(v) =>
-                    setForm((f) => ({ ...f, rateMultiplier: v }))
-                  }
-                />
-              </div>
-              <Textarea
-                label="sk-ant Token 列表"
-                description="一行一个; 自动忽略空行 + 前后空格 + 不以 sk-ant- 开头的会标记失败"
-                minRows={6}
-                value={form.tokens}
-                onValueChange={(v) =>
-                  setForm((f) => ({ ...f, tokens: v }))
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">选预设 = 一键回填分组; 选后还能手动加/减</p>
+            </div>
+          )}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1.5">
+              <Label>并发数</Label>
+              <Input
+                type="number"
+                className="h-8"
+                min={1}
+                value={form.concurrency}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, concurrency: e.target.value }))
                 }
-                placeholder={"sk-ant-...\nsk-ant-...\nsk-ant-..."}
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label>5h 金额上限 USD</Label>
+              <Input
+                type="number"
+                className="h-8"
+                min={0}
+                step="0.5"
+                value={form.windowCostLimit}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, windowCostLimit: e.target.value }))
+                }
+              />
+              <p className="text-xs text-muted-foreground">0 = 不启用</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>倍率</Label>
+              <Input
+                type="number"
+                className="h-8"
+                min={0}
+                step="0.01"
+                value={form.rateMultiplier}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, rateMultiplier: e.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>sk-ant Token 列表</Label>
+            <Textarea
+              rows={6}
+              value={form.tokens}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, tokens: e.target.value }))
+              }
+              placeholder={"sk-ant-...\nsk-ant-...\nsk-ant-..."}
+            />
+            <p className="text-xs text-muted-foreground">一行一个; 自动忽略空行 + 前后空格 + 不以 sk-ant- 开头的会标记失败</p>
+          </div>
 
-              {results && (
-                <div className="border border-divider/60 rounded-lg p-2">
-                  <div className="flex justify-between items-center mb-2">
-                    <div className="text-xs">
-                      <span className="text-success">
-                        成功 {results.filter((r) => r.ok).length}
-                      </span>
-                      <span className="text-default-400 mx-2">·</span>
-                      <span className="text-danger">
-                        失败 {results.filter((r) => !r.ok).length}
-                      </span>
-                      {startIdx != null && (
-                        <span className="text-default-400 ml-2">
-                          (起始编号 {startIdx})
-                        </span>
-                      )}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="flat"
-                      className="h-7 px-2 text-[11px]"
-                      onPress={copyFailedTokens}
-                    >
-                      复制失败行
-                    </Button>
-                  </div>
-                  <Table removeWrapper aria-label="results">
-                    <TableHeader>
-                      <TableColumn>状态</TableColumn>
-                      <TableColumn>阶段</TableColumn>
-                      <TableColumn>账号名</TableColumn>
-                      <TableColumn>token</TableColumn>
-                      <TableColumn>错误</TableColumn>
-                    </TableHeader>
-                    <TableBody>
-                      {results.map((r, i) => (
-                        <TableRow key={i}>
-                          <TableCell>
-                            <Chip
-                              size="sm"
-                              variant="flat"
-                              color={r.ok ? "success" : "danger"}
-                            >
-                              {r.ok ? "成功" : "失败"}
-                            </Chip>
-                          </TableCell>
-                          <TableCell>
-                            {r.stage ? (
-                              <Chip
-                                size="sm"
-                                variant="flat"
-                                color={
-                                  r.stage === "cookie-auth"
-                                    ? "warning"
-                                    : "primary"
-                                }
-                              >
-                                {r.stage}
-                              </Chip>
-                            ) : (
-                              <span className="text-default-400 text-xs">
-                                —
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <span
-                              className="font-mono text-xs break-all"
-                              title={r.name}
-                            >
-                              {r.name.length > 28
-                                ? `${r.name.slice(0, 16)}...${r.name.slice(-8)}`
-                                : r.name}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-mono text-xs text-default-500">
-                              {r.tokenMasked}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-xs text-danger break-all">
-                              {r.error ?? ""}
-                            </span>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+          {results && (
+            <div className="border border-border rounded-lg p-2">
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-xs">
+                  <span className="text-emerald-600 dark:text-emerald-400">
+                    成功 {results.filter((r) => r.ok).length}
+                  </span>
+                  <span className="text-muted-foreground/70 mx-2">·</span>
+                  <span className="text-destructive">
+                    失败 {results.filter((r) => !r.ok).length}
+                  </span>
+                  {startIdx != null && (
+                    <span className="text-muted-foreground/70 ml-2">
+                      (起始编号 {startIdx})
+                    </span>
+                  )}
                 </div>
-              )}
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="light" onPress={close}>
-                关闭
-              </Button>
-              <Button color="primary" isLoading={busy} onPress={submit}>
-                提交录入
-              </Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={copyFailedTokens}
+                >
+                  复制失败行
+                </Button>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>状态</TableHead>
+                    <TableHead>阶段</TableHead>
+                    <TableHead>账号名</TableHead>
+                    <TableHead>token</TableHead>
+                    <TableHead>错误</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {results.map((r, i) => (
+                    <TableRow key={i}>
+                      <TableCell>
+                        <Badge variant={r.ok ? "success" : "destructive"}>
+                          {r.ok ? "成功" : "失败"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {r.stage ? (
+                          <Badge
+                            variant={
+                              r.stage === "cookie-auth"
+                                ? "warning"
+                                : "default"
+                            }
+                          >
+                            {r.stage}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground/70 text-xs">
+                            —
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className="font-mono text-xs break-all"
+                          title={r.name}
+                        >
+                          {r.name.length > 28
+                            ? `${r.name.slice(0, 16)}...${r.name.slice(-8)}`
+                            : r.name}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {r.tokenMasked}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-xs text-destructive break-all">
+                          {r.error ?? ""}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+          <Button disabled={busy} onClick={submit}>
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            提交录入
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -3622,10 +3589,10 @@ interface PresetRow {
 }
 
 function GroupPresetsModal({
-  isOpen,
+  open,
   onOpenChange,
 }: {
-  isOpen: boolean;
+  open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
   const [sites, setSites] = useState<Array<{ id: number; name: string }>>([]);
@@ -3644,7 +3611,7 @@ function GroupPresetsModal({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!open) return;
     fetch("/api/site", { cache: "no-store" })
       .then((r) => r.json())
       .then((j) =>
@@ -3656,12 +3623,12 @@ function GroupPresetsModal({
         ),
       )
       .catch(() => {
-        addToast({ title: "加载站点失败", color: "danger" });
+        toast.error("加载站点失败");
       });
-  }, [isOpen]);
+  }, [open]);
 
   useEffect(() => {
-    if (!isOpen || !siteId) {
+    if (!open || !siteId) {
       setGroups([]);
       setPresets([]);
       setEditing(null);
@@ -3689,7 +3656,7 @@ function GroupPresetsModal({
           );
         } else {
           setGroups([]);
-          addToast({ title: "加载分组失败", color: "danger" });
+          toast.error("加载分组失败");
         }
         if (pRes.status === "fulfilled") {
           setPresets((pRes.value.items ?? []) as PresetRow[]);
@@ -3701,7 +3668,7 @@ function GroupPresetsModal({
         setLoadingGroups(false);
         setLoadingPresets(false);
       });
-  }, [isOpen, siteId]);
+  }, [open, siteId]);
 
   function startNew() {
     setEditing({ id: null, name: "", groupIds: [] });
@@ -3717,11 +3684,11 @@ function GroupPresetsModal({
     if (!sid) return;
     const name = editing.name.trim();
     if (!name) {
-      addToast({ title: "预设名必填", color: "warning" });
+      toast.warning("预设名必填");
       return;
     }
     if (editing.groupIds.length === 0) {
-      addToast({ title: "至少选 1 个分组", color: "warning" });
+      toast.warning("至少选 1 个分组");
       return;
     }
     setSaving(true);
@@ -3746,14 +3713,10 @@ function GroupPresetsModal({
           });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({
-          title: "保存失败",
-          description: String(j.error || r.status),
-          color: "danger",
-        });
+        toast.error(`保存失败: ${String(j.error || r.status)}`);
         return;
       }
-      addToast({ title: "已保存", color: "success" });
+      toast.success("已保存");
       setEditing(null);
       const list = await fetch(
         `/api/site-group-presets?siteAccountId=${sid}`,
@@ -3771,11 +3734,11 @@ function GroupPresetsModal({
       method: "DELETE",
     });
     if (!r.ok) {
-      addToast({ title: "删除失败", color: "danger" });
+      toast.error("删除失败");
       return;
     }
     setPresets((arr) => arr.filter((x) => x.id !== p.id));
-    addToast({ title: "已删除", color: "success" });
+    toast.success("已删除");
   }
 
   const groupName = (id: number): string => {
@@ -3784,198 +3747,220 @@ function GroupPresetsModal({
   };
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onOpenChange={onOpenChange}
-      size="3xl"
-      scrollBehavior="inside"
-    >
-      <ModalContent>
-        {(close) => (
-          <>
-            <ModalHeader>
-              <div className="flex flex-col">
-                <span>分组预设管理</span>
-                <span className="text-xs text-default-500 font-normal mt-0.5">
-                  按本站维护常用分组集合 · 录入 sk-ant 等场景一键回填
-                </span>
-              </div>
-            </ModalHeader>
-            <ModalBody className="gap-3">
-              <Select
-                label="本站"
-                selectedKeys={siteId ? [siteId] : []}
-                onSelectionChange={(keys) => {
-                  setSiteId(String(Array.from(keys)[0] ?? ""));
-                  setEditing(null);
-                }}
-              >
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>分组预设管理</DialogTitle>
+          <DialogDescription>
+            按本站维护常用分组集合 · 录入 sk-ant 等场景一键回填
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>本站</Label>
+            <Select
+              value={siteId}
+              onValueChange={(v) => {
+                setSiteId(v);
+                setEditing(null);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择站点" />
+              </SelectTrigger>
+              <SelectContent>
                 {sites.map((s) => (
-                  <SelectItem key={String(s.id)}>{s.name}</SelectItem>
+                  <SelectItem key={String(s.id)} value={String(s.id)}>{s.name}</SelectItem>
                 ))}
-              </Select>
+              </SelectContent>
+            </Select>
+          </div>
 
-              {!siteId ? (
-                <p className="text-xs text-default-500 py-4 text-center">
-                  请先选一个本站
-                </p>
-              ) : loadingPresets || loadingGroups ? (
-                <div className="flex justify-center py-4">
-                  <Spinner />
-                </div>
-              ) : (
-                <>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-default-500">
-                      共 {presets.length} 个预设
-                    </span>
-                    <Button
-                      size="sm"
-                      color="primary"
-                      variant="flat"
-                      startContent={<Plus size={12} />}
-                      onPress={startNew}
-                    >
-                      新建预设
-                    </Button>
-                  </div>
+          {!siteId ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">
+              请先选一个本站
+            </p>
+          ) : loadingPresets || loadingGroups ? (
+            <div className="flex justify-center py-4">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : (
+            <>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground">
+                  共 {presets.length} 个预设
+                </span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={startNew}
+                >
+                  <Plus size={12} />
+                  新建预设
+                </Button>
+              </div>
 
-                  {editing && (
-                    <Card className="border border-primary/40 bg-primary-50/30">
-                      <CardBody className="gap-2">
-                        <div className="text-xs text-default-700 font-medium">
-                          {editing.id ? `编辑预设 #${editing.id}` : "新建预设"}
-                        </div>
-                        <Input
-                          size="sm"
-                          label="预设名称"
-                          placeholder="例: claude 全套"
-                          value={editing.name}
-                          onValueChange={(v) =>
-                            setEditing((e) =>
-                              e ? { ...e, name: v } : e,
-                            )
-                          }
-                        />
-                        <Select
-                          size="sm"
-                          label={`分组(共 ${groups.length} 个, 可多选)`}
-                          selectionMode="multiple"
-                          selectedKeys={editing.groupIds.map((n) =>
-                            String(n),
-                          )}
-                          onSelectionChange={(keys) => {
-                            const arr = Array.from(keys as Set<string>)
-                              .map((x) => Number(x))
-                              .filter((n) => Number.isFinite(n) && n > 0);
-                            setEditing((e) =>
-                              e ? { ...e, groupIds: arr } : e,
-                            );
-                          }}
-                        >
-                          {groups.map((g) => (
-                            <SelectItem key={String(g.id)}>
-                              {g.name}
-                              {g.rate_multiplier != null
-                                ? ` ×${g.rate_multiplier}`
-                                : ""}
-                            </SelectItem>
-                          ))}
-                        </Select>
-                        <div className="flex justify-end gap-2">
+              {editing && (
+                <Card className="border border-primary/40 bg-primary/5">
+                  <CardContent className="space-y-2 pt-4">
+                    <div className="text-xs text-foreground/80 font-medium">
+                      {editing.id ? `编辑预设 #${editing.id}` : "新建预设"}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">预设名称</Label>
+                      <Input
+                        className="h-8"
+                        placeholder="例: claude 全套"
+                        value={editing.name}
+                        onChange={(e) =>
+                          setEditing((prev) =>
+                            prev ? { ...prev, name: e.target.value } : prev,
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">{`分组(共 ${groups.length} 个, 可多选)`}</Label>
+                      <Popover>
+                        <PopoverTrigger asChild>
                           <Button
-                            size="sm"
-                            variant="light"
-                            onPress={() => setEditing(null)}
+                            variant="outline"
+                            className="w-full justify-between h-8 text-sm font-normal"
                           >
-                            取消
+                            <span className="truncate">
+                              {editing.groupIds.length === 0
+                                ? "选择分组…"
+                                : editing.groupIds
+                                    .map((id) => groupName(id))
+                                    .join(", ")}
+                            </span>
+                            <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
                           </Button>
-                          <Button
-                            size="sm"
-                            color="primary"
-                            isLoading={saving}
-                            onPress={save}
-                          >
-                            保存
-                          </Button>
-                        </div>
-                      </CardBody>
-                    </Card>
-                  )}
-
-                  {presets.length === 0 && !editing ? (
-                    <p className="text-xs text-default-500 py-4 text-center">
-                      还没有预设, 点「新建预设」开始
-                    </p>
-                  ) : presets.length > 0 ? (
-                    <Table removeWrapper aria-label="presets">
-                      <TableHeader>
-                        <TableColumn>名称</TableColumn>
-                        <TableColumn>包含分组</TableColumn>
-                        <TableColumn>{" "}</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {presets.map((p) => (
-                          <TableRow key={p.id}>
-                            <TableCell>
-                              <span className="text-sm font-medium">
-                                {p.name}
-                              </span>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex flex-wrap gap-1">
-                                {p.groupIds.map((gid) => (
-                                  <Chip
-                                    key={gid}
-                                    size="sm"
-                                    variant="flat"
-                                    classNames={{
-                                      base: "h-5",
-                                      content: "text-[10px] px-1.5",
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-2" align="start">
+                          <div className="space-y-1 max-h-60 overflow-y-auto">
+                            {groups.map((g) => {
+                              const checked = editing.groupIds.includes(g.id);
+                              return (
+                                <label
+                                  key={g.id}
+                                  className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted cursor-pointer text-sm"
+                                >
+                                  <Checkbox
+                                    checked={checked}
+                                    onCheckedChange={(v) => {
+                                      setEditing((prev) => {
+                                        if (!prev) return prev;
+                                        if (v) {
+                                          return { ...prev, groupIds: [...prev.groupIds, g.id] };
+                                        } else {
+                                          return { ...prev, groupIds: prev.groupIds.filter((x) => x !== g.id) };
+                                        }
+                                      });
                                     }}
-                                  >
-                                    {groupName(gid)}
-                                  </Chip>
-                                ))}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex gap-1">
-                                <Button
-                                  size="sm"
-                                  variant="light"
-                                  className="h-7 px-2 text-[11px]"
-                                  onPress={() => startEdit(p)}
-                                >
-                                  编辑
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="light"
-                                  color="danger"
-                                  className="h-7 px-2 text-[11px]"
-                                  onPress={() => remove(p)}
-                                >
-                                  删除
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  ) : null}
-                </>
+                                  />
+                                  <span>
+                                    {g.name}
+                                    {g.rate_multiplier != null
+                                      ? ` ×${g.rate_multiplier}`
+                                      : ""}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditing(null)}
+                      >
+                        取消
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={saving}
+                        onClick={save}
+                      >
+                        {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                        保存
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
               )}
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="light" onPress={close}>
-                关闭
-              </Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+
+              {presets.length === 0 && !editing ? (
+                <p className="text-xs text-muted-foreground py-4 text-center">
+                  还没有预设, 点「新建预设」开始
+                </p>
+              ) : presets.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>名称</TableHead>
+                      <TableHead>包含分组</TableHead>
+                      <TableHead>{" "}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {presets.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell>
+                          <span className="text-sm font-medium">
+                            {p.name}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {p.groupIds.map((gid) => (
+                              <Badge
+                                key={gid}
+                                variant="secondary"
+                                className="h-5 text-[10px] px-1.5"
+                              >
+                                {groupName(gid)}
+                              </Badge>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => startEdit(p)}
+                            >
+                              编辑
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-[11px] text-destructive hover:text-destructive"
+                              onClick={() => remove(p)}
+                            >
+                              删除
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : null}
+            </>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

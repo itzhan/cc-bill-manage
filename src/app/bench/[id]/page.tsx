@@ -1,40 +1,45 @@
 "use client";
 import { useEffect, useState, use } from "react";
 import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Chip,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalHeader,
-  Progress,
-  Select,
-  SelectItem,
-  Spinner,
-  Table,
-  TableBody,
-  TableCell,
-  TableColumn,
-  TableHeader,
-  TableRow,
-  addToast,
-} from "@heroui/react";
-import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   Fingerprint,
+  Loader2,
   RefreshCw,
   ShieldAlert,
   StopCircle,
   XCircle,
 } from "lucide-react";
+import { toast } from "sonner";
+import Link from "next/link";
 import Shell from "@/components/Shell";
 import { fmtDate } from "@/lib/format";
-import Link from "next/link";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 interface TaskRow {
   id: number;
@@ -88,7 +93,7 @@ interface RunDetail {
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
-  // Probe (法医探针) — runs first, ~30s.
+  // Probe (法医探针) -- runs first, ~30s.
   probeStatus: string;
   probeError: string | null;
   probeLatencyS: number | null;
@@ -173,7 +178,7 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
     load();
     fetch("/api/bench/baseline").then((r) => r.json()).then(setBaseline).catch(() => {});
     // Pull every previously-completed run so the user can pick one as the
-    // comparison source. Filter "done" only — partial / running runs would
+    // comparison source. Filter "done" only -- partial / running runs would
     // confuse a per-task delta.
     fetch("/api/bench/runs")
       .then((r) => r.json())
@@ -268,10 +273,10 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
     );
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
-      addToast({ title: "重试失败", description: j.error, color: "danger" });
+      toast.error("重试失败", { description: j.error });
       return;
     }
-    addToast({ title: "已重新排队", color: "success" });
+    toast.success("已重新排队");
     load();
   }
 
@@ -283,10 +288,10 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
-      addToast({ title: "重跑失败", description: j.error, color: "danger" });
+      toast.error("重跑失败", { description: j.error });
       return;
     }
-    addToast({ title: `已重新排队 ${j.restarted} 题`, color: "success" });
+    toast.success(`已重新排队 ${j.restarted} 题`);
     load();
   }
 
@@ -294,7 +299,7 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
     return (
       <Shell>
         <div className="flex justify-center py-10">
-          <Spinner />
+          <Loader2 className="h-5 w-5 animate-spin" />
         </div>
       </Shell>
     );
@@ -307,28 +312,32 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
   return (
     <Shell>
       <div className="flex items-center gap-3 mb-4">
-        <Button as={Link} href="/bench" size="sm" variant="light" startContent={<ArrowLeft size={14} />}>
-          返回
+        <Button asChild size="sm" variant="ghost">
+          <Link href="/bench">
+            <ArrowLeft size={14} />
+            返回
+          </Link>
         </Button>
         <h1 className="text-xl font-semibold flex-1 truncate">{run.name}</h1>
         {isRunning && (
-          <Button size="sm" color="warning" variant="flat" startContent={<StopCircle size={14} />} onPress={cancel}>
+          <Button size="sm" variant="secondary" className="text-amber-600 dark:text-amber-400" onClick={cancel}>
+            <StopCircle size={14} />
             取消
           </Button>
         )}
         {showRestart && (
-          <Button size="sm" color="primary" variant="flat" startContent={<RefreshCw size={14} />} onPress={restart}>
+          <Button size="sm" variant="secondary" onClick={restart}>
+            <RefreshCw size={14} />
             续跑
           </Button>
         )}
         {showRetryFailed && (
           <Button
             size="sm"
-            color="danger"
-            variant="flat"
-            startContent={<RefreshCw size={14} />}
-            onPress={retryAllFailed}
+            variant="destructive"
+            onClick={retryAllFailed}
           >
+            <RefreshCw size={14} />
             重跑 {run.failedCount} 个失败
           </Button>
         )}
@@ -337,28 +346,25 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
       <ProbePanel run={run} />
       <TruncationPanel run={run} onRefresh={load} />
 
-      {/* Comparison source picker — affects the StatTile delta + table column */}
-      <Card className="mb-4 bg-content1 border border-divider/50 shadow-none">
-        <CardBody className="py-2.5 flex flex-row items-center gap-3 flex-wrap">
-          <span className="text-xs text-default-500 shrink-0">对比</span>
+      {/* Comparison source picker -- affects the StatTile delta + table column */}
+      <Card className="mb-4">
+        <CardContent className="py-2.5 flex flex-row items-center gap-3 flex-wrap">
+          <span className="text-xs text-muted-foreground shrink-0">对比</span>
           <Select
-            size="sm"
-            aria-label="comparison source"
-            selectedKeys={new Set([compareKey])}
-            onSelectionChange={(k) => {
-              const v = Array.from(k as Set<string>)[0];
-              if (v) setCompareKey(v);
-            }}
-            className="max-w-md"
+            value={compareKey}
+            onValueChange={setCompareKey}
           >
-            <SelectItem key={COMPARE_OFFICIAL}>
-              官方基线（n=30, opus-4-7, 52.70%）
-            </SelectItem>
-            <>
+            <SelectTrigger className="max-w-md h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={COMPARE_OFFICIAL}>
+                官方基线（n=30, opus-4-7, 52.70%）
+              </SelectItem>
               {otherRuns.map((r) => (
                 <SelectItem
                   key={String(r.id)}
-                  textValue={r.name}
+                  value={String(r.id)}
                 >
                   {`${r.name} · n=${r.n} · ${r.model} · ${
                     r.mustHavePassRate != null
@@ -367,22 +373,22 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
                   }`}
                 </SelectItem>
               ))}
-            </>
+            </SelectContent>
           </Select>
-          {compareLoading && <Spinner size="sm" />}
+          {compareLoading && <Loader2 className="h-4 w-4 animate-spin" />}
           {compareKey !== COMPARE_OFFICIAL && compareData && (
-            <span className="text-xs text-default-500">
+            <span className="text-xs text-muted-foreground">
               对照 {compareData.label}
             </span>
           )}
           {compareKey === COMPARE_OFFICIAL &&
             !(run.n === 30 && run.model === "claude-opus-4-7") && (
-              <span className="text-xs text-warning">
+              <span className="text-xs text-amber-600 dark:text-amber-400">
                 ⚠ 当前 run 是 n={run.n}/{run.model}，与官方基线 (n=30,
                 opus-4-7) 不直接可比；建议改选历史 run
               </span>
             )}
-        </CardBody>
+        </CardContent>
       </Card>
 
       {/* Top status row */}
@@ -422,18 +428,21 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
       </div>
 
       {isRunning && (
-        <Progress
-          aria-label="overall"
-          className="mb-4"
-          value={(run.completedCount / Math.max(1, run.totalCount)) * 100}
-          color={run.failedCount > 0 ? "warning" : "primary"}
-        />
+        <div className="mb-4 h-2 rounded-full bg-muted overflow-hidden">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all",
+              run.failedCount > 0 ? "bg-amber-500" : "bg-primary",
+            )}
+            style={{ width: `${(run.completedCount / Math.max(1, run.totalCount)) * 100}%` }}
+          />
+        </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="lg:col-span-1">
           <CardHeader className="pb-2 text-sm font-semibold">协议指纹</CardHeader>
-          <CardBody className="text-xs flex flex-col gap-2 pt-0">
+          <CardContent className="text-xs flex flex-col gap-2 pt-0">
             <FingerprintLine
               label="Thinking 加密"
               ok={(run.totalThinkingChars ?? 0) === 0}
@@ -454,13 +463,13 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
               ok={run.cacheCreationPresent === true}
               detail={run.cacheCreationPresent === true ? "存在" : run.cacheCreationPresent === false ? "缺失" : "未知"}
             />
-            <p className="text-default-400 mt-2">指纹规则参考 BENCHMARK.md §7。</p>
-          </CardBody>
+            <p className="text-muted-foreground mt-2">指纹规则参考 BENCHMARK.md §7。</p>
+          </CardContent>
         </Card>
 
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2 text-sm font-semibold">运行配置</CardHeader>
-          <CardBody className="text-xs grid grid-cols-2 gap-y-2 gap-x-4 pt-0">
+          <CardContent className="text-xs grid grid-cols-2 gap-y-2 gap-x-4 pt-0">
             <Field label="端点" value={run.baseUrl} />
             <Field label="API Key" value={run.apiKeyMasked} />
             <Field label="模型" value={run.model} />
@@ -473,26 +482,28 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
             />
             <Field label="开始 / 结束" value={`${fmtDate(run.startedAt)} → ${fmtDate(run.finishedAt)}`} />
             {run.errorSummary && (
-              <div className="col-span-2 text-danger">错误: {run.errorSummary}</div>
+              <div className="col-span-2 text-destructive">错误: {run.errorSummary}</div>
             )}
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader className="text-sm font-semibold">逐题分数</CardHeader>
-        <CardBody className="p-0">
-          <Table removeWrapper aria-label="tasks">
+        <CardContent className="p-0">
+          <Table>
             <TableHeader>
-              <TableColumn>task_id</TableColumn>
-              <TableColumn>类别 / 语言</TableColumn>
-              <TableColumn>状态</TableColumn>
-              <TableColumn className="text-right">must_have</TableColumn>
-              <TableColumn className="text-right">
-                {compareKey === COMPARE_OFFICIAL ? "官方" : "对比"}
-              </TableColumn>
-              <TableColumn className="text-right">延迟 (ans+judge)</TableColumn>
-              <TableColumn className="text-right">tokens</TableColumn>
+              <TableRow>
+                <TableHead>task_id</TableHead>
+                <TableHead>类别 / 语言</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead className="text-right">must_have</TableHead>
+                <TableHead className="text-right">
+                  {compareKey === COMPARE_OFFICIAL ? "官方" : "对比"}
+                </TableHead>
+                <TableHead className="text-right">延迟 (ans+judge)</TableHead>
+                <TableHead className="text-right">tokens</TableHead>
+              </TableRow>
             </TableHeader>
             <TableBody>
               {run.tasks.map((t) => {
@@ -500,29 +511,27 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
                 return (
                   <TableRow
                     key={t.id}
-                    className="cursor-pointer hover:bg-default-100"
+                    className="cursor-pointer"
                     onClick={() => t.status === "done" && setPickedTask(t.taskId)}
                   >
                     <TableCell className="font-mono text-[11px]">{t.taskId.slice(-8)}</TableCell>
                     <TableCell className="text-xs">
                       <div className="flex flex-col leading-tight">
                         <span className="truncate max-w-[220px]">{t.category}</span>
-                        <span className="text-default-400">{t.language}</span>
+                        <span className="text-muted-foreground">{t.language}</span>
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5">
-                        <TaskStatusChip status={t.status} resolved={t.resolved} errorText={t.errorText} />
+                        <TaskStatusBadge status={t.status} resolved={t.resolved} errorText={t.errorText} />
                         {t.status === "error" && !isRunning && (
                           <Button
-                            size="sm"
-                            variant="flat"
-                            color="danger"
-                            isIconOnly
+                            size="icon-sm"
+                            variant="secondary"
+                            className="h-6 w-6 text-destructive"
                             aria-label="retry"
                             title="重试这一题"
-                            className="h-6 min-w-0 w-6"
-                            onPress={() => retryTask(t.taskId)}
+                            onClick={(e) => { e.stopPropagation(); retryTask(t.taskId); }}
                           >
                             <RefreshCw size={12} />
                           </Button>
@@ -536,7 +545,7 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
                         ? "..."
                         : "—"}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-xs text-default-500">
+                    <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
                       {cmp ? `${cmp.got}/${cmp.total}` : "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-xs">
@@ -544,7 +553,7 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
                         ? `${t.answerLatencyS.toFixed(1)}+${(t.judgeLatencyS ?? 0).toFixed(1)}s`
                         : "—"}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-xs text-default-500">
+                    <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
                       {t.answerInputTokens != null
                         ? `${(t.answerInputTokens + (t.judgeInputTokens ?? 0)).toLocaleString()} / ${((t.answerOutputTokens ?? 0) + (t.judgeOutputTokens ?? 0)).toLocaleString()}`
                         : "—"}
@@ -554,7 +563,7 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
               })}
             </TableBody>
           </Table>
-        </CardBody>
+        </CardContent>
       </Card>
 
       {pickedTask && (
@@ -567,50 +576,49 @@ export default function BenchDetailPage({ params }: { params: Promise<{ id: stri
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string | null }) {
   return (
     <Card>
-      <CardBody className="py-3">
-        <div className="text-xs text-default-500">{label}</div>
+      <CardContent className="py-3">
+        <div className="text-xs text-muted-foreground">{label}</div>
         <div className="text-2xl font-semibold tabular-nums">{value}</div>
-        {sub && <div className="text-[11px] text-default-400 mt-1">{sub}</div>}
-      </CardBody>
+        {sub && <div className="text-[11px] text-muted-foreground mt-1">{sub}</div>}
+      </CardContent>
     </Card>
   );
 }
 
 function ProbePanel({ run }: { run: RunDetail }) {
-  // Pending / running — show a "正在做协议指纹检测…" placeholder so the user
-  // sees something is happening even before the QnA loop starts.
+  // Pending / running -- show a placeholder so the user sees something is happening.
   if (run.probeStatus === "pending" || run.probeStatus === "running") {
     return (
-      <Card className="mb-4 border border-primary/30 bg-primary-50/30 dark:bg-primary-950/20 shadow-none">
-        <CardBody className="flex flex-row items-center gap-3">
-          <Spinner size="sm" />
+      <Card className="mb-4 border-primary/30 bg-primary/5">
+        <CardContent className="flex flex-row items-center gap-3 py-4">
+          <Loader2 className="h-4 w-4 animate-spin" />
           <div className="flex-1">
             <div className="font-semibold text-sm flex items-center gap-1.5">
               <Fingerprint size={14} /> 正在做协议指纹检测…
             </div>
-            <div className="text-xs text-default-500 mt-0.5">
+            <div className="text-xs text-muted-foreground mt-0.5">
               发送一道思考探针题，检查 thinking 是否加密、signature 是否存在、usage 是否完整。约 30 秒。
             </div>
           </div>
-        </CardBody>
+        </CardContent>
       </Card>
     );
   }
 
   if (run.probeStatus === "error") {
     return (
-      <Card className="mb-4 border border-danger/40 bg-danger-50/40 dark:bg-danger-950/20 shadow-none">
-        <CardBody className="gap-1">
-          <div className="font-semibold text-sm flex items-center gap-1.5 text-danger">
+      <Card className="mb-4 border-destructive/40 bg-destructive/5">
+        <CardContent className="gap-1 py-4">
+          <div className="font-semibold text-sm flex items-center gap-1.5 text-destructive">
             <XCircle size={14} /> 协议指纹检测失败
           </div>
-          <div className="text-xs text-default-600 break-all">
+          <div className="text-xs text-muted-foreground break-all">
             {run.probeError ?? "(no detail)"}
           </div>
-          <div className="text-[11px] text-default-400 mt-1">
+          <div className="text-[11px] text-muted-foreground mt-1">
             后续 QnA 评测会继续进行，但协议指纹这一栏数据缺失。
           </div>
-        </CardBody>
+        </CardContent>
       </Card>
     );
   }
@@ -620,20 +628,20 @@ function ProbePanel({ run }: { run: RunDetail }) {
   const score = run.probeAuthenticityScore ?? 0;
   const verdictMeta: Record<
     string,
-    { color: "success" | "warning" | "danger"; label: string; icon: React.ReactNode }
+    { variant: "success" | "warning" | "destructive"; label: string; icon: React.ReactNode }
   > = {
     real: {
-      color: "success",
+      variant: "success",
       label: "真直连",
       icon: <CheckCircle2 size={16} />,
     },
     suspicious: {
-      color: "warning",
+      variant: "warning",
       label: "疑似伪装",
       icon: <AlertTriangle size={16} />,
     },
     fake: {
-      color: "danger",
+      variant: "destructive",
       label: "明确伪装",
       icon: <ShieldAlert size={16} />,
     },
@@ -641,26 +649,26 @@ function ProbePanel({ run }: { run: RunDetail }) {
   const v = verdictMeta[verdict] ?? verdictMeta.real;
 
   return (
-    <Card className="mb-4 border border-divider/50 bg-content1 shadow-none">
-      <CardHeader className="flex justify-between items-center pb-2">
+    <Card className="mb-4">
+      <CardHeader className="flex flex-row justify-between items-center pb-2">
         <div className="flex items-center gap-2">
-          <Fingerprint size={16} className="text-default-500" />
+          <Fingerprint size={16} className="text-muted-foreground" />
           <span className="font-semibold text-sm">协议指纹</span>
-          <Chip size="sm" color={v.color} variant="flat">
+          <Badge variant={v.variant}>
             <span className="inline-flex items-center gap-1 px-0.5">
               {v.icon}
               {v.label}
             </span>
-          </Chip>
-          <span className="text-xs text-default-500">
-            真伪指数 <b className={score >= 0 ? "text-success" : score < -100 ? "text-danger" : "text-warning"}>{score}</b>
+          </Badge>
+          <span className="text-xs text-muted-foreground">
+            真伪指数 <b className={score >= 0 ? "text-emerald-600 dark:text-emerald-400" : score < -100 ? "text-destructive" : "text-amber-600 dark:text-amber-400"}>{score}</b>
           </span>
         </div>
-        <span className="text-xs text-default-400">
+        <span className="text-xs text-muted-foreground">
           探针耗时 {run.probeLatencyS != null ? `${run.probeLatencyS.toFixed(1)}s` : "—"}
         </span>
       </CardHeader>
-      <CardBody className="grid grid-cols-2 md:grid-cols-5 gap-2 pt-0 text-xs">
+      <CardContent className="grid grid-cols-2 md:grid-cols-5 gap-2 pt-0 text-xs">
         <ProbeCell
           label="Thinking 加密"
           ok={(run.probeThinkingChars ?? 0) === 0}
@@ -693,7 +701,7 @@ function ProbePanel({ run }: { run: RunDetail }) {
           }
           detail={`${run.probeInputTokens ?? "?"}（基线 ≈70）`}
         />
-      </CardBody>
+      </CardContent>
     </Card>
   );
 }
@@ -709,8 +717,8 @@ function ProbeCell({
 }) {
   return (
     <div className="flex flex-col leading-tight gap-0.5">
-      <span className="text-default-400 text-[11px]">{label}</span>
-      <span className={ok ? "text-success font-medium" : "text-warning font-medium"}>
+      <span className="text-muted-foreground text-[11px]">{label}</span>
+      <span className={cn("font-medium", ok ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
         {detail}
       </span>
     </div>
@@ -734,10 +742,8 @@ function TruncationPanel({
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        addToast({
-          title: "触发失败",
+        toast.error("触发失败", {
           description: j.error ?? "",
-          color: "danger",
         });
         return;
       }
@@ -751,10 +757,10 @@ function TruncationPanel({
   if (run.truncProbeStatus === "not_requested") {
     const noThinking = !run.effort;
     return (
-      <Card className="mb-4 border border-divider/50 bg-content1 shadow-none">
-        <CardBody className="flex flex-row items-center justify-between gap-3 flex-wrap">
-          <div className="text-xs text-default-500 flex-1 min-w-0">
-            <div className="font-semibold text-sm text-default-700 flex items-center gap-1.5">
+      <Card className="mb-4">
+        <CardContent className="flex flex-row items-center justify-between gap-3 flex-wrap py-4">
+          <div className="text-xs text-muted-foreground flex-1 min-w-0">
+            <div className="font-semibold text-sm text-foreground flex items-center gap-1.5">
               <AlertTriangle size={14} /> 长文本思考截断检测
             </div>
             <div className="mt-0.5">
@@ -765,71 +771,71 @@ function TruncationPanel({
           </div>
           <Button
             size="sm"
-            color="primary"
-            variant="flat"
-            isDisabled={noThinking || triggering}
-            isLoading={triggering}
-            onPress={trigger}
+            variant="secondary"
+            disabled={noThinking || triggering}
+            onClick={trigger}
           >
+            {triggering && <Loader2 className="h-4 w-4 animate-spin" />}
             开始检测
           </Button>
-        </CardBody>
+        </CardContent>
       </Card>
     );
   }
 
   if (run.truncProbeStatus === "pending" || run.truncProbeStatus === "running") {
     return (
-      <Card className="mb-4 border border-primary/30 bg-primary-50/30 dark:bg-primary-950/20 shadow-none">
-        <CardBody className="flex flex-row items-center gap-3">
-          <Spinner size="sm" />
+      <Card className="mb-4 border-primary/30 bg-primary/5">
+        <CardContent className="flex flex-row items-center gap-3 py-4">
+          <Loader2 className="h-4 w-4 animate-spin" />
           <div className="flex-1">
             <div className="font-semibold text-sm flex items-center gap-1.5">
               <AlertTriangle size={14} /> 正在做长文本思考截断检测…
             </div>
-            <div className="text-xs text-default-500 mt-0.5">
+            <div className="text-xs text-muted-foreground mt-0.5">
               发送一道长思考题（max_tokens=64K），检测上游是否偷偷压低 thinking 预算或 max_tokens。
             </div>
           </div>
-        </CardBody>
+        </CardContent>
       </Card>
     );
   }
 
   if (run.truncProbeStatus === "skipped") {
     return (
-      <Card className="mb-4 border border-divider/50 bg-content1 shadow-none">
-        <CardBody className="text-xs text-default-500">
+      <Card className="mb-4">
+        <CardContent className="text-xs text-muted-foreground py-4">
           长文本截断检测已跳过：当前 run 未开启思考（effort 为空）。
-        </CardBody>
+        </CardContent>
       </Card>
     );
   }
 
   if (run.truncProbeStatus === "error") {
     return (
-      <Card className="mb-4 border border-danger/40 bg-danger-50/40 dark:bg-danger-950/20 shadow-none">
-        <CardBody className="gap-1">
+      <Card className="mb-4 border-destructive/40 bg-destructive/5">
+        <CardContent className="gap-1 py-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="font-semibold text-sm flex items-center gap-1.5 text-danger">
+            <div className="font-semibold text-sm flex items-center gap-1.5 text-destructive">
               <XCircle size={14} /> 长文本截断检测请求失败
             </div>
             <Button
               size="sm"
-              variant="flat"
-              isLoading={triggering}
-              onPress={trigger}
+              variant="secondary"
+              disabled={triggering}
+              onClick={trigger}
             >
+              {triggering && <Loader2 className="h-4 w-4 animate-spin" />}
               重试
             </Button>
           </div>
-          <div className="text-xs text-default-600 break-all">
+          <div className="text-xs text-muted-foreground break-all">
             {run.truncProbeError ?? "(no detail)"}
           </div>
-          <div className="text-[11px] text-default-400 mt-1">
+          <div className="text-[11px] text-muted-foreground mt-1">
             可能是上游在 thinking 中段断开连接（network_cut），也可能是临时故障。
           </div>
-        </CardBody>
+        </CardContent>
       </Card>
     );
   }
@@ -838,30 +844,30 @@ function TruncationPanel({
   const verdict = run.truncProbeVerdict ?? "ok";
   const meta: Record<
     string,
-    { color: "success" | "warning" | "danger"; label: string; hint: string }
+    { variant: "success" | "warning" | "destructive"; label: string; hint: string }
   > = {
     ok: {
-      color: "success",
+      variant: "success",
       label: "未发现截断",
       hint: "stop_reason=end_turn，thinking 长度正常",
     },
     thinking_cut: {
-      color: "danger",
+      variant: "destructive",
       label: "思考被截断",
       hint: "stop_reason=max_tokens 且没有最终答案——上游在 thinking 阶段就被砍了",
     },
     answer_cut: {
-      color: "warning",
+      variant: "warning",
       label: "答案被截断",
       hint: "stop_reason=max_tokens 但有部分答案——max_tokens 上限触顶",
     },
     silent_throttle: {
-      color: "warning",
+      variant: "warning",
       label: "疑似静默压思考",
       hint: "stop_reason=end_turn 但 thinking_chars 远低于基线——上游可能压低了 max_thinking_tokens",
     },
     network_cut: {
-      color: "danger",
+      variant: "destructive",
       label: "网络中断",
       hint: "请求或响应在中途断开，可能是代理超时",
     },
@@ -869,32 +875,32 @@ function TruncationPanel({
   const v = meta[verdict] ?? meta.ok;
 
   return (
-    <Card className="mb-4 border border-divider/50 bg-content1 shadow-none">
-      <CardHeader className="flex justify-between items-center pb-2">
+    <Card className="mb-4">
+      <CardHeader className="flex flex-row justify-between items-center pb-2">
         <div className="flex items-center gap-2">
-          <AlertTriangle size={16} className="text-default-500" />
+          <AlertTriangle size={16} className="text-muted-foreground" />
           <span className="font-semibold text-sm">长文本思考截断</span>
-          <Chip size="sm" color={v.color} variant="flat">
+          <Badge variant={v.variant}>
             {v.label}
-          </Chip>
-          <span className="text-xs text-default-500">{v.hint}</span>
+          </Badge>
+          <span className="text-xs text-muted-foreground">{v.hint}</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-default-400">
+          <span className="text-xs text-muted-foreground">
             探针耗时 {run.truncProbeLatencyS != null ? `${run.truncProbeLatencyS.toFixed(1)}s` : "—"}
           </span>
           <Button
             size="sm"
-            variant="light"
-            isLoading={triggering}
-            onPress={trigger}
-            isDisabled={!run.effort}
+            variant="ghost"
+            disabled={triggering || !run.effort}
+            onClick={trigger}
           >
+            {triggering && <Loader2 className="h-4 w-4 animate-spin" />}
             重新检测
           </Button>
         </div>
       </CardHeader>
-      <CardBody className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-0 text-xs">
+      <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-0 text-xs">
         <ProbeCell
           label="stop_reason"
           ok={
@@ -918,7 +924,7 @@ function TruncationPanel({
           ok={run.truncProbeHasText === true}
           detail={run.truncProbeHasText ? "是" : "否"}
         />
-      </CardBody>
+      </CardContent>
     </Card>
   );
 }
@@ -926,7 +932,7 @@ function TruncationPanel({
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-default-400">{label}</div>
+      <div className="text-muted-foreground">{label}</div>
       <div className="font-mono break-all">{value}</div>
     </div>
   );
@@ -935,15 +941,15 @@ function Field({ label, value }: { label: string; value: string }) {
 function FingerprintLine({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-default-500">{label}</span>
-      <Chip size="sm" color={ok ? "success" : "danger"} variant="flat">
+      <span className="text-muted-foreground">{label}</span>
+      <Badge variant={ok ? "success" : "destructive"}>
         {detail}
-      </Chip>
+      </Badge>
     </div>
   );
 }
 
-function TaskStatusChip({
+function TaskStatusBadge({
   status,
   resolved,
   errorText,
@@ -954,19 +960,19 @@ function TaskStatusChip({
 }) {
   if (status === "done") {
     return (
-      <Chip size="sm" variant="flat" color={resolved ? "success" : "default"}>
+      <Badge variant={resolved ? "success" : "secondary"}>
         {resolved ? "全过" : "完成"}
-      </Chip>
+      </Badge>
     );
   }
-  if (status === "running") return <Chip size="sm" variant="flat" color="primary">运行中</Chip>;
+  if (status === "running") return <Badge variant="default">运行中</Badge>;
   if (status === "error")
     return (
-      <Chip size="sm" variant="flat" color="danger" title={errorText ?? ""}>
+      <Badge variant="destructive" title={errorText ?? ""}>
         错误
-      </Chip>
+      </Badge>
     );
-  return <Chip size="sm" variant="flat" color="default">待</Chip>;
+  return <Badge variant="secondary">待</Badge>;
 }
 
 interface TaskFull {
@@ -996,7 +1002,7 @@ function TaskDetailModal({
     fetch(`/api/bench/runs/${runId}/task/${taskId}`)
       .then((r) => r.json())
       .then(setData)
-      .catch(() => addToast({ title: "加载失败", color: "danger" }));
+      .catch(() => toast.error("加载失败"));
   }, [runId, taskId]);
 
   let parsedItems: { id: string; satisfied: boolean; reason?: string }[] = [];
@@ -1011,43 +1017,47 @@ function TaskDetailModal({
   const byId = new Map(parsedItems.map((it) => [it.id, it]));
 
   return (
-    <Modal isOpen onClose={onClose} size="5xl" scrollBehavior="inside">
-      <ModalContent>
-        <ModalHeader className="flex flex-col gap-1">
-          <span className="font-mono text-sm">{taskId}</span>
-          <span className="text-xs text-default-500 font-normal">
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-5xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-mono text-sm">{taskId}</DialogTitle>
+          <p className="text-xs text-muted-foreground font-normal">
             {data?.task.category} · {data?.task.language} · {data?.repository_url}
-          </span>
-        </ModalHeader>
-        <ModalBody className="text-sm">
+          </p>
+        </DialogHeader>
+        <div className="text-sm">
           {!data ? (
-            <Spinner />
+            <div className="flex justify-center py-6">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
           ) : (
             <div className="flex flex-col gap-4">
               <section>
-                <h3 className="text-xs font-semibold text-default-500 uppercase tracking-wide mb-1">题面</h3>
-                <pre className="text-xs whitespace-pre-wrap bg-default-100 rounded-lg p-3 max-h-80 overflow-auto">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">题面</h3>
+                <pre className="text-xs whitespace-pre-wrap bg-muted rounded-lg p-3 max-h-80 overflow-auto">
                   {data.prompt}
                 </pre>
               </section>
 
               <section>
-                <h3 className="text-xs font-semibold text-default-500 uppercase tracking-wide mb-1">候选答案</h3>
-                <pre className="text-xs whitespace-pre-wrap bg-default-100 rounded-lg p-3 max-h-80 overflow-auto">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">候选答案</h3>
+                <pre className="text-xs whitespace-pre-wrap bg-muted rounded-lg p-3 max-h-80 overflow-auto">
                   {data.task.answerText ?? "（无）"}
                 </pre>
               </section>
 
               <section>
-                <h3 className="text-xs font-semibold text-default-500 uppercase tracking-wide mb-1">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
                   Rubric 评分（{data.task.mustGot}/{data.task.mustTotal} must-have）
                 </h3>
-                <Table removeWrapper aria-label="rubric">
+                <Table>
                   <TableHeader>
-                    <TableColumn>importance</TableColumn>
-                    <TableColumn>title</TableColumn>
-                    <TableColumn className="text-center">satisfied</TableColumn>
-                    <TableColumn>reason</TableColumn>
+                    <TableRow>
+                      <TableHead>importance</TableHead>
+                      <TableHead>title</TableHead>
+                      <TableHead className="text-center">satisfied</TableHead>
+                      <TableHead>reason</TableHead>
+                    </TableRow>
                   </TableHeader>
                   <TableBody>
                     {(data.rubric ?? []).map((r) => {
@@ -1056,21 +1066,21 @@ function TaskDetailModal({
                       return (
                         <TableRow key={r.id}>
                           <TableCell>
-                            <Chip size="sm" variant="flat" color={imp === "must have" ? "primary" : "default"}>
+                            <Badge variant={imp === "must have" ? "default" : "secondary"}>
                               {imp}
-                            </Chip>
+                            </Badge>
                           </TableCell>
                           <TableCell className="text-xs">{r.title}</TableCell>
                           <TableCell className="text-center">
                             {j ? (
-                              <Chip size="sm" variant="flat" color={j.satisfied ? "success" : "danger"}>
+                              <Badge variant={j.satisfied ? "success" : "destructive"}>
                                 {j.satisfied ? "✓" : "✗"}
-                              </Chip>
+                              </Badge>
                             ) : (
                               "—"
                             )}
                           </TableCell>
-                          <TableCell className="text-xs text-default-500">{j?.reason ?? "—"}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{j?.reason ?? "—"}</TableCell>
                         </TableRow>
                       );
                     })}
@@ -1080,16 +1090,16 @@ function TaskDetailModal({
 
               {data.task.errorText && (
                 <section>
-                  <h3 className="text-xs font-semibold text-danger mb-1">错误</h3>
-                  <pre className="text-xs whitespace-pre-wrap bg-danger-50 rounded-lg p-3">
+                  <h3 className="text-xs font-semibold text-destructive mb-1">错误</h3>
+                  <pre className="text-xs whitespace-pre-wrap bg-destructive/10 rounded-lg p-3">
                     {data.task.errorText}
                   </pre>
                 </section>
               )}
             </div>
           )}
-        </ModalBody>
-      </ModalContent>
-    </Modal>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

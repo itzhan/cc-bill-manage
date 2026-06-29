@@ -1,6 +1,8 @@
-import { Card, CardBody, Chip } from "@heroui/react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 export interface StatCardProps {
   label: string;
@@ -9,7 +11,6 @@ export interface StatCardProps {
   hint?: string;
   positiveIsGood?: boolean;
   icon?: LucideIcon;
-  /** Accent color for icon halo + subtle background gradient */
   accent?: "primary" | "success" | "danger" | "warning" | "default";
 }
 
@@ -19,29 +20,29 @@ const accentClasses: Record<NonNullable<StatCardProps["accent"]>, {
   glow: string;
 }> = {
   primary: {
-    iconBg: "bg-primary/10",
-    iconText: "text-primary",
-    glow: "from-primary/5",
+    iconBg: "bg-blue-100 dark:bg-blue-900/30",
+    iconText: "text-blue-600 dark:text-blue-400",
+    glow: "from-blue-500/8 dark:from-blue-500/5",
   },
   success: {
-    iconBg: "bg-success/10",
-    iconText: "text-success",
-    glow: "from-success/5",
+    iconBg: "bg-emerald-100 dark:bg-emerald-900/30",
+    iconText: "text-emerald-600 dark:text-emerald-400",
+    glow: "from-emerald-500/8 dark:from-emerald-500/5",
   },
   danger: {
-    iconBg: "bg-danger/10",
-    iconText: "text-danger",
-    glow: "from-danger/5",
+    iconBg: "bg-red-100 dark:bg-red-900/30",
+    iconText: "text-red-600 dark:text-red-400",
+    glow: "from-red-500/8 dark:from-red-500/5",
   },
   warning: {
-    iconBg: "bg-warning/10",
-    iconText: "text-warning",
-    glow: "from-warning/5",
+    iconBg: "bg-amber-100 dark:bg-amber-900/30",
+    iconText: "text-amber-600 dark:text-amber-400",
+    glow: "from-amber-500/8 dark:from-amber-500/5",
   },
   default: {
-    iconBg: "bg-default-200/50",
-    iconText: "text-default-500",
-    glow: "from-default-100/40",
+    iconBg: "bg-secondary",
+    iconText: "text-muted-foreground",
+    glow: "from-secondary/40",
   },
 };
 
@@ -54,57 +55,54 @@ export default function StatCard({
   icon: Icon,
   accent = "default",
 }: StatCardProps) {
-  let chipColor: "success" | "danger" | "default" = "default";
+  const a = accentClasses[accent];
+
+  let trendVariant: "success" | "destructive" | "secondary" = "secondary";
   if (trend && trend.delta !== 0) {
     const goingUp = trend.delta > 0;
     const good = positiveIsGood ? goingUp : !goingUp;
-    chipColor = good ? "success" : "danger";
+    trendVariant = good ? "success" : "destructive";
   }
-  const a = accentClasses[accent];
+
   return (
-    <Card className="bg-content1 border border-divider/40 shadow-none rounded-2xl overflow-hidden relative">
+    <Card className="rounded-2xl overflow-hidden relative">
       <div
-        className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${a.glow} to-transparent opacity-60`}
+        className={cn(
+          "pointer-events-none absolute inset-0 bg-gradient-to-br to-transparent opacity-60",
+          a.glow,
+        )}
       />
-      <CardBody className="p-5 gap-3 relative">
+      <CardContent className="p-5 pt-5 space-y-3 relative">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2">
             {Icon && (
               <div
-                className={`w-8 h-8 rounded-lg ${a.iconBg} ${a.iconText} flex items-center justify-center`}
+                className={cn(
+                  "w-8 h-8 rounded-xl flex items-center justify-center",
+                  a.iconBg,
+                  a.iconText,
+                )}
               >
                 <Icon size={16} />
               </div>
             )}
-            <p className="text-sm text-default-500">{label}</p>
+            <p className="text-sm text-muted-foreground">{label}</p>
           </div>
           {trend && trend.delta !== 0 && (
-            <Chip
-              size="sm"
-              color={chipColor}
-              variant="flat"
-              radius="md"
-              startContent={
-                trend.delta > 0 ? (
-                  <ArrowUp size={11} />
-                ) : (
-                  <ArrowDown size={11} />
-                )
-              }
-              classNames={{ content: "text-xs font-medium px-0.5" }}
-            >
+            <Badge variant={trendVariant} className="gap-0.5">
+              {trend.delta > 0 ? <ArrowUp size={11} /> : <ArrowDown size={11} />}
               {Math.abs(trend.delta).toFixed(1)}
               {trend.suffix ?? "%"}
-            </Chip>
+            </Badge>
           )}
         </div>
         <p className="text-3xl font-bold tracking-tight leading-none">
           {value}
         </p>
         {hint && (
-          <p className="text-xs text-default-400 truncate">{hint}</p>
+          <p className="text-xs text-muted-foreground/70 truncate">{hint}</p>
         )}
-      </CardBody>
+      </CardContent>
     </Card>
   );
 }
